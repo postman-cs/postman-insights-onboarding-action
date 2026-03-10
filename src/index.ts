@@ -127,6 +127,24 @@ export async function runOnboarding(
   });
   core.info(`Git onboarding complete for ${match.name}`);
 
+  // Acknowledge with Akita backend so the agent stops returning 403
+  const providerServiceId = await client.resolveProviderServiceId(
+    inputs.projectName,
+    inputs.clusterName || undefined,
+  );
+  if (providerServiceId) {
+    const sysEnvId = match.systemEnvironmentId || '';
+    if (sysEnvId) {
+      core.info(`Acknowledging Insights onboarding for ${providerServiceId}...`);
+      await client.acknowledgeOnboarding(providerServiceId, inputs.workspaceId, sysEnvId);
+      core.info(`Insights acknowledged: ${providerServiceId}`);
+    } else {
+      core.warning('No systemEnvironmentId available; skipping Insights acknowledgment');
+    }
+  } else {
+    core.warning('Could not resolve Akita provider service ID; skipping acknowledgment');
+  }
+
   return {
     discoveredServiceId: match.id,
     discoveredServiceName: match.name,

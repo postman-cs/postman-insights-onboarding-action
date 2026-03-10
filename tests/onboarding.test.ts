@@ -39,6 +39,8 @@ describe('runOnboarding', () => {
       listDiscoveredServices: vi.fn().mockResolvedValue([sampleService]),
       prepareCollection: vi.fn().mockResolvedValue('col-abc'),
       onboardGit: vi.fn().mockResolvedValue(undefined),
+      resolveProviderServiceId: vi.fn().mockResolvedValue('svc_test123'),
+      acknowledgeOnboarding: vi.fn().mockResolvedValue(undefined),
     } as unknown as BifrostCatalogClient;
 
     const result = await runOnboarding(makeInputs(), client, vi.fn());
@@ -60,6 +62,8 @@ describe('runOnboarding', () => {
       listDiscoveredServices: vi.fn().mockResolvedValue([]),
       prepareCollection: vi.fn(),
       onboardGit: vi.fn(),
+      resolveProviderServiceId: vi.fn(),
+      acknowledgeOnboarding: vi.fn(),
     } as unknown as BifrostCatalogClient;
 
     const noopSleep = vi.fn();
@@ -81,6 +85,8 @@ describe('runOnboarding', () => {
       }),
       prepareCollection: vi.fn().mockResolvedValue('col-xyz'),
       onboardGit: vi.fn().mockResolvedValue(undefined),
+      resolveProviderServiceId: vi.fn().mockResolvedValue('svc_poll'),
+      acknowledgeOnboarding: vi.fn().mockResolvedValue(undefined),
     } as unknown as BifrostCatalogClient;
 
     const noopSleep = vi.fn();

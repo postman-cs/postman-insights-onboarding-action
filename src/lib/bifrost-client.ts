@@ -140,6 +140,55 @@ export class BifrostCatalogClient {
       { maxAttempts: 2, delayMs: 3000 }
     );
   }
+
+  async resolveProviderServiceId(
+    projectName: string,
+    clusterName?: string
+  ): Promise<string | null> {
+    const response = await this.fetchFn(BIFROST_BASE, {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify({
+        service: 'akita',
+        method: 'GET',
+        path: '/v2/api-catalog/services?status=discovered&populate_endpoints=false&populate_discovery_metadata=true',
+        body: {}
+      })
+    });
+    if (!response.ok) return null;
+    const data = (await response.json()) as { services?: Array<{ id: string; name: string }> };
+    const fullName = clusterName ? `${clusterName}/${projectName}` : projectName;
+    const match = (data.services || []).find((s) => s.name === fullName)
+      || (data.services || []).find((s) => s.name.endsWith(`/${projectName}`));
+    return match?.id || null;
+  }
+
+  async acknowledgeOnboarding(
+    providerServiceId: string,
+    workspaceId: string,
+    systemEnvironmentId: string
+  ): Promise<void> {
+    const response = await this.fetchFn(BIFROST_BASE, {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify({
+        service: 'akita',
+        method: 'POST',
+        path: '/v2/api-catalog/services/onboard',
+        body: {
+          services: [{
+            service_id: providerServiceId,
+            workspace_id: workspaceId,
+            system_env: systemEnvironmentId
+          }]
+        }
+      })
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`Insights acknowledge failed: ${response.status} ${text}`);
+    }
+  }
 }
 
 export function findDiscoveredService(
