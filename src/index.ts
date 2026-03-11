@@ -7,10 +7,12 @@ export interface ActionInputs {
   projectName: string;
   workspaceId: string;
   environmentId: string;
+  systemEnvironmentId: string;
   clusterName: string;
   gitOwner: string;
   gitRepositoryName: string;
   postmanAccessToken: string;
+  postmanApiKey: string;
   postmanTeamId: string;
   githubToken: string;
   pollTimeoutSeconds: number;
@@ -21,6 +23,8 @@ export interface OnboardingResult {
   discoveredServiceId: number;
   discoveredServiceName: string;
   collectionId: string;
+  applicationId: string;
+  verificationToken: string | null;
   status: 'success' | 'not-found' | 'error';
 }
 
@@ -35,6 +39,9 @@ export function resolveInputs(
 
   const postmanAccessToken = get('postman-access-token');
   if (!postmanAccessToken) throw new Error('postman-access-token is required');
+
+  const postmanApiKey = get('postman-api-key');
+  if (!postmanApiKey) throw new Error('postman-api-key is required');
 
   const postmanTeamId = get('postman-team-id');
   if (!postmanTeamId) throw new Error('postman-team-id is required');
@@ -53,10 +60,12 @@ export function resolveInputs(
     projectName,
     workspaceId,
     environmentId,
+    systemEnvironmentId: get('system-environment-id', ''),
     clusterName: get('cluster-name', ''),
     gitOwner,
     gitRepositoryName,
     postmanAccessToken,
+    postmanApiKey,
     postmanTeamId,
     githubToken: get('github-token', env.GITHUB_TOKEN || ''),
     pollTimeoutSeconds: Math.max(0, parseInt(get('poll-timeout-seconds', '120'), 10) || 120),
@@ -71,6 +80,8 @@ export function createPlannedOutputs(inputs: ActionInputs): Record<string, strin
       ? `${inputs.clusterName}/${inputs.projectName}`
       : inputs.projectName,
     'collection-id': '',
+    'application-id': '',
+    'verification-token': '',
     'status': 'pending',
   };
 }
@@ -108,6 +119,8 @@ export async function runOnboarding(
       discoveredServiceId: 0,
       discoveredServiceName: '',
       collectionId: '',
+      applicationId: '',
+      verificationToken: null,
       status: 'not-found',
     };
   }
@@ -127,28 +140,51 @@ export async function runOnboarding(
   });
   core.info(`Git onboarding complete for ${match.name}`);
 
-  // Acknowledge with Akita backend so the agent stops returning 403
+  // Acknowledge with Akita backend (service-level)
   const providerServiceId = await client.resolveProviderServiceId(
     inputs.projectName,
     inputs.clusterName || undefined,
   );
+  let applicationId = '';
   if (providerServiceId) {
-    const sysEnvId = match.systemEnvironmentId || '';
+    const sysEnvId = inputs.systemEnvironmentId || match.systemEnvironmentId || '';
     if (sysEnvId) {
       core.info(`Acknowledging Insights onboarding for ${providerServiceId}...`);
       await client.acknowledgeOnboarding(providerServiceId, inputs.workspaceId, sysEnvId);
       core.info(`Insights acknowledged: ${providerServiceId}`);
+
+      core.info(`Creating application binding for workspace ${inputs.workspaceId} with system_env ${sysEnvId}...`);
+      const appResult = await client.createApplication(inputs.workspaceId, sysEnvId);
+      applicationId = appResult.application_id;
+      core.info(`Application binding created: ${appResult.application_id} for service ${appResult.service_id}`);
     } else {
-      core.warning('No systemEnvironmentId available; skipping Insights acknowledgment');
+      core.warning('No systemEnvironmentId available; skipping Insights acknowledgment and application binding');
     }
   } else {
-    core.warning('Could not resolve Akita provider service ID; skipping acknowledgment');
+    core.warning('Could not resolve Akita provider service ID; skipping acknowledgment and application binding');
+  }
+
+  // Acknowledge workspace onboarding (clears agent 403 on /v2/agent/services)
+  core.info(`Acknowledging workspace onboarding for ${inputs.workspaceId}...`);
+  await client.acknowledgeWorkspace(inputs.workspaceId);
+  core.info(`Workspace onboarding acknowledged`);
+
+  // Retrieve team verification token for DaemonSet telemetry
+  core.info('Retrieving team verification token...');
+  const verificationToken = await client.getTeamVerificationToken(inputs.workspaceId);
+  if (verificationToken) {
+    core.info('Team verification token retrieved');
+    core.setSecret(verificationToken);
+  } else {
+    core.warning('Failed to retrieve team verification token');
   }
 
   return {
     discoveredServiceId: match.id,
     discoveredServiceName: match.name,
     collectionId,
+    applicationId,
+    verificationToken,
     status: 'success',
   };
 }
@@ -157,10 +193,12 @@ async function runAction(): Promise<void> {
   const inputs = resolveInputs();
   const maskSecret = createSecretMasker([
     inputs.postmanAccessToken,
+    inputs.postmanApiKey,
     inputs.githubToken,
   ]);
 
   core.setSecret(inputs.postmanAccessToken);
+  core.setSecret(inputs.postmanApiKey);
   if (inputs.githubToken) core.setSecret(inputs.githubToken);
 
   const planned = createPlannedOutputs(inputs);
@@ -171,6 +209,7 @@ async function runAction(): Promise<void> {
   const client = new BifrostCatalogClient({
     accessToken: inputs.postmanAccessToken,
     teamId: inputs.postmanTeamId,
+    apiKey: inputs.postmanApiKey,
     maskSecret,
   });
 
@@ -179,6 +218,8 @@ async function runAction(): Promise<void> {
   core.setOutput('discovered-service-id', String(result.discoveredServiceId));
   core.setOutput('discovered-service-name', result.discoveredServiceName);
   core.setOutput('collection-id', result.collectionId);
+  core.setOutput('application-id', result.applicationId);
+  core.setOutput('verification-token', result.verificationToken || '');
   core.setOutput('status', result.status);
 
   if (result.status === 'not-found') {

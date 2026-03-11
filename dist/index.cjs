@@ -19956,13 +19956,15 @@ var BIFROST_BASE = "https://bifrost-premium-https-v4.gw.postman.com/ws/proxy";
 var BifrostCatalogClient = class {
   accessToken;
   teamId;
+  apiKey;
   fetchFn;
   secretValues;
   constructor(options) {
     this.accessToken = options.accessToken;
     this.teamId = options.teamId;
+    this.apiKey = options.apiKey;
     this.fetchFn = options.fetchFn ?? globalThis.fetch;
-    this.secretValues = [options.accessToken];
+    this.secretValues = [options.accessToken, options.apiKey];
   }
   headers() {
     return {
@@ -20041,6 +20043,98 @@ var BifrostCatalogClient = class {
       { maxAttempts: 2, delayMs: 3e3 }
     );
   }
+  async resolveProviderServiceId(projectName, clusterName) {
+    const response = await this.fetchFn(BIFROST_BASE, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({
+        service: "akita",
+        method: "GET",
+        path: "/v2/api-catalog/services?status=discovered&populate_endpoints=false&populate_discovery_metadata=true",
+        body: {}
+      })
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    const fullName = clusterName ? `${clusterName}/${projectName}` : projectName;
+    const match = (data.services || []).find((s) => s.name === fullName) || (data.services || []).find((s) => s.name.endsWith(`/${projectName}`));
+    return match?.id || null;
+  }
+  async acknowledgeOnboarding(providerServiceId, workspaceId, systemEnvironmentId) {
+    const response = await this.fetchFn(BIFROST_BASE, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({
+        service: "akita",
+        method: "POST",
+        path: "/v2/api-catalog/services/onboard",
+        body: {
+          services: [{
+            service_id: providerServiceId,
+            workspace_id: workspaceId,
+            system_env: systemEnvironmentId
+          }]
+        }
+      })
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(`Insights acknowledge failed: ${response.status} ${text}`);
+    }
+  }
+  async acknowledgeWorkspace(workspaceId) {
+    const response = await this.fetchFn(BIFROST_BASE, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({
+        service: "akita",
+        method: "POST",
+        path: `/v2/workspaces/${workspaceId}/onboarding/acknowledge`,
+        body: {}
+      })
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(`Workspace acknowledge failed: ${response.status} ${text}`);
+    }
+  }
+  async createApplication(workspaceId, systemEnv) {
+    const response = await this.fetchFn(
+      `https://api.observability.postman.com/v2/agent/api-catalog/workspaces/${workspaceId}/applications`,
+      {
+        method: "POST",
+        headers: {
+          "x-api-key": this.apiKey,
+          "x-postman-env": "production",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ system_env: systemEnv })
+      }
+    );
+    if (!response.ok) {
+      throw await HttpError.fromResponse(response, {
+        method: "POST",
+        url: `observability:createApplication(${workspaceId})`,
+        secretValues: this.secretValues
+      });
+    }
+    return response.json();
+  }
+  async getTeamVerificationToken(workspaceId) {
+    const response = await this.fetchFn(BIFROST_BASE, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({
+        service: "akita",
+        method: "GET",
+        path: `/v2/workspaces/${workspaceId}/team-verification-token`,
+        body: {}
+      })
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data.team_verification_token || null;
+  }
 };
 function findDiscoveredService(services, projectName, clusterName) {
   if (clusterName) {
@@ -20058,6 +20152,8 @@ function resolveInputs(env = process.env) {
   if (!projectName) throw new Error("project-name is required");
   const postmanAccessToken = get("postman-access-token");
   if (!postmanAccessToken) throw new Error("postman-access-token is required");
+  const postmanApiKey = get("postman-api-key");
+  if (!postmanApiKey) throw new Error("postman-api-key is required");
   const postmanTeamId = get("postman-team-id");
   if (!postmanTeamId) throw new Error("postman-team-id is required");
   const workspaceId = get("workspace-id");
@@ -20071,10 +20167,12 @@ function resolveInputs(env = process.env) {
     projectName,
     workspaceId,
     environmentId,
+    systemEnvironmentId: get("system-environment-id", ""),
     clusterName: get("cluster-name", ""),
     gitOwner,
     gitRepositoryName,
     postmanAccessToken,
+    postmanApiKey,
     postmanTeamId,
     githubToken: get("github-token", env.GITHUB_TOKEN || ""),
     pollTimeoutSeconds: Math.max(0, parseInt(get("poll-timeout-seconds", "120"), 10) || 120),
@@ -20086,6 +20184,8 @@ function createPlannedOutputs(inputs) {
     "discovered-service-id": "",
     "discovered-service-name": inputs.clusterName ? `${inputs.clusterName}/${inputs.projectName}` : inputs.projectName,
     "collection-id": "",
+    "application-id": "",
+    "verification-token": "",
     "status": "pending"
   };
 }
@@ -20112,6 +20212,8 @@ async function runOnboarding(inputs, client, sleepFn = sleep) {
       discoveredServiceId: 0,
       discoveredServiceName: "",
       collectionId: "",
+      applicationId: "",
+      verificationToken: null,
       status: "not-found"
     };
   }
@@ -20128,10 +20230,44 @@ async function runOnboarding(inputs, client, sleepFn = sleep) {
     gitApiKey: inputs.githubToken
   });
   core.info(`Git onboarding complete for ${match.name}`);
+  const providerServiceId = await client.resolveProviderServiceId(
+    inputs.projectName,
+    inputs.clusterName || void 0
+  );
+  let applicationId = "";
+  if (providerServiceId) {
+    const sysEnvId = inputs.systemEnvironmentId || match.systemEnvironmentId || "";
+    if (sysEnvId) {
+      core.info(`Acknowledging Insights onboarding for ${providerServiceId}...`);
+      await client.acknowledgeOnboarding(providerServiceId, inputs.workspaceId, sysEnvId);
+      core.info(`Insights acknowledged: ${providerServiceId}`);
+      core.info(`Creating application binding for workspace ${inputs.workspaceId} with system_env ${sysEnvId}...`);
+      const appResult = await client.createApplication(inputs.workspaceId, sysEnvId);
+      applicationId = appResult.application_id;
+      core.info(`Application binding created: ${appResult.application_id} for service ${appResult.service_id}`);
+    } else {
+      core.warning("No systemEnvironmentId available; skipping Insights acknowledgment and application binding");
+    }
+  } else {
+    core.warning("Could not resolve Akita provider service ID; skipping acknowledgment and application binding");
+  }
+  core.info(`Acknowledging workspace onboarding for ${inputs.workspaceId}...`);
+  await client.acknowledgeWorkspace(inputs.workspaceId);
+  core.info(`Workspace onboarding acknowledged`);
+  core.info("Retrieving team verification token...");
+  const verificationToken = await client.getTeamVerificationToken(inputs.workspaceId);
+  if (verificationToken) {
+    core.info("Team verification token retrieved");
+    core.setSecret(verificationToken);
+  } else {
+    core.warning("Failed to retrieve team verification token");
+  }
   return {
     discoveredServiceId: match.id,
     discoveredServiceName: match.name,
     collectionId,
+    applicationId,
+    verificationToken,
     status: "success"
   };
 }
@@ -20139,9 +20275,11 @@ async function runAction() {
   const inputs = resolveInputs();
   const maskSecret = createSecretMasker([
     inputs.postmanAccessToken,
+    inputs.postmanApiKey,
     inputs.githubToken
   ]);
   core.setSecret(inputs.postmanAccessToken);
+  core.setSecret(inputs.postmanApiKey);
   if (inputs.githubToken) core.setSecret(inputs.githubToken);
   const planned = createPlannedOutputs(inputs);
   for (const [key, value] of Object.entries(planned)) {
@@ -20150,12 +20288,15 @@ async function runAction() {
   const client = new BifrostCatalogClient({
     accessToken: inputs.postmanAccessToken,
     teamId: inputs.postmanTeamId,
+    apiKey: inputs.postmanApiKey,
     maskSecret
   });
   const result = await runOnboarding(inputs, client);
   core.setOutput("discovered-service-id", String(result.discoveredServiceId));
   core.setOutput("discovered-service-name", result.discoveredServiceName);
   core.setOutput("collection-id", result.collectionId);
+  core.setOutput("application-id", result.applicationId);
+  core.setOutput("verification-token", result.verificationToken || "");
   core.setOutput("status", result.status);
   if (result.status === "not-found") {
     core.warning("Insights onboarding skipped: service not found in discovered list");

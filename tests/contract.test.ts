@@ -31,7 +31,7 @@ describe('alpha action contract', () => {
     expect(Object.keys(actionManifest.outputs)).toEqual(contractOutputNames);
   });
 
-  it('marks project-name, workspace-id, environment-id, postman-access-token, postman-team-id as required', () => {
+  it('marks project-name, workspace-id, environment-id, postman-access-token, postman-team-id, postman-api-key as required', () => {
     const requiredInputs = Object.entries(alphaActionContract.inputs)
       .filter(([, v]) => v.required)
       .map(([k]) => k);
@@ -41,6 +41,7 @@ describe('alpha action contract', () => {
       'environment-id',
       'postman-access-token',
       'postman-team-id',
+      'postman-api-key',
     ]);
   });
 
@@ -65,6 +66,7 @@ describe('alpha action contract', () => {
       INPUT_ENVIRONMENT_ID: 'env-456',
       INPUT_CLUSTER_NAME: 'se-catalog-demo',
       INPUT_POSTMAN_ACCESS_TOKEN: 'tok-abc',
+      INPUT_POSTMAN_API_KEY: 'PMAK-test',
       INPUT_POSTMAN_TEAM_ID: '14103640',
     });
     const outputs = createPlannedOutputs(inputs);

@@ -31,6 +31,10 @@ export const alphaActionContract: AlphaActionContract = {
       description: 'Postman environment UID for the onboarding association.',
       required: true,
     },
+    'system-environment-id': {
+      description: 'Postman system environment UUID for service-level Insights acknowledgment.',
+      required: false,
+    },
     'cluster-name': {
       description: 'Insights cluster name. Matches {cluster}/{project-name} in discovered services.',
       required: false,
@@ -55,6 +59,10 @@ export const alphaActionContract: AlphaActionContract = {
       description: 'GitHub token used as git_api_key for the onboarding/git call.',
       required: false,
     },
+    'postman-api-key': {
+      description: 'Postman API key (PMAK-*) for the application binding call to api.observability.postman.com.',
+      required: true,
+    },
     'poll-timeout-seconds': {
       description: 'Maximum seconds to wait for the service to appear in the discovered list.',
       required: false,
@@ -75,6 +83,12 @@ export const alphaActionContract: AlphaActionContract = {
     },
     'collection-id': {
       description: 'Collection ID returned by the prepare-collection step.',
+    },
+    'application-id': {
+      description: 'Insights application binding ID from the observability API.',
+    },
+    'verification-token': {
+      description: 'Insights team verification token (tvt_*) for DaemonSet telemetry.',
     },
     'status': {
       description: 'Onboarding result: success, not-found, or error.',

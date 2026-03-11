@@ -9,6 +9,9 @@ After the Postman Insights agent discovers a service on your cluster, this actio
 - Polls the API Catalog discovered-services list until the service appears (with configurable timeout).
 - Prepares an API Catalog collection for the discovered service in your workspace.
 - Links the service to a GitHub repository through the API Catalog git onboarding flow.
+- Acknowledges the service and workspace with the Insights backend (Akita).
+- Creates an application binding with the observability API (required for service graph edges).
+- Retrieves the team verification token for DaemonSet telemetry.
 
 This action does **not** deploy the Insights agent, create workspaces, or manage environments. Use [postman-bootstrap-action](https://github.com/postman-cs/postman-bootstrap-action) and [postman-repo-sync-action](https://github.com/postman-cs/postman-repo-sync-action) for those concerns.
 
@@ -37,6 +40,7 @@ jobs:
           environment-id: ${{ steps.sync.outputs.environment-uids-json && fromJSON(steps.sync.outputs.environment-uids-json).prod }}
           cluster-name: my-cluster
           postman-access-token: ${{ secrets.POSTMAN_ACCESS_TOKEN }}
+          postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
           postman-team-id: ${{ secrets.POSTMAN_TEAM_ID }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           poll-timeout-seconds: 180
@@ -81,6 +85,7 @@ jobs:
           environment-id: ${{ fromJSON(steps.sync.outputs.environment-uids-json).prod }}
           cluster-name: my-cluster
           postman-access-token: ${{ secrets.POSTMAN_ACCESS_TOKEN }}
+          postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
           postman-team-id: ${{ secrets.POSTMAN_TEAM_ID }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
@@ -96,6 +101,7 @@ jobs:
 | `git-owner` | No | `$GITHUB_REPOSITORY_OWNER` | GitHub organization or user for the repository URL. |
 | `git-repository-name` | No | `project-name` | GitHub repository name. Defaults to the project name. |
 | `postman-access-token` | Yes | | Postman session token for Bifrost API calls. See [Obtaining postman-access-token](#obtaining-postman-access-token-open-alpha). |
+| `postman-api-key` | Yes | | Postman API key (`PMAK-*`) for the application binding call to the observability API. |
 | `postman-team-id` | Yes | | Postman team ID included in Bifrost request headers. |
 | `github-token` | No | `$GITHUB_TOKEN` | GitHub PAT passed as `git_api_key` to the onboarding endpoint. |
 | `poll-timeout-seconds` | No | `120` | Maximum seconds to wait for the service to appear in the discovered list. |
@@ -133,6 +139,8 @@ The `postman-access-token` is a Postman session token (`x-access-token`) require
 | `discovered-service-id` | Numeric ID from the API Catalog discovered-services list. |
 | `discovered-service-name` | Full `cluster/service` name of the discovered service. |
 | `collection-id` | Collection ID returned by the prepare-collection step. |
+| `application-id` | Insights application binding ID from the observability API. |
+| `verification-token` | Insights team verification token (`tvt_*`) for DaemonSet telemetry. |
 | `status` | Result: `success`, `not-found`, or `error`. |
 
 ## Discovery polling
@@ -147,13 +155,16 @@ For services that take longer to appear (cold cluster, large pod startup time), 
 
 ## How it works
 
-The action calls three Bifrost API Catalog endpoints:
+The action calls the following API endpoints in order:
 
-1. **List discovered services** -- `GET /api/v1/onboarding/discovered-services?status=discovered` to find the numeric service ID by matching the service name.
-2. **Prepare collection** -- `POST /api/v1/onboarding/prepare-collection` to create the API Catalog collection entry.
-3. **Onboard git** -- `POST /api/v1/onboarding/git` with `via_integrations: false` to link the service to the GitHub repository using the provided PAT.
-
-All calls go through the Bifrost proxy at `bifrost-premium-https-v4.gw.postman.com/ws/proxy` using `service: "api-catalog"`.
+1. **List discovered services** -- `GET /api/v1/onboarding/discovered-services?status=discovered` (Bifrost api-catalog) to find the numeric service ID by matching the service name.
+2. **Prepare collection** -- `POST /api/v1/onboarding/prepare-collection` (Bifrost api-catalog) to create the API Catalog collection entry.
+3. **Onboard git** -- `POST /api/v1/onboarding/git` (Bifrost api-catalog) with `via_integrations: false` to link the service to the GitHub repository.
+4. **Resolve provider service ID** -- `GET /v2/api-catalog/services?status=discovered&...` (Bifrost akita) to find the `svc_*` Akita service ID.
+5. **Service-level acknowledge** -- `POST /v2/api-catalog/services/onboard` (Bifrost akita) to mark the service as managed.
+6. **Application binding** -- `POST /v2/agent/api-catalog/workspaces/{id}/applications` (direct to `api.observability.postman.com`, NOT Bifrost) to bind the workspace to the Insights application. Required for service graph edge generation.
+7. **Workspace acknowledge** -- `POST /v2/workspaces/{id}/onboarding/acknowledge` (Bifrost akita) to activate the Insights project.
+8. **Team verification token** -- `GET /v2/workspaces/{id}/team-verification-token` (Bifrost akita) to retrieve the DaemonSet telemetry token.
 
 ## Local development
 

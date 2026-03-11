@@ -35,6 +35,7 @@ export interface OnboardGitParams {
 export interface BifrostClientOptions {
   accessToken: string;
   teamId: string;
+  apiKey: string;
   fetchFn?: typeof globalThis.fetch;
   maskSecret?: SecretMasker;
 }
@@ -42,14 +43,16 @@ export interface BifrostClientOptions {
 export class BifrostCatalogClient {
   private readonly accessToken: string;
   private readonly teamId: string;
+  private readonly apiKey: string;
   private readonly fetchFn: typeof globalThis.fetch;
   private readonly secretValues: string[];
 
   constructor(options: BifrostClientOptions) {
     this.accessToken = options.accessToken;
     this.teamId = options.teamId;
+    this.apiKey = options.apiKey;
     this.fetchFn = options.fetchFn ?? globalThis.fetch;
-    this.secretValues = [options.accessToken];
+    this.secretValues = [options.accessToken, options.apiKey];
   }
 
   private headers(): Record<string, string> {
@@ -188,6 +191,65 @@ export class BifrostCatalogClient {
       const text = await response.text().catch(() => '');
       throw new Error(`Insights acknowledge failed: ${response.status} ${text}`);
     }
+  }
+
+  async acknowledgeWorkspace(workspaceId: string): Promise<void> {
+    const response = await this.fetchFn(BIFROST_BASE, {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify({
+        service: 'akita',
+        method: 'POST',
+        path: `/v2/workspaces/${workspaceId}/onboarding/acknowledge`,
+        body: {}
+      })
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`Workspace acknowledge failed: ${response.status} ${text}`);
+    }
+  }
+
+  async createApplication(
+    workspaceId: string,
+    systemEnv: string,
+  ): Promise<{ application_id: string; service_id: string }> {
+    const response = await this.fetchFn(
+      `https://api.observability.postman.com/v2/agent/api-catalog/workspaces/${workspaceId}/applications`,
+      {
+        method: 'POST',
+        headers: {
+          'x-api-key': this.apiKey,
+          'x-postman-env': 'production',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ system_env: systemEnv }),
+      },
+    );
+    if (!response.ok) {
+      throw await HttpError.fromResponse(response, {
+        method: 'POST',
+        url: `observability:createApplication(${workspaceId})`,
+        secretValues: this.secretValues,
+      });
+    }
+    return response.json() as Promise<{ application_id: string; service_id: string }>;
+  }
+
+  async getTeamVerificationToken(workspaceId: string): Promise<string | null> {
+    const response = await this.fetchFn(BIFROST_BASE, {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify({
+        service: 'akita',
+        method: 'GET',
+        path: `/v2/workspaces/${workspaceId}/team-verification-token`,
+        body: {}
+      })
+    });
+    if (!response.ok) return null;
+    const data = (await response.json()) as { team_verification_token?: string };
+    return data.team_verification_token || null;
   }
 }
 

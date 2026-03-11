@@ -55,6 +55,7 @@ describe('BifrostCatalogClient', () => {
     const client = new BifrostCatalogClient({
       accessToken: 'tok-abc',
       teamId: '14103640',
+      apiKey: 'PMAK-test',
       fetchFn,
     });
     const services = await client.listDiscoveredServices();
@@ -71,6 +72,7 @@ describe('BifrostCatalogClient', () => {
     const client = new BifrostCatalogClient({
       accessToken: 'tok-abc',
       teamId: '14103640',
+      apiKey: 'PMAK-test',
       fetchFn,
     });
     const id = await client.prepareCollection(24701, 'ws-123');
@@ -86,6 +88,7 @@ describe('BifrostCatalogClient', () => {
     const client = new BifrostCatalogClient({
       accessToken: 'tok-abc',
       teamId: '14103640',
+      apiKey: 'PMAK-test',
       fetchFn,
     });
     await expect(client.onboardGit({
@@ -110,6 +113,7 @@ describe('BifrostCatalogClient', () => {
     const client = new BifrostCatalogClient({
       accessToken: 'tok-abc',
       teamId: '14103640',
+      apiKey: 'PMAK-test',
       fetchFn,
     });
     await expect(client.onboardGit({
@@ -120,6 +124,46 @@ describe('BifrostCatalogClient', () => {
       gitApiKey: 'ghp_test',
     })).rejects.toThrow(/failed.*403/);
   }, 15_000);
+
+  it('creates application binding via observability API', async () => {
+    const fetchFn = mockFetch([{
+      ok: true,
+      status: 200,
+      body: { application_id: 'app-123', service_id: 'svc_abc', service_name: '[Production] test', system_env: 'sys-env-456' },
+    }]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: 'PMAK-test',
+      fetchFn,
+    });
+    const result = await client.createApplication('ws-123', 'sys-env-456');
+    expect(result.application_id).toBe('app-123');
+    expect(result.service_id).toBe('svc_abc');
+
+    const [url, opts] = (fetchFn as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toBe('https://api.observability.postman.com/v2/agent/api-catalog/workspaces/ws-123/applications');
+    expect(opts.method).toBe('POST');
+    expect(opts.headers['x-api-key']).toBe('PMAK-test');
+    expect(opts.headers['x-postman-env']).toBe('production');
+    expect(JSON.parse(opts.body)).toEqual({ system_env: 'sys-env-456' });
+  });
+
+  it('throws on failed application binding', async () => {
+    const fetchFn = mockFetch([{
+      ok: false,
+      status: 500,
+      body: { message: 'internal error' },
+    }]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: 'PMAK-test',
+      fetchFn,
+    });
+    await expect(client.createApplication('ws-bad', 'sys-env-bad'))
+      .rejects.toThrow(/failed.*500/);
+  });
 });
 
 describe('findDiscoveredService', () => {
