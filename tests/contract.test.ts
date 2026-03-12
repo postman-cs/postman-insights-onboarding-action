@@ -31,7 +31,7 @@ describe('alpha action contract', () => {
     expect(Object.keys(actionManifest.outputs)).toEqual(contractOutputNames);
   });
 
-  it('marks project-name, workspace-id, environment-id, postman-access-token, postman-team-id, postman-api-key as required', () => {
+  it('marks project-name, workspace-id, environment-id, postman-access-token, postman-api-key as required', () => {
     const requiredInputs = Object.entries(alphaActionContract.inputs)
       .filter(([, v]) => v.required)
       .map(([k]) => k);
@@ -40,7 +40,6 @@ describe('alpha action contract', () => {
       'workspace-id',
       'environment-id',
       'postman-access-token',
-      'postman-team-id',
       'postman-api-key',
     ]);
   });

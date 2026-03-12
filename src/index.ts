@@ -3,6 +3,21 @@ import { BifrostCatalogClient, findDiscoveredService } from './lib/bifrost-clien
 import { sleep } from './lib/retry.js';
 import { createSecretMasker } from './lib/secrets.js';
 
+export async function deriveTeamId(apiKey: string): Promise<string | undefined> {
+  try {
+    const res = await fetch('https://api.getpostman.com/me', {
+      method: 'GET',
+      headers: { 'x-api-key': apiKey },
+    });
+    if (!res.ok) return undefined;
+    const data = (await res.json()) as { user?: { teamId?: number | string } };
+    if (data?.user?.teamId) return String(data.user.teamId);
+  } catch {
+    // derivation is best-effort
+  }
+  return undefined;
+}
+
 export interface ActionInputs {
   projectName: string;
   workspaceId: string;
@@ -44,7 +59,6 @@ export function resolveInputs(
   if (!postmanApiKey) throw new Error('postman-api-key is required');
 
   const postmanTeamId = get('postman-team-id');
-  if (!postmanTeamId) throw new Error('postman-team-id is required');
 
   const workspaceId = get('workspace-id');
   if (!workspaceId) throw new Error('workspace-id is required');
@@ -201,6 +215,17 @@ async function runAction(): Promise<void> {
   core.setSecret(inputs.postmanApiKey);
   if (inputs.githubToken) core.setSecret(inputs.githubToken);
 
+  let teamId = inputs.postmanTeamId;
+  if (!teamId) {
+    core.info('postman-team-id not provided; deriving from postman-api-key...');
+    teamId = await deriveTeamId(inputs.postmanApiKey) || '';
+    if (teamId) {
+      core.info(`Derived team ID: ${teamId}`);
+    } else {
+      throw new Error('postman-team-id was not provided and could not be derived from postman-api-key. Supply it explicitly or verify the API key.');
+    }
+  }
+
   const planned = createPlannedOutputs(inputs);
   for (const [key, value] of Object.entries(planned)) {
     core.setOutput(key, value);
@@ -208,7 +233,7 @@ async function runAction(): Promise<void> {
 
   const client = new BifrostCatalogClient({
     accessToken: inputs.postmanAccessToken,
-    teamId: inputs.postmanTeamId,
+    teamId,
     apiKey: inputs.postmanApiKey,
     maskSecret,
   });

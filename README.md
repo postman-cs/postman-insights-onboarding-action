@@ -41,7 +41,6 @@ jobs:
           cluster-name: my-cluster
           postman-access-token: ${{ secrets.POSTMAN_ACCESS_TOKEN }}
           postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
-          postman-team-id: ${{ secrets.POSTMAN_TEAM_ID }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           poll-timeout-seconds: 180
 ```
@@ -86,7 +85,6 @@ jobs:
           cluster-name: my-cluster
           postman-access-token: ${{ secrets.POSTMAN_ACCESS_TOKEN }}
           postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
-          postman-team-id: ${{ secrets.POSTMAN_TEAM_ID }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
@@ -102,10 +100,12 @@ jobs:
 | `git-repository-name` | No | `project-name` | GitHub repository name. Defaults to the project name. |
 | `postman-access-token` | Yes | | Postman session token for Bifrost API calls. See [Obtaining postman-access-token](#obtaining-postman-access-token-open-alpha). |
 | `postman-api-key` | Yes | | Postman API key (`PMAK-*`) for the application binding call to the observability API. |
-| `postman-team-id` | Yes | | Postman team ID included in Bifrost request headers. |
+| `postman-team-id` | No | | Postman team ID included in Bifrost request headers. Auto-derived from `postman-api-key` when omitted. |
 | `github-token` | No | `$GITHUB_TOKEN` | GitHub PAT passed as `git_api_key` to the onboarding endpoint. |
 | `poll-timeout-seconds` | No | `120` | Maximum seconds to wait for the service to appear in the discovered list. |
 | `poll-interval-seconds` | No | `10` | Seconds between polling attempts. |
+
+The action automatically derives the Team ID from your `postman-api-key` via the `/me` API. You only need to supply `postman-team-id` explicitly if the API key user belongs to multiple teams and you need to target a specific one.
 
 ### Obtaining `postman-access-token` (Open Alpha)
 

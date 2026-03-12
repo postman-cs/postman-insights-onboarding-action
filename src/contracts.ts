@@ -52,8 +52,8 @@ export const alphaActionContract: AlphaActionContract = {
       required: true,
     },
     'postman-team-id': {
-      description: 'Postman team ID for Bifrost request headers.',
-      required: true,
+      description: 'Postman team ID for Bifrost request headers. Auto-derived from postman-api-key when omitted.',
+      required: false,
     },
     'github-token': {
       description: 'GitHub token used as git_api_key for the onboarding/git call.',
