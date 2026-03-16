@@ -52,15 +52,15 @@ export const alphaActionContract: AlphaActionContract = {
       required: true,
     },
     'postman-team-id': {
-      description: 'Postman team ID for Bifrost request headers. Auto-derived from postman-api-key when omitted.',
+      description: 'Explicit Postman team ID for org-mode Bifrost request headers. When omitted, x-entity-team-id is not sent.',
       required: false,
     },
     'github-token': {
-      description: 'GitHub token used as git_api_key for the onboarding/git call.',
+      description: 'Optional GitHub token passed as git_api_key when repository auth is required by onboarding/git.',
       required: false,
     },
     'postman-api-key': {
-      description: 'Postman API key (PMAK-*) for the application binding call. Auto-created from postman-access-token when omitted or invalid.',
+      description: 'Postman API key (PMAK-*) for the application binding call. Auto-created from postman-access-token when omitted or invalid after a clear 401/403 validation failure.',
       required: false,
     },
     'poll-timeout-seconds': {

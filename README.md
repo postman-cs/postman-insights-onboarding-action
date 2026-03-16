@@ -100,15 +100,15 @@ jobs:
 | `git-owner` | No | `$GITHUB_REPOSITORY_OWNER` | GitHub organization or user for the repository URL. |
 | `git-repository-name` | No | `project-name` | GitHub repository name. Defaults to the project name. |
 | `postman-access-token` | Yes | | Postman session token for Bifrost API calls. See [Obtaining postman-access-token](#obtaining-postman-access-token-open-alpha). |
-| `postman-team-id` | No | | Postman team ID included in Bifrost request headers. Auto-derived from `postman-api-key` or `postman-access-token` when omitted. |
-| `github-token` | No | `$GITHUB_TOKEN` | GitHub PAT passed as `git_api_key` to the onboarding endpoint. |
-| `postman-api-key` | No | | Postman API key (`PMAK-*`) for the application binding call to the observability API. Auto-created from `postman-access-token` when omitted or invalid. |
+| `postman-team-id` | No | | Explicit Postman team ID for org-mode Bifrost requests. When omitted, the action leaves `x-entity-team-id` unset so Bifrost resolves team context from the access token. |
+| `github-token` | No | ambient `GITHUB_TOKEN` env when exported by the workflow | Optional GitHub token passed as `git_api_key` only when repository auth is required by the onboarding endpoint. |
+| `postman-api-key` | No | | Postman API key (`PMAK-*`) for the application binding call to the observability API. Auto-created from `postman-access-token` when omitted or invalid after a clear 401/403 validation failure. |
 | `poll-timeout-seconds` | No | `120` | Maximum seconds to wait for the service to appear in the discovered list. Clamped to 10--600. |
 | `poll-interval-seconds` | No | `10` | Seconds between polling attempts. Clamped to 2--60. |
 
-The action automatically derives the Team ID from your `postman-api-key` via the `/me` API, falling back to the `postman-access-token` session endpoint. You only need to supply `postman-team-id` explicitly if the automatic derivation fails or you need to target a specific team.
+Supply `postman-team-id` only for org-mode tokens that require an explicit team header. For non-org tokens, leave it unset so Bifrost can infer team context from the access token.
 
-If `postman-api-key` is omitted or invalid, the action creates a new API key via the Bifrost identity service using the `postman-access-token`.
+If `postman-api-key` is omitted or the `/me` validation call returns `401` or `403`, the action creates a new API key via the Bifrost identity service using the `postman-access-token`. Network failures and unexpected validation responses fail the action instead of silently rotating credentials.
 
 ### Obtaining `postman-access-token` (Open Alpha)
 
@@ -144,7 +144,7 @@ The `postman-access-token` is a Postman session token (`x-access-token`) require
 | `collection-id` | Collection ID returned by the prepare-collection step. |
 | `application-id` | Insights application binding ID from the observability API. |
 | `verification-token` | Insights team verification token (`tvt_*`) for DaemonSet telemetry. |
-| `status` | Result: `success`, `not-found`, or `error`. |
+| `status` | Result: `success`, `not-found`, or `error`. Failures set `status=error` before the action exits. |
 
 ## Discovery polling
 

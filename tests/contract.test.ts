@@ -78,6 +78,29 @@ describe('alpha action contract', () => {
     expect(inputs.postmanApiKey).toBe('');
   });
 
+  it('reads POSTMAN_TEAM_ID from env when postman-team-id input is empty', () => {
+    const inputs = resolveInputs({
+      INPUT_PROJECT_NAME: 'svc',
+      INPUT_WORKSPACE_ID: 'ws-123',
+      INPUT_ENVIRONMENT_ID: 'env-456',
+      INPUT_POSTMAN_ACCESS_TOKEN: 'tok-abc',
+      POSTMAN_TEAM_ID: '99999',
+    });
+    expect(inputs.postmanTeamId).toBe('99999');
+  });
+
+  it('prefers postman-team-id input over POSTMAN_TEAM_ID env', () => {
+    const inputs = resolveInputs({
+      INPUT_PROJECT_NAME: 'svc',
+      INPUT_WORKSPACE_ID: 'ws-123',
+      INPUT_ENVIRONMENT_ID: 'env-456',
+      INPUT_POSTMAN_ACCESS_TOKEN: 'tok-abc',
+      INPUT_POSTMAN_TEAM_ID: '11111',
+      POSTMAN_TEAM_ID: '22222',
+    });
+    expect(inputs.postmanTeamId).toBe('11111');
+  });
+
   it('builds planned outputs with cluster-prefixed service name', () => {
     const inputs = resolveInputs({
       INPUT_PROJECT_NAME: 'af-cards-3ds',
