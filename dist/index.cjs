@@ -20037,11 +20037,20 @@ var BifrostCatalogClient = class {
   async listDiscoveredServices() {
     return retry(
       async () => {
-        const data = await this.proxyRequest(
-          "GET",
-          "/api/v1/onboarding/discovered-services?status=discovered"
-        );
-        return data.items || [];
+        const allItems = [];
+        let cursor = null;
+        let hasMore = true;
+        while (hasMore) {
+          const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
+          const data = await this.proxyRequest(
+            "GET",
+            `/api/v1/onboarding/discovered-services?status=discovered${cursorParam}`
+          );
+          allItems.push(...data.items || []);
+          cursor = data.nextCursor || null;
+          hasMore = cursor !== null;
+        }
+        return allItems;
       },
       { maxAttempts: 3, delayMs: 2e3, backoffMultiplier: 2 }
     );
@@ -20062,32 +20071,48 @@ var BifrostCatalogClient = class {
   async onboardGit(params) {
     await retry(
       async () => {
+        const body = {
+          via_integrations: false,
+          git_service_name: "github",
+          workspace_id: params.workspaceId,
+          git_repository_url: params.gitRepositoryUrl,
+          service_id: params.serviceId,
+          environment_id: params.environmentId
+        };
+        if (params.gitApiKey) {
+          body.git_api_key = params.gitApiKey;
+        }
         await this.proxyRequest(
           "POST",
           "/api/v1/onboarding/git",
-          {
-            via_integrations: false,
-            git_service_name: "github",
-            workspace_id: params.workspaceId,
-            git_repository_url: params.gitRepositoryUrl,
-            git_api_key: params.gitApiKey,
-            service_id: params.serviceId,
-            environment_id: params.environmentId
-          }
+          body
         );
       },
       { maxAttempts: 2, delayMs: 3e3 }
     );
   }
   async resolveProviderServiceId(projectName, clusterName) {
-    const result = await this.akitaProxyRequest(
-      "GET",
-      "/v2/api-catalog/services?status=discovered&populate_endpoints=false&populate_discovery_metadata=true"
-    );
-    if (!result.ok || !result.data) return null;
+    const allServices = [];
+    let page = 1;
+    const pageSize = 100;
+    let hasMore = true;
+    while (hasMore) {
+      const result = await this.akitaProxyRequest(
+        "GET",
+        `/v2/api-catalog/services?status=discovered&populate_endpoints=false&populate_discovery_metadata=true&page=${page}&page_size=${pageSize}`
+      );
+      if (!result.ok || !result.data) return null;
+      const services = result.data.services || [];
+      allServices.push(...services);
+      hasMore = services.length >= pageSize;
+      page++;
+    }
     const fullName = clusterName ? `${clusterName}/${projectName}` : projectName;
-    const match = (result.data.services || []).find((s) => s.name === fullName) || (result.data.services || []).find((s) => s.name.endsWith(`/${projectName}`));
-    return match?.id || null;
+    const exactMatch = allServices.find((s) => s.name === fullName);
+    if (exactMatch) return exactMatch.id;
+    if (clusterName) return null;
+    const suffixMatch = allServices.find((s) => s.name.endsWith(`/${projectName}`));
+    return suffixMatch?.id || null;
   }
   async acknowledgeOnboarding(providerServiceId, workspaceId, systemEnvironmentId) {
     const result = await this.akitaProxyRequest(
@@ -20173,8 +20198,7 @@ var BifrostCatalogClient = class {
 function findDiscoveredService(services, projectName, clusterName) {
   if (clusterName) {
     const fullName = `${clusterName}/${projectName}`;
-    const exact = services.find((s) => s.name === fullName);
-    if (exact) return exact;
+    return services.find((s) => s.name === fullName);
   }
   return services.find((s) => s.name.endsWith(`/${projectName}`));
 }
@@ -20200,18 +20224,19 @@ async function deriveTeamId(apiKey) {
   return void 0;
 }
 async function validateApiKey(apiKey) {
-  try {
-    const res = await fetch("https://api.getpostman.com/me", {
-      method: "GET",
-      headers: { "x-api-key": apiKey }
-    });
-    if (!res.ok) return { valid: false };
-    const data = await res.json();
-    const teamId = data?.user?.teamId ? String(data.user.teamId) : void 0;
-    return { valid: true, teamId };
-  } catch {
-    return { valid: false };
+  const res = await fetch("https://api.getpostman.com/me", {
+    method: "GET",
+    headers: { "x-api-key": apiKey }
+  });
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      return { valid: false };
+    }
+    throw new Error(`API key validation failed with unexpected status ${res.status}`);
   }
+  const data = await res.json();
+  const teamId = data?.user?.teamId ? String(data.user.teamId) : void 0;
+  return { valid: true, teamId };
 }
 async function deriveTeamIdFromSession(accessToken) {
   try {
@@ -20237,7 +20262,7 @@ function resolveInputs(env = process.env) {
   const postmanAccessToken = get("postman-access-token");
   if (!postmanAccessToken) throw new Error("postman-access-token is required");
   const postmanApiKey = get("postman-api-key");
-  const postmanTeamId = get("postman-team-id");
+  const postmanTeamId = get("postman-team-id") || env.POSTMAN_TEAM_ID?.trim() || "";
   const workspaceId = get("workspace-id");
   if (!workspaceId) throw new Error("workspace-id is required");
   const environmentId = get("environment-id");
@@ -20311,7 +20336,7 @@ async function runOnboarding(inputs, client, sleepFn = sleep) {
     workspaceId: inputs.workspaceId,
     environmentId: inputs.environmentId,
     gitRepositoryUrl: repoUrl,
-    gitApiKey: inputs.githubToken
+    gitApiKey: inputs.githubToken || void 0
   });
   core.info(`Git onboarding complete for ${match.name}`);
   const providerServiceId = await client.resolveProviderServiceId(
@@ -20357,17 +20382,17 @@ async function runOnboarding(inputs, client, sleepFn = sleep) {
 }
 async function resolveApiKeyAndTeamId(inputs, client) {
   let apiKey = inputs.postmanApiKey;
-  let teamId = inputs.postmanTeamId;
+  const teamId = inputs.postmanTeamId;
   let keyValid = false;
   if (apiKey) {
-    const result = await validateApiKey(apiKey);
-    keyValid = result.valid;
-    if (keyValid && !teamId && result.teamId) {
-      teamId = result.teamId;
-      core.info(`Derived team ID from API key: ${teamId}`);
-    }
-    if (!keyValid) {
-      core.warning("Provided postman-api-key is invalid or expired.");
+    try {
+      const result = await validateApiKey(apiKey);
+      keyValid = result.valid;
+      if (!keyValid) {
+        core.warning("Provided postman-api-key is invalid or expired.");
+      }
+    } catch (error) {
+      throw error;
     }
   }
   if (!keyValid) {
@@ -20377,31 +20402,20 @@ async function resolveApiKeyAndTeamId(inputs, client) {
     core.setSecret(apiKey);
     client.setApiKey(apiKey);
     core.info("New API key created successfully.");
-    if (!teamId) {
-      const derived = await deriveTeamId(apiKey);
-      if (derived) {
-        teamId = derived;
-        core.info(`Derived team ID from new API key: ${teamId}`);
-      }
-    }
   }
-  if (!teamId) {
-    core.info("Attempting team ID derivation from session token...");
-    const sessionTeamId = await deriveTeamIdFromSession(inputs.postmanAccessToken);
-    if (sessionTeamId) {
-      teamId = sessionTeamId;
-      core.info(`Derived team ID from session: ${teamId}`);
-    }
-  }
-  if (!teamId) {
-    throw new Error(
-      "Could not determine team ID. Supply postman-team-id explicitly, or ensure the API key / access token belongs to a team."
-    );
+  if (teamId) {
+    core.info(`Using explicit postman-team-id for Bifrost headers: ${teamId}`);
+  } else {
+    core.info("No explicit postman-team-id provided; omitting x-entity-team-id so Bifrost resolves team from the access token.");
   }
   return { apiKey, teamId };
 }
 async function runAction() {
   const inputs = resolveInputs();
+  const planned = createPlannedOutputs(inputs);
+  for (const [key, value] of Object.entries(planned)) {
+    core.setOutput(key, value);
+  }
   const maskSecret = createSecretMasker([
     inputs.postmanAccessToken,
     inputs.postmanApiKey,
@@ -20417,17 +20431,21 @@ async function runAction() {
     maskSecret
   });
   const { apiKey, teamId } = await resolveApiKeyAndTeamId(inputs, preliminaryClient);
-  const planned = createPlannedOutputs(inputs);
-  for (const [key, value] of Object.entries(planned)) {
-    core.setOutput(key, value);
-  }
   const client = new BifrostCatalogClient({
     accessToken: inputs.postmanAccessToken,
     teamId,
     apiKey,
     maskSecret
   });
-  const result = await runOnboarding(inputs, client);
+  let result;
+  try {
+    result = await runOnboarding(inputs, client);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    core.setOutput("status", "error");
+    core.setFailed(`Insights onboarding failed: ${message}`);
+    return;
+  }
   core.setOutput("discovered-service-id", String(result.discoveredServiceId));
   core.setOutput("discovered-service-name", result.discoveredServiceName);
   core.setOutput("collection-id", result.collectionId);
@@ -20436,14 +20454,13 @@ async function runAction() {
   core.setOutput("status", result.status);
   if (result.status === "not-found") {
     core.warning("Insights onboarding skipped: service not found in discovered list");
-  } else if (result.status === "error") {
-    core.setFailed("Insights onboarding failed");
   } else {
     core.info(`Insights onboarding succeeded: ${result.discoveredServiceName} -> workspace ${inputs.workspaceId}`);
   }
 }
 runAction().catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
+  core.setOutput("status", "error");
   core.setFailed(message);
   process.exitCode = 1;
 });

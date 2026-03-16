@@ -29,7 +29,7 @@ export interface OnboardGitParams {
   workspaceId: string;
   environmentId: string;
   gitRepositoryUrl: string;
-  gitApiKey: string;
+  gitApiKey?: string;
 }
 
 export interface BifrostClientOptions {
@@ -137,11 +137,20 @@ export class BifrostCatalogClient {
   async listDiscoveredServices(): Promise<DiscoveredService[]> {
     return retry(
       async () => {
-        const data = await this.proxyRequest<DiscoveredServicesResponse>(
-          'GET',
-          '/api/v1/onboarding/discovered-services?status=discovered'
-        );
-        return data.items || [];
+        const allItems: DiscoveredService[] = [];
+        let cursor: string | null = null;
+        let hasMore = true;
+        while (hasMore) {
+          const cursorParam: string = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+          const data: DiscoveredServicesResponse = await this.proxyRequest<DiscoveredServicesResponse>(
+            'GET',
+            `/api/v1/onboarding/discovered-services?status=discovered${cursorParam}`
+          );
+          allItems.push(...(data.items || []));
+          cursor = data.nextCursor || null;
+          hasMore = cursor !== null;
+        }
+        return allItems;
       },
       { maxAttempts: 3, delayMs: 2000, backoffMultiplier: 2 }
     );
@@ -164,18 +173,21 @@ export class BifrostCatalogClient {
   async onboardGit(params: OnboardGitParams): Promise<void> {
     await retry(
       async () => {
+        const body: Record<string, unknown> = {
+          via_integrations: false,
+          git_service_name: 'github',
+          workspace_id: params.workspaceId,
+          git_repository_url: params.gitRepositoryUrl,
+          service_id: params.serviceId,
+          environment_id: params.environmentId,
+        };
+        if (params.gitApiKey) {
+          body.git_api_key = params.gitApiKey;
+        }
         await this.proxyRequest<{ message?: string }>(
           'POST',
           '/api/v1/onboarding/git',
-          {
-            via_integrations: false,
-            git_service_name: 'github',
-            workspace_id: params.workspaceId,
-            git_repository_url: params.gitRepositoryUrl,
-            git_api_key: params.gitApiKey,
-            service_id: params.serviceId,
-            environment_id: params.environmentId
-          }
+          body
         );
       },
       { maxAttempts: 2, delayMs: 3000 }
@@ -186,15 +198,31 @@ export class BifrostCatalogClient {
     projectName: string,
     clusterName?: string
   ): Promise<string | null> {
-    const result = await this.akitaProxyRequest<{ services?: Array<{ id: string; name: string }> }>(
-      'GET',
-      '/v2/api-catalog/services?status=discovered&populate_endpoints=false&populate_discovery_metadata=true'
-    );
-    if (!result.ok || !result.data) return null;
+    const allServices: Array<{ id: string; name: string }> = [];
+    let page = 1;
+    const pageSize = 100;
+    let hasMore = true;
+
+    while (hasMore) {
+      const result = await this.akitaProxyRequest<{ services?: Array<{ id: string; name: string }> }>(
+        'GET',
+        `/v2/api-catalog/services?status=discovered&populate_endpoints=false&populate_discovery_metadata=true&page=${page}&page_size=${pageSize}`
+      );
+      if (!result.ok || !result.data) return null;
+      const services = result.data.services || [];
+      allServices.push(...services);
+      hasMore = services.length >= pageSize;
+      page++;
+    }
+
     const fullName = clusterName ? `${clusterName}/${projectName}` : projectName;
-    const match = (result.data.services || []).find((s) => s.name === fullName)
-      || (result.data.services || []).find((s) => s.name.endsWith(`/${projectName}`));
-    return match?.id || null;
+    // When clusterName is provided, require exact match only (no suffix fallback)
+    const exactMatch = allServices.find((s) => s.name === fullName);
+    if (exactMatch) return exactMatch.id;
+    if (clusterName) return null;
+    // Without clusterName, fall back to suffix match
+    const suffixMatch = allServices.find((s) => s.name.endsWith(`/${projectName}`));
+    return suffixMatch?.id || null;
   }
 
   async acknowledgeOnboarding(
@@ -300,8 +328,8 @@ export function findDiscoveredService(
 ): DiscoveredService | undefined {
   if (clusterName) {
     const fullName = `${clusterName}/${projectName}`;
-    const exact = services.find((s) => s.name === fullName);
-    if (exact) return exact;
+    // When clusterName is provided, require exact match only (no suffix fallback)
+    return services.find((s) => s.name === fullName);
   }
   return services.find((s) => s.name.endsWith(`/${projectName}`));
 }

@@ -26,18 +26,19 @@ export async function deriveTeamId(apiKey: string): Promise<string | undefined> 
 }
 
 export async function validateApiKey(apiKey: string): Promise<{ valid: boolean; teamId?: string }> {
-  try {
-    const res = await fetch('https://api.getpostman.com/me', {
-      method: 'GET',
-      headers: { 'x-api-key': apiKey },
-    });
-    if (!res.ok) return { valid: false };
-    const data = (await res.json()) as { user?: { teamId?: number | string } };
-    const teamId = data?.user?.teamId ? String(data.user.teamId) : undefined;
-    return { valid: true, teamId };
-  } catch {
-    return { valid: false };
+  const res = await fetch('https://api.getpostman.com/me', {
+    method: 'GET',
+    headers: { 'x-api-key': apiKey },
+  });
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      return { valid: false };
+    }
+    throw new Error(`API key validation failed with unexpected status ${res.status}`);
   }
+  const data = (await res.json()) as { user?: { teamId?: number | string } };
+  const teamId = data?.user?.teamId ? String(data.user.teamId) : undefined;
+  return { valid: true, teamId };
 }
 
 export async function deriveTeamIdFromSession(accessToken: string): Promise<string | undefined> {
@@ -100,7 +101,8 @@ export function resolveInputs(
   if (!postmanAccessToken) throw new Error('postman-access-token is required');
 
   const postmanApiKey = get('postman-api-key');
-  const postmanTeamId = get('postman-team-id');
+  // Read postman-team-id from action input, falling back to POSTMAN_TEAM_ID env
+  const postmanTeamId = get('postman-team-id') || env.POSTMAN_TEAM_ID?.trim() || '';
 
   const workspaceId = get('workspace-id');
   if (!workspaceId) throw new Error('workspace-id is required');
@@ -195,7 +197,7 @@ export async function runOnboarding(
     workspaceId: inputs.workspaceId,
     environmentId: inputs.environmentId,
     gitRepositoryUrl: repoUrl,
-    gitApiKey: inputs.githubToken,
+    gitApiKey: inputs.githubToken || undefined,
   });
   core.info(`Git onboarding complete for ${match.name}`);
 
@@ -250,18 +252,19 @@ export async function resolveApiKeyAndTeamId(
   client: BifrostCatalogClient,
 ): Promise<{ apiKey: string; teamId: string }> {
   let apiKey = inputs.postmanApiKey;
-  let teamId = inputs.postmanTeamId;
+  const teamId = inputs.postmanTeamId;
   let keyValid = false;
 
   if (apiKey) {
-    const result = await validateApiKey(apiKey);
-    keyValid = result.valid;
-    if (keyValid && !teamId && result.teamId) {
-      teamId = result.teamId;
-      core.info(`Derived team ID from API key: ${teamId}`);
-    }
-    if (!keyValid) {
-      core.warning('Provided postman-api-key is invalid or expired.');
+    try {
+      const result = await validateApiKey(apiKey);
+      keyValid = result.valid;
+      if (!keyValid) {
+        core.warning('Provided postman-api-key is invalid or expired.');
+      }
+    } catch (error: unknown) {
+      // Network errors or unexpected status codes: rethrow instead of treating as invalid key
+      throw error;
     }
   }
 
@@ -272,29 +275,12 @@ export async function resolveApiKeyAndTeamId(
     core.setSecret(apiKey);
     client.setApiKey(apiKey);
     core.info('New API key created successfully.');
-
-    if (!teamId) {
-      const derived = await deriveTeamId(apiKey);
-      if (derived) {
-        teamId = derived;
-        core.info(`Derived team ID from new API key: ${teamId}`);
-      }
-    }
   }
 
-  if (!teamId) {
-    core.info('Attempting team ID derivation from session token...');
-    const sessionTeamId = await deriveTeamIdFromSession(inputs.postmanAccessToken);
-    if (sessionTeamId) {
-      teamId = sessionTeamId;
-      core.info(`Derived team ID from session: ${teamId}`);
-    }
-  }
-
-  if (!teamId) {
-    throw new Error(
-      'Could not determine team ID. Supply postman-team-id explicitly, or ensure the API key / access token belongs to a team.'
-    );
+  if (teamId) {
+    core.info(`Using explicit postman-team-id for Bifrost headers: ${teamId}`);
+  } else {
+    core.info('No explicit postman-team-id provided; omitting x-entity-team-id so Bifrost resolves team from the access token.');
   }
 
   return { apiKey, teamId };
@@ -302,6 +288,11 @@ export async function resolveApiKeyAndTeamId(
 
 async function runAction(): Promise<void> {
   const inputs = resolveInputs();
+  const planned = createPlannedOutputs(inputs);
+  for (const [key, value] of Object.entries(planned)) {
+    core.setOutput(key, value);
+  }
+
   const maskSecret = createSecretMasker([
     inputs.postmanAccessToken,
     inputs.postmanApiKey,
@@ -321,11 +312,6 @@ async function runAction(): Promise<void> {
 
   const { apiKey, teamId } = await resolveApiKeyAndTeamId(inputs, preliminaryClient);
 
-  const planned = createPlannedOutputs(inputs);
-  for (const [key, value] of Object.entries(planned)) {
-    core.setOutput(key, value);
-  }
-
   const client = new BifrostCatalogClient({
     accessToken: inputs.postmanAccessToken,
     teamId,
@@ -333,7 +319,15 @@ async function runAction(): Promise<void> {
     maskSecret,
   });
 
-  const result = await runOnboarding(inputs, client);
+  let result: import('./index.js').OnboardingResult;
+  try {
+    result = await runOnboarding(inputs, client);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    core.setOutput('status', 'error');
+    core.setFailed(`Insights onboarding failed: ${message}`);
+    return;
+  }
 
   core.setOutput('discovered-service-id', String(result.discoveredServiceId));
   core.setOutput('discovered-service-name', result.discoveredServiceName);
@@ -344,8 +338,6 @@ async function runAction(): Promise<void> {
 
   if (result.status === 'not-found') {
     core.warning('Insights onboarding skipped: service not found in discovered list');
-  } else if (result.status === 'error') {
-    core.setFailed('Insights onboarding failed');
   } else {
     core.info(`Insights onboarding succeeded: ${result.discoveredServiceName} -> workspace ${inputs.workspaceId}`);
   }
@@ -353,6 +345,7 @@ async function runAction(): Promise<void> {
 
 runAction().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
+  core.setOutput('status', 'error');
   core.setFailed(message);
   process.exitCode = 1;
 });

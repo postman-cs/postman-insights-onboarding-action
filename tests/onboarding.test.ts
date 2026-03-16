@@ -1,10 +1,8 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import {
   runOnboarding,
-  resolveInputs,
   resolveApiKeyAndTeamId,
   validateApiKey,
-  deriveTeamIdFromSession,
   type ActionInputs,
 } from '../src/index.js';
 import { BifrostCatalogClient, type DiscoveredService } from '../src/lib/bifrost-client.js';
@@ -148,13 +146,13 @@ describe('resolveApiKeyAndTeamId', () => {
       client,
     );
     expect(result.apiKey).toBe('PMAK-test');
-    expect(result.teamId).toBe('99999');
+    expect(result.teamId).toBe('');
     expect(client.createApiKey).not.toHaveBeenCalled();
   });
 
   it('creates new API key when provided key is invalid', async () => {
     let callCount = 0;
-    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+    globalThis.fetch = vi.fn().mockImplementation(async () => {
       callCount++;
       if (callCount === 1) {
         return { ok: false, status: 401, json: async () => ({}) };
@@ -169,7 +167,7 @@ describe('resolveApiKeyAndTeamId', () => {
     );
     expect(result.apiKey).toBe('PMAK-generated');
     expect(client.createApiKey).toHaveBeenCalled();
-    expect(result.teamId).toBe('88888');
+    expect(result.teamId).toBe('');
   });
 
   it('creates new API key when no key is provided', async () => {
@@ -185,23 +183,13 @@ describe('resolveApiKeyAndTeamId', () => {
     );
     expect(result.apiKey).toBe('PMAK-generated');
     expect(client.createApiKey).toHaveBeenCalled();
-    expect(result.teamId).toBe('77777');
+    expect(result.teamId).toBe('');
   });
 
-  it('falls back to session token for team ID derivation', async () => {
-    let callCount = 0;
-    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
-      callCount++;
-      if (String(url).includes('getpostman.com/me')) {
-        return { ok: true, json: async () => ({ user: {} }) };
-      }
-      if (String(url).includes('sessions/current')) {
-        return {
-          ok: true,
-          json: async () => ({ session: { identity: { team: 66666 } } }),
-        };
-      }
-      return { ok: false, status: 404, json: async () => ({}) };
+  it('does not require a derived team ID when none is provided', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ user: {} }),
     }) as unknown as typeof fetch;
 
     const client = makeClient();
@@ -209,19 +197,7 @@ describe('resolveApiKeyAndTeamId', () => {
       makeInputs({ postmanTeamId: '' }),
       client,
     );
-    expect(result.teamId).toBe('66666');
-  });
-
-  it('throws when team ID cannot be derived from any source', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ user: {} }),
-    }) as unknown as typeof fetch;
-
-    const client = makeClient();
-    await expect(
-      resolveApiKeyAndTeamId(makeInputs({ postmanTeamId: '' }), client)
-    ).rejects.toThrow('Could not determine team ID');
+    expect(result.teamId).toBe('');
   });
 
   it('uses explicit postman-team-id when provided', async () => {
@@ -261,7 +237,7 @@ describe('validateApiKey', () => {
     expect(result.teamId).toBe('12345');
   });
 
-  it('returns valid=false for a bad key', async () => {
+  it('returns valid=false for a 401 key', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 401,
@@ -272,42 +248,30 @@ describe('validateApiKey', () => {
     expect(result.teamId).toBeUndefined();
   });
 
-  it('returns valid=false on network error', async () => {
-    globalThis.fetch = vi.fn().mockRejectedValue(new Error('network')) as unknown as typeof fetch;
-
-    const result = await validateApiKey('PMAK-err');
-    expect(result.valid).toBe(false);
-  });
-});
-
-describe('deriveTeamIdFromSession', () => {
-  let originalFetch: typeof globalThis.fetch;
-
-  beforeEach(() => {
-    originalFetch = globalThis.fetch;
-  });
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
-  it('extracts team ID from session response', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ session: { identity: { team: 42 } } }),
-    }) as unknown as typeof fetch;
-
-    const result = await deriveTeamIdFromSession('tok-session');
-    expect(result).toBe('42');
-  });
-
-  it('returns undefined on failure', async () => {
+  it('returns valid=false for a 403 key', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
-      status: 401,
+      status: 403,
     }) as unknown as typeof fetch;
 
-    const result = await deriveTeamIdFromSession('tok-bad');
-    expect(result).toBeUndefined();
+    const result = await validateApiKey('PMAK-forbidden');
+    expect(result.valid).toBe(false);
+  });
+
+  it('throws on unexpected HTTP status (e.g. 500)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+    }) as unknown as typeof fetch;
+
+    await expect(validateApiKey('PMAK-err')).rejects.toThrow(
+      'API key validation failed with unexpected status 500'
+    );
+  });
+
+  it('throws on network error instead of treating as invalid', async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('network')) as unknown as typeof fetch;
+
+    await expect(validateApiKey('PMAK-err')).rejects.toThrow('network');
   });
 });

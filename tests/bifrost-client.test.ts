@@ -105,6 +105,30 @@ describe('BifrostCatalogClient', () => {
     expect(callBody.body.git_api_key).toBe('ghp_test');
   });
 
+  it('omits git_api_key when not provided', async () => {
+    const fetchFn = mockFetch([{
+      ok: true,
+      status: 200,
+      body: { message: 'ok' },
+    }]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: 'PMAK-test',
+      fetchFn,
+    });
+    await client.onboardGit({
+      serviceId: 24701,
+      workspaceId: 'ws-123',
+      environmentId: 'env-456',
+      gitRepositoryUrl: 'https://github.com/postman-cs/af-cards-activation',
+    });
+
+    const callBody = JSON.parse((fetchFn as ReturnType<typeof vi.fn>).mock.calls[0][1].body);
+    expect(callBody.body.git_api_key).toBeUndefined();
+    expect(callBody.body.via_integrations).toBe(false);
+  });
+
   it('throws HttpError on non-ok response after retries', async () => {
     const fetchFn = mockFetch([
       { ok: false, status: 403, body: { error: 'forbidden' } },
@@ -259,6 +283,42 @@ describe('BifrostCatalogClient', () => {
       .rejects.toThrow(/failed.*401/);
   });
 
+  it('follows pagination cursors in listDiscoveredServices', async () => {
+    const page1Service: DiscoveredService = {
+      ...sampleServices[0],
+      id: 1001,
+      name: 'cluster-a/svc-1',
+    };
+    const page2Service: DiscoveredService = {
+      ...sampleServices[0],
+      id: 1002,
+      name: 'cluster-a/svc-2',
+    };
+    const fetchFn = mockFetch([
+      {
+        ok: true,
+        status: 200,
+        body: { total: 2, nextCursor: 'cursor-page2', items: [page1Service] },
+      },
+      {
+        ok: true,
+        status: 200,
+        body: { total: 2, nextCursor: null, items: [page2Service] },
+      },
+    ]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: 'PMAK-test',
+      fetchFn,
+    });
+    const services = await client.listDiscoveredServices();
+    expect(services).toHaveLength(2);
+    expect(services[0].id).toBe(1001);
+    expect(services[1].id).toBe(1002);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
   it('setApiKey updates the key used for observability calls', async () => {
     const fetchFn = mockFetch([{
       ok: true,
@@ -289,6 +349,11 @@ describe('findDiscoveredService', () => {
   it('falls back to suffix match without cluster', () => {
     const match = findDiscoveredService(sampleServices, 'af-cards-authorization');
     expect(match?.id).toBe(24751);
+  });
+
+  it('does NOT fall back to suffix match when cluster is provided but no exact match', () => {
+    const match = findDiscoveredService(sampleServices, 'af-cards-activation', 'wrong-cluster');
+    expect(match).toBeUndefined();
   });
 
   it('returns undefined when no match', () => {
