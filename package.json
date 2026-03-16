@@ -22,11 +22,14 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@actions/core": "^1.11.1"
+    "@actions/core": "^3.0.0"
+  },
+  "overrides": {
+    "undici": ">=6.24.0"
   },
   "devDependencies": {
-    "esbuild": "^0.27.3",
     "@types/node": "^25.3.5",
+    "esbuild": "^0.27.3",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18",
     "yaml": "^2.8.2"
