@@ -95,17 +95,20 @@ jobs:
 | `project-name` | Yes | | Service name to match against discovered service names. Matches `{cluster-name}/{project-name}` in the API Catalog. |
 | `workspace-id` | Yes | | Postman workspace ID to link the discovered service to. |
 | `environment-id` | Yes | | Postman environment UID for the onboarding association. |
+| `system-environment-id` | No | | Postman system environment UUID for service-level Insights acknowledgment. Falls back to the value from the discovered service record. |
 | `cluster-name` | No | | Insights cluster name. When set, the action matches `{cluster-name}/{project-name}` exactly. When omitted, falls back to suffix matching. |
 | `git-owner` | No | `$GITHUB_REPOSITORY_OWNER` | GitHub organization or user for the repository URL. |
 | `git-repository-name` | No | `project-name` | GitHub repository name. Defaults to the project name. |
 | `postman-access-token` | Yes | | Postman session token for Bifrost API calls. See [Obtaining postman-access-token](#obtaining-postman-access-token-open-alpha). |
-| `postman-api-key` | Yes | | Postman API key (`PMAK-*`) for the application binding call to the observability API. |
-| `postman-team-id` | No | | Postman team ID included in Bifrost request headers. Auto-derived from `postman-api-key` when omitted. |
+| `postman-team-id` | No | | Postman team ID included in Bifrost request headers. Auto-derived from `postman-api-key` or `postman-access-token` when omitted. |
 | `github-token` | No | `$GITHUB_TOKEN` | GitHub PAT passed as `git_api_key` to the onboarding endpoint. |
-| `poll-timeout-seconds` | No | `120` | Maximum seconds to wait for the service to appear in the discovered list. |
-| `poll-interval-seconds` | No | `10` | Seconds between polling attempts. |
+| `postman-api-key` | No | | Postman API key (`PMAK-*`) for the application binding call to the observability API. Auto-created from `postman-access-token` when omitted or invalid. |
+| `poll-timeout-seconds` | No | `120` | Maximum seconds to wait for the service to appear in the discovered list. Clamped to 10--600. |
+| `poll-interval-seconds` | No | `10` | Seconds between polling attempts. Clamped to 2--60. |
 
-The action automatically derives the Team ID from your `postman-api-key` via the `/me` API. You only need to supply `postman-team-id` explicitly if the API key user belongs to multiple teams and you need to target a specific one.
+The action automatically derives the Team ID from your `postman-api-key` via the `/me` API, falling back to the `postman-access-token` session endpoint. You only need to supply `postman-team-id` explicitly if the automatic derivation fails or you need to target a specific team.
+
+If `postman-api-key` is omitted or invalid, the action creates a new API key via the Bifrost identity service using the `postman-access-token`.
 
 ### Obtaining `postman-access-token` (Open Alpha)
 
@@ -147,8 +150,8 @@ The `postman-access-token` is a Postman session token (`x-access-token`) require
 
 The Insights agent takes time to discover services after pods start. This action polls the API Catalog discovered-services list at the configured interval until the service appears or the timeout is reached.
 
-- Default timeout: 120 seconds (configurable via `poll-timeout-seconds`).
-- Default interval: 10 seconds (configurable via `poll-interval-seconds`).
+- Default timeout: 120 seconds (configurable via `poll-timeout-seconds`, clamped to 10--600).
+- Default interval: 10 seconds (configurable via `poll-interval-seconds`, clamped to 2--60).
 - If the service is not found after the timeout, the action sets `status` to `not-found` and emits a warning (does not fail the workflow).
 
 For services that take longer to appear (cold cluster, large pod startup time), increase `poll-timeout-seconds` to 300 or more.

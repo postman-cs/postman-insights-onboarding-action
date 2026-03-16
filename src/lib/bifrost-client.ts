@@ -43,7 +43,7 @@ export interface BifrostClientOptions {
 export class BifrostCatalogClient {
   private readonly accessToken: string;
   private readonly teamId: string;
-  private readonly apiKey: string;
+  private apiKey: string;
   private readonly fetchFn: typeof globalThis.fetch;
   private readonly secretValues: string[];
 
@@ -52,15 +52,30 @@ export class BifrostCatalogClient {
     this.teamId = options.teamId;
     this.apiKey = options.apiKey;
     this.fetchFn = options.fetchFn ?? globalThis.fetch;
-    this.secretValues = [options.accessToken, options.apiKey];
+    this.secretValues = [options.accessToken, options.apiKey].filter(Boolean);
   }
 
+  setApiKey(apiKey: string): void {
+    this.apiKey = apiKey;
+    if (apiKey && !this.secretValues.includes(apiKey)) {
+      this.secretValues.push(apiKey);
+    }
+  }
+
+  /**
+   * Build Bifrost proxy headers.
+   * x-entity-team-id is ONLY included when teamId is present (org-mode tokens).
+   * Non-org-mode tokens must OMIT it so Bifrost resolves team from the access token.
+   */
   private headers(): Record<string, string> {
-    return {
+    const h: Record<string, string> = {
       'x-access-token': this.accessToken,
-      'x-entity-team-id': this.teamId,
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
     };
+    if (this.teamId) {
+      h['x-entity-team-id'] = this.teamId;
+    }
+    return h;
   }
 
   private async proxyRequest<T>(
@@ -94,6 +109,29 @@ export class BifrostCatalogClient {
     }
 
     return data;
+  }
+
+  private async akitaProxyRequest<T>(
+    method: string,
+    path: string,
+    body: unknown = {}
+  ): Promise<{ ok: boolean; status: number; data: T | null; errorText: string }> {
+    const response = await this.fetchFn(BIFROST_BASE, {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify({
+        service: 'akita',
+        method,
+        path,
+        body
+      })
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      return { ok: false, status: response.status, data: null, errorText: text };
+    }
+    const data = (await response.json()) as T;
+    return { ok: true, status: response.status, data, errorText: '' };
   }
 
   async listDiscoveredServices(): Promise<DiscoveredService[]> {
@@ -148,21 +186,14 @@ export class BifrostCatalogClient {
     projectName: string,
     clusterName?: string
   ): Promise<string | null> {
-    const response = await this.fetchFn(BIFROST_BASE, {
-      method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify({
-        service: 'akita',
-        method: 'GET',
-        path: '/v2/api-catalog/services?status=discovered&populate_endpoints=false&populate_discovery_metadata=true',
-        body: {}
-      })
-    });
-    if (!response.ok) return null;
-    const data = (await response.json()) as { services?: Array<{ id: string; name: string }> };
+    const result = await this.akitaProxyRequest<{ services?: Array<{ id: string; name: string }> }>(
+      'GET',
+      '/v2/api-catalog/services?status=discovered&populate_endpoints=false&populate_discovery_metadata=true'
+    );
+    if (!result.ok || !result.data) return null;
     const fullName = clusterName ? `${clusterName}/${projectName}` : projectName;
-    const match = (data.services || []).find((s) => s.name === fullName)
-      || (data.services || []).find((s) => s.name.endsWith(`/${projectName}`));
+    const match = (result.data.services || []).find((s) => s.name === fullName)
+      || (result.data.services || []).find((s) => s.name.endsWith(`/${projectName}`));
     return match?.id || null;
   }
 
@@ -171,42 +202,29 @@ export class BifrostCatalogClient {
     workspaceId: string,
     systemEnvironmentId: string
   ): Promise<void> {
-    const response = await this.fetchFn(BIFROST_BASE, {
-      method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify({
-        service: 'akita',
-        method: 'POST',
-        path: '/v2/api-catalog/services/onboard',
-        body: {
-          services: [{
-            service_id: providerServiceId,
-            workspace_id: workspaceId,
-            system_env: systemEnvironmentId
-          }]
-        }
-      })
-    });
-    if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      throw new Error(`Insights acknowledge failed: ${response.status} ${text}`);
+    const result = await this.akitaProxyRequest<unknown>(
+      'POST',
+      '/v2/api-catalog/services/onboard',
+      {
+        services: [{
+          service_id: providerServiceId,
+          workspace_id: workspaceId,
+          system_env: systemEnvironmentId
+        }]
+      }
+    );
+    if (!result.ok) {
+      throw new Error(`Insights acknowledge failed: ${result.status} ${result.errorText}`);
     }
   }
 
   async acknowledgeWorkspace(workspaceId: string): Promise<void> {
-    const response = await this.fetchFn(BIFROST_BASE, {
-      method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify({
-        service: 'akita',
-        method: 'POST',
-        path: `/v2/workspaces/${workspaceId}/onboarding/acknowledge`,
-        body: {}
-      })
-    });
-    if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      throw new Error(`Workspace acknowledge failed: ${response.status} ${text}`);
+    const result = await this.akitaProxyRequest<unknown>(
+      'POST',
+      `/v2/workspaces/${workspaceId}/onboarding/acknowledge`
+    );
+    if (!result.ok) {
+      throw new Error(`Workspace acknowledge failed: ${result.status} ${result.errorText}`);
     }
   }
 
@@ -237,19 +255,41 @@ export class BifrostCatalogClient {
   }
 
   async getTeamVerificationToken(workspaceId: string): Promise<string | null> {
+    const result = await this.akitaProxyRequest<{ team_verification_token?: string }>(
+      'GET',
+      `/v2/workspaces/${workspaceId}/team-verification-token`
+    );
+    if (!result.ok || !result.data) return null;
+    return result.data.team_verification_token || null;
+  }
+
+  async createApiKey(name: string): Promise<string> {
     const response = await this.fetchFn(BIFROST_BASE, {
       method: 'POST',
       headers: this.headers(),
       body: JSON.stringify({
-        service: 'akita',
-        method: 'GET',
-        path: `/v2/workspaces/${workspaceId}/team-verification-token`,
-        body: {}
+        service: 'identity',
+        method: 'POST',
+        path: '/api/keys',
+        body: { apikey: { name, type: 'v2' } }
       })
     });
-    if (!response.ok) return null;
-    const data = (await response.json()) as { team_verification_token?: string };
-    return data.team_verification_token || null;
+
+    if (!response.ok) {
+      throw await HttpError.fromResponse(response, {
+        method: 'POST',
+        url: 'bifrost:identity:POST /api/keys',
+        secretValues: this.secretValues,
+      });
+    }
+
+    const data = await response.json() as Record<string, unknown>;
+    const apikey = data?.apikey as Record<string, unknown> | undefined;
+    if (!apikey?.key) {
+      throw new Error('Failed to extract API key from Bifrost identity response');
+    }
+
+    return String(apikey.key);
   }
 }
 

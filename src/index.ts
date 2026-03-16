@@ -3,6 +3,13 @@ import { BifrostCatalogClient, findDiscoveredService } from './lib/bifrost-clien
 import { sleep } from './lib/retry.js';
 import { createSecretMasker } from './lib/secrets.js';
 
+const POLL_TIMEOUT_MIN = 10;
+const POLL_TIMEOUT_MAX = 600;
+const POLL_TIMEOUT_DEFAULT = 120;
+const POLL_INTERVAL_MIN = 2;
+const POLL_INTERVAL_MAX = 60;
+const POLL_INTERVAL_DEFAULT = 10;
+
 export async function deriveTeamId(apiKey: string): Promise<string | undefined> {
   try {
     const res = await fetch('https://api.getpostman.com/me', {
@@ -14,6 +21,38 @@ export async function deriveTeamId(apiKey: string): Promise<string | undefined> 
     if (data?.user?.teamId) return String(data.user.teamId);
   } catch {
     // derivation is best-effort
+  }
+  return undefined;
+}
+
+export async function validateApiKey(apiKey: string): Promise<{ valid: boolean; teamId?: string }> {
+  try {
+    const res = await fetch('https://api.getpostman.com/me', {
+      method: 'GET',
+      headers: { 'x-api-key': apiKey },
+    });
+    if (!res.ok) return { valid: false };
+    const data = (await res.json()) as { user?: { teamId?: number | string } };
+    const teamId = data?.user?.teamId ? String(data.user.teamId) : undefined;
+    return { valid: true, teamId };
+  } catch {
+    return { valid: false };
+  }
+}
+
+export async function deriveTeamIdFromSession(accessToken: string): Promise<string | undefined> {
+  try {
+    const res = await fetch('https://iapub.postman.co/api/sessions/current', {
+      method: 'GET',
+      headers: { 'x-access-token': accessToken },
+    });
+    if (!res.ok) return undefined;
+    const data = (await res.json()) as {
+      session?: { identity?: { team?: number | string } };
+    };
+    if (data?.session?.identity?.team) return String(data.session.identity.team);
+  } catch {
+    // fallback is best-effort
   }
   return undefined;
 }
@@ -43,6 +82,11 @@ export interface OnboardingResult {
   status: 'success' | 'not-found' | 'error';
 }
 
+function clamp(value: number, min: number, max: number, fallback: number): number {
+  const parsed = Number.isFinite(value) ? value : fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
 export function resolveInputs(
   env: Record<string, string | undefined> = process.env
 ): ActionInputs {
@@ -56,8 +100,6 @@ export function resolveInputs(
   if (!postmanAccessToken) throw new Error('postman-access-token is required');
 
   const postmanApiKey = get('postman-api-key');
-  if (!postmanApiKey) throw new Error('postman-api-key is required');
-
   const postmanTeamId = get('postman-team-id');
 
   const workspaceId = get('workspace-id');
@@ -69,6 +111,9 @@ export function resolveInputs(
   const repoOwner = (env.GITHUB_REPOSITORY || '').split('/')[0] || '';
   const gitOwner = get('git-owner', repoOwner);
   const gitRepositoryName = get('git-repository-name', projectName);
+
+  const rawTimeout = parseInt(get('poll-timeout-seconds', String(POLL_TIMEOUT_DEFAULT)), 10);
+  const rawInterval = parseInt(get('poll-interval-seconds', String(POLL_INTERVAL_DEFAULT)), 10);
 
   return {
     projectName,
@@ -82,8 +127,8 @@ export function resolveInputs(
     postmanApiKey,
     postmanTeamId,
     githubToken: get('github-token', env.GITHUB_TOKEN || ''),
-    pollTimeoutSeconds: Math.max(0, parseInt(get('poll-timeout-seconds', '120'), 10) || 120),
-    pollIntervalSeconds: Math.max(1, parseInt(get('poll-interval-seconds', '10'), 10) || 10),
+    pollTimeoutSeconds: clamp(rawTimeout, POLL_TIMEOUT_MIN, POLL_TIMEOUT_MAX, POLL_TIMEOUT_DEFAULT),
+    pollIntervalSeconds: clamp(rawInterval, POLL_INTERVAL_MIN, POLL_INTERVAL_MAX, POLL_INTERVAL_DEFAULT),
   };
 }
 
@@ -154,7 +199,6 @@ export async function runOnboarding(
   });
   core.info(`Git onboarding complete for ${match.name}`);
 
-  // Acknowledge with Akita backend (service-level)
   const providerServiceId = await client.resolveProviderServiceId(
     inputs.projectName,
     inputs.clusterName || undefined,
@@ -178,12 +222,10 @@ export async function runOnboarding(
     core.warning('Could not resolve Akita provider service ID; skipping acknowledgment and application binding');
   }
 
-  // Acknowledge workspace onboarding (clears agent 403 on /v2/agent/services)
   core.info(`Acknowledging workspace onboarding for ${inputs.workspaceId}...`);
   await client.acknowledgeWorkspace(inputs.workspaceId);
-  core.info(`Workspace onboarding acknowledged`);
+  core.info('Workspace onboarding acknowledged');
 
-  // Retrieve team verification token for DaemonSet telemetry
   core.info('Retrieving team verification token...');
   const verificationToken = await client.getTeamVerificationToken(inputs.workspaceId);
   if (verificationToken) {
@@ -203,28 +245,81 @@ export async function runOnboarding(
   };
 }
 
+export async function resolveApiKeyAndTeamId(
+  inputs: ActionInputs,
+  client: BifrostCatalogClient,
+): Promise<{ apiKey: string; teamId: string }> {
+  let apiKey = inputs.postmanApiKey;
+  let teamId = inputs.postmanTeamId;
+  let keyValid = false;
+
+  if (apiKey) {
+    const result = await validateApiKey(apiKey);
+    keyValid = result.valid;
+    if (keyValid && !teamId && result.teamId) {
+      teamId = result.teamId;
+      core.info(`Derived team ID from API key: ${teamId}`);
+    }
+    if (!keyValid) {
+      core.warning('Provided postman-api-key is invalid or expired.');
+    }
+  }
+
+  if (!keyValid) {
+    core.info('Generating a new Postman API key via Bifrost identity service...');
+    const keyName = `insights-onboarding-action-${Date.now()}`;
+    apiKey = await client.createApiKey(keyName);
+    core.setSecret(apiKey);
+    client.setApiKey(apiKey);
+    core.info('New API key created successfully.');
+
+    if (!teamId) {
+      const derived = await deriveTeamId(apiKey);
+      if (derived) {
+        teamId = derived;
+        core.info(`Derived team ID from new API key: ${teamId}`);
+      }
+    }
+  }
+
+  if (!teamId) {
+    core.info('Attempting team ID derivation from session token...');
+    const sessionTeamId = await deriveTeamIdFromSession(inputs.postmanAccessToken);
+    if (sessionTeamId) {
+      teamId = sessionTeamId;
+      core.info(`Derived team ID from session: ${teamId}`);
+    }
+  }
+
+  if (!teamId) {
+    throw new Error(
+      'Could not determine team ID. Supply postman-team-id explicitly, or ensure the API key / access token belongs to a team.'
+    );
+  }
+
+  return { apiKey, teamId };
+}
+
 async function runAction(): Promise<void> {
   const inputs = resolveInputs();
   const maskSecret = createSecretMasker([
     inputs.postmanAccessToken,
     inputs.postmanApiKey,
     inputs.githubToken,
-  ]);
+  ].filter(Boolean));
 
   core.setSecret(inputs.postmanAccessToken);
-  core.setSecret(inputs.postmanApiKey);
+  if (inputs.postmanApiKey) core.setSecret(inputs.postmanApiKey);
   if (inputs.githubToken) core.setSecret(inputs.githubToken);
 
-  let teamId = inputs.postmanTeamId;
-  if (!teamId) {
-    core.info('postman-team-id not provided; deriving from postman-api-key...');
-    teamId = await deriveTeamId(inputs.postmanApiKey) || '';
-    if (teamId) {
-      core.info(`Derived team ID: ${teamId}`);
-    } else {
-      throw new Error('postman-team-id was not provided and could not be derived from postman-api-key. Supply it explicitly or verify the API key.');
-    }
-  }
+  const preliminaryClient = new BifrostCatalogClient({
+    accessToken: inputs.postmanAccessToken,
+    teamId: inputs.postmanTeamId,
+    apiKey: inputs.postmanApiKey,
+    maskSecret,
+  });
+
+  const { apiKey, teamId } = await resolveApiKeyAndTeamId(inputs, preliminaryClient);
 
   const planned = createPlannedOutputs(inputs);
   for (const [key, value] of Object.entries(planned)) {
@@ -234,7 +329,7 @@ async function runAction(): Promise<void> {
   const client = new BifrostCatalogClient({
     accessToken: inputs.postmanAccessToken,
     teamId,
-    apiKey: inputs.postmanApiKey,
+    apiKey,
     maskSecret,
   });
 

@@ -1,4 +1,4 @@
-name: 'postman-insights-onboarding'
+name: 'postman-insights-onboarding-action'
 description: 'Link Postman Insights discovered services to API Catalog workspaces and git repos'
 inputs:
   project-name:
@@ -32,8 +32,8 @@ inputs:
     description: 'GitHub token used as git_api_key for the onboarding/git call'
     required: false
   postman-api-key:
-    description: 'Postman API key (PMAK-*) for the application binding call to api.observability.postman.com'
-    required: true
+    description: 'Postman API key (PMAK-*) for the application binding call. Auto-created from postman-access-token when omitted or invalid.'
+    required: false
   poll-timeout-seconds:
     description: 'Maximum seconds to wait for the service to appear in the discovered list'
     required: false

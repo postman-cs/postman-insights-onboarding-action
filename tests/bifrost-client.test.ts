@@ -164,6 +164,120 @@ describe('BifrostCatalogClient', () => {
     await expect(client.createApplication('ws-bad', 'sys-env-bad'))
       .rejects.toThrow(/failed.*500/);
   });
+
+  it('includes x-entity-team-id when teamId is provided', async () => {
+    const fetchFn = mockFetch([{
+      ok: true,
+      status: 200,
+      body: { total: 0, nextCursor: null, items: [] },
+    }]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: 'PMAK-test',
+      fetchFn,
+    });
+    await client.listDiscoveredServices();
+
+    const callOpts = (fetchFn as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    const headers = callOpts.headers as Record<string, string>;
+    expect(headers['x-entity-team-id']).toBe('14103640');
+    expect(headers['x-access-token']).toBe('tok-abc');
+  });
+
+  it('omits x-entity-team-id when teamId is empty (non-org mode)', async () => {
+    const fetchFn = mockFetch([{
+      ok: true,
+      status: 200,
+      body: { total: 0, nextCursor: null, items: [] },
+    }]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '',
+      apiKey: 'PMAK-test',
+      fetchFn,
+    });
+    await client.listDiscoveredServices();
+
+    const callOpts = (fetchFn as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    const headers = callOpts.headers as Record<string, string>;
+    expect(headers['x-entity-team-id']).toBeUndefined();
+    expect(headers['x-access-token']).toBe('tok-abc');
+  });
+
+  it('creates an API key via Bifrost identity service', async () => {
+    const fetchFn = mockFetch([{
+      ok: true,
+      status: 200,
+      body: { apikey: { key: 'PMAK-new-key-123', name: 'test-key', type: 'v2' } },
+    }]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: '',
+      fetchFn,
+    });
+    const key = await client.createApiKey('test-key');
+    expect(key).toBe('PMAK-new-key-123');
+
+    const callBody = JSON.parse((fetchFn as ReturnType<typeof vi.fn>).mock.calls[0][1].body);
+    expect(callBody.service).toBe('identity');
+    expect(callBody.method).toBe('POST');
+    expect(callBody.path).toBe('/api/keys');
+    expect(callBody.body.apikey.name).toBe('test-key');
+  });
+
+  it('throws when createApiKey response has no key', async () => {
+    const fetchFn = mockFetch([{
+      ok: true,
+      status: 200,
+      body: { apikey: {} },
+    }]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: '',
+      fetchFn,
+    });
+    await expect(client.createApiKey('test-key'))
+      .rejects.toThrow('Failed to extract API key');
+  });
+
+  it('throws on failed createApiKey request', async () => {
+    const fetchFn = mockFetch([{
+      ok: false,
+      status: 401,
+      body: { error: 'unauthorized' },
+    }]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: '',
+      fetchFn,
+    });
+    await expect(client.createApiKey('test-key'))
+      .rejects.toThrow(/failed.*401/);
+  });
+
+  it('setApiKey updates the key used for observability calls', async () => {
+    const fetchFn = mockFetch([{
+      ok: true,
+      status: 200,
+      body: { application_id: 'app-new', service_id: 'svc_new' },
+    }]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: 'PMAK-old',
+      fetchFn,
+    });
+    client.setApiKey('PMAK-new');
+    await client.createApplication('ws-123', 'sys-env-456');
+
+    const callOpts = (fetchFn as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    const headers = callOpts.headers as Record<string, string>;
+    expect(headers['x-api-key']).toBe('PMAK-new');
+  });
 });
 
 describe('findDiscoveredService', () => {

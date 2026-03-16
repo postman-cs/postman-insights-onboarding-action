@@ -13051,7 +13051,7 @@ var require_fetch = __commonJS({
         this.emit("terminated", error);
       }
     };
-    function fetch(input, init = {}) {
+    function fetch2(input, init = {}) {
       webidl.argumentLengthCheck(arguments, 1, { header: "globalThis.fetch" });
       const p = createDeferredPromise();
       let requestObject;
@@ -13981,7 +13981,7 @@ var require_fetch = __commonJS({
       }
     }
     module2.exports = {
-      fetch,
+      fetch: fetch2,
       Fetch,
       fetching,
       finalizeAndReportTiming
@@ -17237,7 +17237,7 @@ var require_undici = __commonJS({
     module2.exports.getGlobalDispatcher = getGlobalDispatcher;
     if (util.nodeMajor > 16 || util.nodeMajor === 16 && util.nodeMinor >= 8) {
       let fetchImpl = null;
-      module2.exports.fetch = async function fetch(resource) {
+      module2.exports.fetch = async function fetch2(resource) {
         if (!fetchImpl) {
           fetchImpl = require_fetch().fetch;
         }
@@ -19817,8 +19817,12 @@ Support boolean input list: \`true | True | TRUE | false | False | FALSE\``);
 var index_exports = {};
 __export(index_exports, {
   createPlannedOutputs: () => createPlannedOutputs,
+  deriveTeamId: () => deriveTeamId,
+  deriveTeamIdFromSession: () => deriveTeamIdFromSession,
+  resolveApiKeyAndTeamId: () => resolveApiKeyAndTeamId,
   resolveInputs: () => resolveInputs,
-  runOnboarding: () => runOnboarding
+  runOnboarding: () => runOnboarding,
+  validateApiKey: () => validateApiKey
 });
 module.exports = __toCommonJS(index_exports);
 var core = __toESM(require_core(), 1);
@@ -19964,14 +19968,28 @@ var BifrostCatalogClient = class {
     this.teamId = options.teamId;
     this.apiKey = options.apiKey;
     this.fetchFn = options.fetchFn ?? globalThis.fetch;
-    this.secretValues = [options.accessToken, options.apiKey];
+    this.secretValues = [options.accessToken, options.apiKey].filter(Boolean);
   }
+  setApiKey(apiKey) {
+    this.apiKey = apiKey;
+    if (apiKey && !this.secretValues.includes(apiKey)) {
+      this.secretValues.push(apiKey);
+    }
+  }
+  /**
+   * Build Bifrost proxy headers.
+   * x-entity-team-id is ONLY included when teamId is present (org-mode tokens).
+   * Non-org-mode tokens must OMIT it so Bifrost resolves team from the access token.
+   */
   headers() {
-    return {
+    const h = {
       "x-access-token": this.accessToken,
-      "x-entity-team-id": this.teamId,
       "Content-Type": "application/json"
     };
+    if (this.teamId) {
+      h["x-entity-team-id"] = this.teamId;
+    }
+    return h;
   }
   async proxyRequest(method, path, body = {}) {
     const response = await this.fetchFn(BIFROST_BASE, {
@@ -19997,6 +20015,24 @@ var BifrostCatalogClient = class {
       throw new Error(`api-catalog error: ${errObj?.message || errObj?.code || "unknown"}`);
     }
     return data;
+  }
+  async akitaProxyRequest(method, path, body = {}) {
+    const response = await this.fetchFn(BIFROST_BASE, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({
+        service: "akita",
+        method,
+        path,
+        body
+      })
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      return { ok: false, status: response.status, data: null, errorText: text };
+    }
+    const data = await response.json();
+    return { ok: true, status: response.status, data, errorText: "" };
   }
   async listDiscoveredServices() {
     return retry(
@@ -20044,58 +20080,38 @@ var BifrostCatalogClient = class {
     );
   }
   async resolveProviderServiceId(projectName, clusterName) {
-    const response = await this.fetchFn(BIFROST_BASE, {
-      method: "POST",
-      headers: this.headers(),
-      body: JSON.stringify({
-        service: "akita",
-        method: "GET",
-        path: "/v2/api-catalog/services?status=discovered&populate_endpoints=false&populate_discovery_metadata=true",
-        body: {}
-      })
-    });
-    if (!response.ok) return null;
-    const data = await response.json();
+    const result = await this.akitaProxyRequest(
+      "GET",
+      "/v2/api-catalog/services?status=discovered&populate_endpoints=false&populate_discovery_metadata=true"
+    );
+    if (!result.ok || !result.data) return null;
     const fullName = clusterName ? `${clusterName}/${projectName}` : projectName;
-    const match = (data.services || []).find((s) => s.name === fullName) || (data.services || []).find((s) => s.name.endsWith(`/${projectName}`));
+    const match = (result.data.services || []).find((s) => s.name === fullName) || (result.data.services || []).find((s) => s.name.endsWith(`/${projectName}`));
     return match?.id || null;
   }
   async acknowledgeOnboarding(providerServiceId, workspaceId, systemEnvironmentId) {
-    const response = await this.fetchFn(BIFROST_BASE, {
-      method: "POST",
-      headers: this.headers(),
-      body: JSON.stringify({
-        service: "akita",
-        method: "POST",
-        path: "/v2/api-catalog/services/onboard",
-        body: {
-          services: [{
-            service_id: providerServiceId,
-            workspace_id: workspaceId,
-            system_env: systemEnvironmentId
-          }]
-        }
-      })
-    });
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new Error(`Insights acknowledge failed: ${response.status} ${text}`);
+    const result = await this.akitaProxyRequest(
+      "POST",
+      "/v2/api-catalog/services/onboard",
+      {
+        services: [{
+          service_id: providerServiceId,
+          workspace_id: workspaceId,
+          system_env: systemEnvironmentId
+        }]
+      }
+    );
+    if (!result.ok) {
+      throw new Error(`Insights acknowledge failed: ${result.status} ${result.errorText}`);
     }
   }
   async acknowledgeWorkspace(workspaceId) {
-    const response = await this.fetchFn(BIFROST_BASE, {
-      method: "POST",
-      headers: this.headers(),
-      body: JSON.stringify({
-        service: "akita",
-        method: "POST",
-        path: `/v2/workspaces/${workspaceId}/onboarding/acknowledge`,
-        body: {}
-      })
-    });
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new Error(`Workspace acknowledge failed: ${response.status} ${text}`);
+    const result = await this.akitaProxyRequest(
+      "POST",
+      `/v2/workspaces/${workspaceId}/onboarding/acknowledge`
+    );
+    if (!result.ok) {
+      throw new Error(`Workspace acknowledge failed: ${result.status} ${result.errorText}`);
     }
   }
   async createApplication(workspaceId, systemEnv) {
@@ -20121,19 +20137,37 @@ var BifrostCatalogClient = class {
     return response.json();
   }
   async getTeamVerificationToken(workspaceId) {
+    const result = await this.akitaProxyRequest(
+      "GET",
+      `/v2/workspaces/${workspaceId}/team-verification-token`
+    );
+    if (!result.ok || !result.data) return null;
+    return result.data.team_verification_token || null;
+  }
+  async createApiKey(name) {
     const response = await this.fetchFn(BIFROST_BASE, {
       method: "POST",
       headers: this.headers(),
       body: JSON.stringify({
-        service: "akita",
-        method: "GET",
-        path: `/v2/workspaces/${workspaceId}/team-verification-token`,
-        body: {}
+        service: "identity",
+        method: "POST",
+        path: "/api/keys",
+        body: { apikey: { name, type: "v2" } }
       })
     });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      throw await HttpError.fromResponse(response, {
+        method: "POST",
+        url: "bifrost:identity:POST /api/keys",
+        secretValues: this.secretValues
+      });
+    }
     const data = await response.json();
-    return data.team_verification_token || null;
+    const apikey = data?.apikey;
+    if (!apikey?.key) {
+      throw new Error("Failed to extract API key from Bifrost identity response");
+    }
+    return String(apikey.key);
   }
 };
 function findDiscoveredService(services, projectName, clusterName) {
@@ -20146,6 +20180,56 @@ function findDiscoveredService(services, projectName, clusterName) {
 }
 
 // src/index.ts
+var POLL_TIMEOUT_MIN = 10;
+var POLL_TIMEOUT_MAX = 600;
+var POLL_TIMEOUT_DEFAULT = 120;
+var POLL_INTERVAL_MIN = 2;
+var POLL_INTERVAL_MAX = 60;
+var POLL_INTERVAL_DEFAULT = 10;
+async function deriveTeamId(apiKey) {
+  try {
+    const res = await fetch("https://api.getpostman.com/me", {
+      method: "GET",
+      headers: { "x-api-key": apiKey }
+    });
+    if (!res.ok) return void 0;
+    const data = await res.json();
+    if (data?.user?.teamId) return String(data.user.teamId);
+  } catch {
+  }
+  return void 0;
+}
+async function validateApiKey(apiKey) {
+  try {
+    const res = await fetch("https://api.getpostman.com/me", {
+      method: "GET",
+      headers: { "x-api-key": apiKey }
+    });
+    if (!res.ok) return { valid: false };
+    const data = await res.json();
+    const teamId = data?.user?.teamId ? String(data.user.teamId) : void 0;
+    return { valid: true, teamId };
+  } catch {
+    return { valid: false };
+  }
+}
+async function deriveTeamIdFromSession(accessToken) {
+  try {
+    const res = await fetch("https://iapub.postman.co/api/sessions/current", {
+      method: "GET",
+      headers: { "x-access-token": accessToken }
+    });
+    if (!res.ok) return void 0;
+    const data = await res.json();
+    if (data?.session?.identity?.team) return String(data.session.identity.team);
+  } catch {
+  }
+  return void 0;
+}
+function clamp(value, min, max, fallback) {
+  const parsed = Number.isFinite(value) ? value : fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
 function resolveInputs(env = process.env) {
   const get = (name, fallback = "") => env[`INPUT_${name.toUpperCase().replace(/-/g, "_")}`]?.trim() || fallback;
   const projectName = get("project-name");
@@ -20153,9 +20237,7 @@ function resolveInputs(env = process.env) {
   const postmanAccessToken = get("postman-access-token");
   if (!postmanAccessToken) throw new Error("postman-access-token is required");
   const postmanApiKey = get("postman-api-key");
-  if (!postmanApiKey) throw new Error("postman-api-key is required");
   const postmanTeamId = get("postman-team-id");
-  if (!postmanTeamId) throw new Error("postman-team-id is required");
   const workspaceId = get("workspace-id");
   if (!workspaceId) throw new Error("workspace-id is required");
   const environmentId = get("environment-id");
@@ -20163,6 +20245,8 @@ function resolveInputs(env = process.env) {
   const repoOwner = (env.GITHUB_REPOSITORY || "").split("/")[0] || "";
   const gitOwner = get("git-owner", repoOwner);
   const gitRepositoryName = get("git-repository-name", projectName);
+  const rawTimeout = parseInt(get("poll-timeout-seconds", String(POLL_TIMEOUT_DEFAULT)), 10);
+  const rawInterval = parseInt(get("poll-interval-seconds", String(POLL_INTERVAL_DEFAULT)), 10);
   return {
     projectName,
     workspaceId,
@@ -20175,8 +20259,8 @@ function resolveInputs(env = process.env) {
     postmanApiKey,
     postmanTeamId,
     githubToken: get("github-token", env.GITHUB_TOKEN || ""),
-    pollTimeoutSeconds: Math.max(0, parseInt(get("poll-timeout-seconds", "120"), 10) || 120),
-    pollIntervalSeconds: Math.max(1, parseInt(get("poll-interval-seconds", "10"), 10) || 10)
+    pollTimeoutSeconds: clamp(rawTimeout, POLL_TIMEOUT_MIN, POLL_TIMEOUT_MAX, POLL_TIMEOUT_DEFAULT),
+    pollIntervalSeconds: clamp(rawInterval, POLL_INTERVAL_MIN, POLL_INTERVAL_MAX, POLL_INTERVAL_DEFAULT)
   };
 }
 function createPlannedOutputs(inputs) {
@@ -20253,7 +20337,7 @@ async function runOnboarding(inputs, client, sleepFn = sleep) {
   }
   core.info(`Acknowledging workspace onboarding for ${inputs.workspaceId}...`);
   await client.acknowledgeWorkspace(inputs.workspaceId);
-  core.info(`Workspace onboarding acknowledged`);
+  core.info("Workspace onboarding acknowledged");
   core.info("Retrieving team verification token...");
   const verificationToken = await client.getTeamVerificationToken(inputs.workspaceId);
   if (verificationToken) {
@@ -20271,24 +20355,76 @@ async function runOnboarding(inputs, client, sleepFn = sleep) {
     status: "success"
   };
 }
+async function resolveApiKeyAndTeamId(inputs, client) {
+  let apiKey = inputs.postmanApiKey;
+  let teamId = inputs.postmanTeamId;
+  let keyValid = false;
+  if (apiKey) {
+    const result = await validateApiKey(apiKey);
+    keyValid = result.valid;
+    if (keyValid && !teamId && result.teamId) {
+      teamId = result.teamId;
+      core.info(`Derived team ID from API key: ${teamId}`);
+    }
+    if (!keyValid) {
+      core.warning("Provided postman-api-key is invalid or expired.");
+    }
+  }
+  if (!keyValid) {
+    core.info("Generating a new Postman API key via Bifrost identity service...");
+    const keyName = `insights-onboarding-action-${Date.now()}`;
+    apiKey = await client.createApiKey(keyName);
+    core.setSecret(apiKey);
+    client.setApiKey(apiKey);
+    core.info("New API key created successfully.");
+    if (!teamId) {
+      const derived = await deriveTeamId(apiKey);
+      if (derived) {
+        teamId = derived;
+        core.info(`Derived team ID from new API key: ${teamId}`);
+      }
+    }
+  }
+  if (!teamId) {
+    core.info("Attempting team ID derivation from session token...");
+    const sessionTeamId = await deriveTeamIdFromSession(inputs.postmanAccessToken);
+    if (sessionTeamId) {
+      teamId = sessionTeamId;
+      core.info(`Derived team ID from session: ${teamId}`);
+    }
+  }
+  if (!teamId) {
+    throw new Error(
+      "Could not determine team ID. Supply postman-team-id explicitly, or ensure the API key / access token belongs to a team."
+    );
+  }
+  return { apiKey, teamId };
+}
 async function runAction() {
   const inputs = resolveInputs();
   const maskSecret = createSecretMasker([
     inputs.postmanAccessToken,
     inputs.postmanApiKey,
     inputs.githubToken
-  ]);
+  ].filter(Boolean));
   core.setSecret(inputs.postmanAccessToken);
-  core.setSecret(inputs.postmanApiKey);
+  if (inputs.postmanApiKey) core.setSecret(inputs.postmanApiKey);
   if (inputs.githubToken) core.setSecret(inputs.githubToken);
+  const preliminaryClient = new BifrostCatalogClient({
+    accessToken: inputs.postmanAccessToken,
+    teamId: inputs.postmanTeamId,
+    apiKey: inputs.postmanApiKey,
+    maskSecret
+  });
+  const { apiKey, teamId } = await resolveApiKeyAndTeamId(inputs, preliminaryClient);
   const planned = createPlannedOutputs(inputs);
   for (const [key, value] of Object.entries(planned)) {
     core.setOutput(key, value);
   }
   const client = new BifrostCatalogClient({
     accessToken: inputs.postmanAccessToken,
-    teamId: inputs.postmanTeamId,
-    apiKey: inputs.postmanApiKey,
+    teamId,
+    apiKey,
     maskSecret
   });
   const result = await runOnboarding(inputs, client);
@@ -20314,8 +20450,12 @@ runAction().catch((error) => {
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   createPlannedOutputs,
+  deriveTeamId,
+  deriveTeamIdFromSession,
+  resolveApiKeyAndTeamId,
   resolveInputs,
-  runOnboarding
+  runOnboarding,
+  validateApiKey
 });
 /*! Bundled license information:
 

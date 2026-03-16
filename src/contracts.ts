@@ -60,8 +60,8 @@ export const alphaActionContract: AlphaActionContract = {
       required: false,
     },
     'postman-api-key': {
-      description: 'Postman API key (PMAK-*) for the application binding call to api.observability.postman.com.',
-      required: true,
+      description: 'Postman API key (PMAK-*) for the application binding call. Auto-created from postman-access-token when omitted or invalid.',
+      required: false,
     },
     'poll-timeout-seconds': {
       description: 'Maximum seconds to wait for the service to appear in the discovered list.',
