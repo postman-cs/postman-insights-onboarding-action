@@ -27297,14 +27297,26 @@ function getIDToken(aud) {
 
 // src/lib/secrets.ts
 var REDACTED = "[REDACTED]";
+var SENSITIVE_HEADER_NAMES = /* @__PURE__ */ new Set([
+  "authorization",
+  "cookie",
+  "proxy-authorization",
+  "set-cookie",
+  "x-access-token",
+  "x-api-key"
+]);
 function isIterable(value) {
   return value !== null && value !== void 0 && typeof value !== "string" && typeof value[Symbol.iterator] === "function";
 }
 function appendSecretValues(value, results) {
-  if (value === null || value === void 0) return;
+  if (value === null || value === void 0) {
+    return;
+  }
   if (typeof value === "string") {
     const normalized = value.trim();
-    if (normalized) results.push(normalized);
+    if (normalized) {
+      results.push(normalized);
+    }
     return;
   }
   if (typeof value === "number" || typeof value === "boolean") {
@@ -27325,48 +27337,95 @@ function normalizeSecretValues(secretValues) {
 function redactSecrets(input, secretValues, replacement = REDACTED) {
   const source = String(input ?? "");
   const secrets = normalizeSecretValues(secretValues);
-  if (source.length === 0 || secrets.length === 0) return source;
+  if (!source || secrets.length === 0) {
+    return source;
+  }
   return secrets.reduce((sanitized, secret) => {
-    if (!secret) return sanitized;
+    if (!secret) {
+      return sanitized;
+    }
     return sanitized.split(secret).join(replacement);
   }, source);
 }
 function createSecretMasker(secretValues, replacement = REDACTED) {
   return (input) => redactSecrets(input, secretValues, replacement);
 }
+function headerEntries(headers) {
+  if (headers instanceof Headers) {
+    return Array.from(headers.entries());
+  }
+  if (Array.isArray(headers)) {
+    return headers.map(([name, value]) => [name, String(value)]);
+  }
+  return Object.entries(headers).map(([name, value]) => [name, String(value)]);
+}
+function sanitizeHeaders(headers, secretValues) {
+  if (!headers) {
+    return {};
+  }
+  const sanitized = {};
+  for (const [name, value] of headerEntries(headers)) {
+    const normalizedName = name.toLowerCase();
+    sanitized[normalizedName] = SENSITIVE_HEADER_NAMES.has(normalizedName) ? REDACTED : redactSecrets(value, secretValues);
+  }
+  return sanitized;
+}
 
 // src/lib/http-error.ts
 function truncate(value, limit) {
-  if (value.length <= limit) return value;
+  if (value.length <= limit) {
+    return value;
+  }
   return `${value.slice(0, limit)}...[truncated]`;
 }
 function buildMessage(init) {
   const method = String(init.method || "GET").toUpperCase();
-  const url = redactSecrets(init.url, init.secretValues);
   const status = `${init.status}${init.statusText ? ` ${init.statusText}` : ""}`;
-  const responseBody = truncate(
+  const url = redactSecrets(init.url, init.secretValues);
+  const body = truncate(
     redactSecrets(init.responseBody || "", init.secretValues),
     Math.max(0, init.bodyLimit ?? 800)
   );
-  return responseBody ? `${method} ${url} failed: ${status} - ${responseBody}` : `${method} ${url} failed: ${status}`;
+  return body ? `${method} ${url} failed: ${status} - ${body}` : `${method} ${url} failed: ${status}`;
 }
 var HttpError = class _HttpError extends Error {
-  status;
+  method;
+  requestHeaders;
   responseBody;
+  secretValues;
+  status;
+  statusText;
+  url;
   constructor(init) {
     super(buildMessage(init));
     this.name = "HttpError";
-    this.status = init.status;
+    this.method = String(init.method || "GET").toUpperCase();
+    this.requestHeaders = init.requestHeaders;
     this.responseBody = init.responseBody || "";
+    this.secretValues = init.secretValues;
+    this.status = init.status;
+    this.statusText = init.statusText;
+    this.url = init.url;
   }
   static async fromResponse(response, init) {
     const responseBody = init.responseBody ?? await response.text().catch(() => "");
     return new _HttpError({
       ...init,
+      responseBody,
       status: response.status,
-      statusText: response.statusText,
-      responseBody
+      statusText: response.statusText
     });
+  }
+  toJSON() {
+    return {
+      method: this.method,
+      name: this.name,
+      requestHeaders: sanitizeHeaders(this.requestHeaders, this.secretValues),
+      responseBody: redactSecrets(this.responseBody, this.secretValues),
+      status: this.status,
+      statusText: this.statusText,
+      url: redactSecrets(this.url, this.secretValues)
+    };
   }
 };
 
@@ -27376,47 +27435,41 @@ function sleep(delayMs) {
     setTimeout(resolve2, delayMs);
   });
 }
-function normalizeRetryOptions(retriesOrOptions, delayMs) {
-  if (typeof retriesOrOptions === "number") {
-    return {
-      maxAttempts: Math.max(1, retriesOrOptions),
-      delayMs: Math.max(0, delayMs ?? 2e3),
-      backoffMultiplier: 1,
-      maxDelayMs: Number.POSITIVE_INFINITY,
-      shouldRetry: () => true,
-      onRetry: async () => void 0,
-      sleep
-    };
-  }
+function normalizeRetryOptions(options) {
   return {
-    maxAttempts: Math.max(1, retriesOrOptions.maxAttempts ?? 3),
-    delayMs: Math.max(0, retriesOrOptions.delayMs ?? 2e3),
-    backoffMultiplier: Math.max(1, retriesOrOptions.backoffMultiplier ?? 1),
-    maxDelayMs: retriesOrOptions.maxDelayMs === void 0 ? Number.POSITIVE_INFINITY : Math.max(0, retriesOrOptions.maxDelayMs),
-    shouldRetry: retriesOrOptions.shouldRetry ?? (() => true),
-    onRetry: retriesOrOptions.onRetry ?? (async () => void 0),
-    sleep: retriesOrOptions.sleep ?? sleep
+    maxAttempts: Math.max(1, options.maxAttempts ?? 3),
+    delayMs: Math.max(0, options.delayMs ?? 2e3),
+    backoffMultiplier: Math.max(1, options.backoffMultiplier ?? 1),
+    maxDelayMs: options.maxDelayMs === void 0 ? Number.POSITIVE_INFINITY : Math.max(0, options.maxDelayMs),
+    onRetry: options.onRetry ?? (async () => void 0),
+    shouldRetry: options.shouldRetry ?? (() => true),
+    sleep: options.sleep ?? sleep
   };
 }
-async function retry(operation, retriesOrOptions = {}, delayMs) {
-  const options = normalizeRetryOptions(retriesOrOptions, delayMs);
-  let nextDelayMs = options.delayMs;
-  for (let attempt = 1; attempt <= options.maxAttempts; attempt += 1) {
+async function retry(operation, options = {}) {
+  const normalized = normalizeRetryOptions(options);
+  let nextDelayMs = normalized.delayMs;
+  for (let attempt = 1; attempt <= normalized.maxAttempts; attempt += 1) {
     try {
       return await operation();
     } catch (error2) {
-      const canRetry = attempt < options.maxAttempts && options.shouldRetry(error2, { attempt, maxAttempts: options.maxAttempts });
-      if (!canRetry) throw error2;
-      await options.onRetry({
+      const shouldRetry = attempt < normalized.maxAttempts && normalized.shouldRetry(error2, {
         attempt,
-        maxAttempts: options.maxAttempts,
+        maxAttempts: normalized.maxAttempts
+      });
+      if (!shouldRetry) {
+        throw error2;
+      }
+      await normalized.onRetry({
+        attempt,
+        maxAttempts: normalized.maxAttempts,
         delayMs: nextDelayMs,
         error: error2
       });
-      await options.sleep(nextDelayMs);
+      await normalized.sleep(nextDelayMs);
       nextDelayMs = Math.min(
-        options.maxDelayMs,
-        Math.round(nextDelayMs * options.backoffMultiplier)
+        normalized.maxDelayMs,
+        Math.round(nextDelayMs * normalized.backoffMultiplier)
       );
     }
   }

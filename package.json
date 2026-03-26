@@ -1,6 +1,6 @@
 {
   "name": "@postman-cse/onboarding-insights",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "GitHub Action to onboard Postman Insights discovered services to API Catalog workspaces.",
   "type": "module",
   "main": "dist/index.cjs",
