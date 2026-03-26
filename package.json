@@ -1,5 +1,5 @@
 {
-  "name": "postman-insights-onboarding-action",
+  "name": "@postman-cse/onboarding-insights",
   "version": "0.1.0-alpha.0",
   "description": "GitHub Action to onboard Postman Insights discovered services to API Catalog workspaces.",
   "type": "module",
@@ -24,6 +24,9 @@
     "api-catalog"
   ],
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@actions/core": "^3.0.0"
   },
