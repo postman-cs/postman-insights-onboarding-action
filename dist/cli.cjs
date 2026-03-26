@@ -1375,14 +1375,14 @@ var require_util = __commonJS({
         }
         const port = url.port != null ? url.port : url.protocol === "https:" ? 443 : 80;
         let origin = url.origin != null ? url.origin : `${url.protocol || ""}//${url.hostname || ""}:${port}`;
-        let path6 = url.path != null ? url.path : `${url.pathname || ""}${url.search || ""}`;
+        let path7 = url.path != null ? url.path : `${url.pathname || ""}${url.search || ""}`;
         if (origin[origin.length - 1] === "/") {
           origin = origin.slice(0, origin.length - 1);
         }
-        if (path6 && path6[0] !== "/") {
-          path6 = `/${path6}`;
+        if (path7 && path7[0] !== "/") {
+          path7 = `/${path7}`;
         }
-        return new URL(`${origin}${path6}`);
+        return new URL(`${origin}${path7}`);
       }
       if (!isHttpOrHttpsPrefixed(url.origin || url.protocol)) {
         throw new InvalidArgumentError("Invalid URL protocol: the URL must start with `http:` or `https:`.");
@@ -2193,9 +2193,9 @@ var require_diagnostics = __commonJS({
         "undici:client:sendHeaders",
         (evt) => {
           const {
-            request: { method, path: path6, origin }
+            request: { method, path: path7, origin }
           } = evt;
-          debugLog("sending request to %s %s%s", method, origin, path6);
+          debugLog("sending request to %s %s%s", method, origin, path7);
         }
       );
     }
@@ -2213,14 +2213,14 @@ var require_diagnostics = __commonJS({
         "undici:request:headers",
         (evt) => {
           const {
-            request: { method, path: path6, origin },
+            request: { method, path: path7, origin },
             response: { statusCode }
           } = evt;
           debugLog(
             "received response to %s %s%s - HTTP %d",
             method,
             origin,
-            path6,
+            path7,
             statusCode
           );
         }
@@ -2229,23 +2229,23 @@ var require_diagnostics = __commonJS({
         "undici:request:trailers",
         (evt) => {
           const {
-            request: { method, path: path6, origin }
+            request: { method, path: path7, origin }
           } = evt;
-          debugLog("trailers received from %s %s%s", method, origin, path6);
+          debugLog("trailers received from %s %s%s", method, origin, path7);
         }
       );
       diagnosticsChannel.subscribe(
         "undici:request:error",
         (evt) => {
           const {
-            request: { method, path: path6, origin },
+            request: { method, path: path7, origin },
             error: error2
           } = evt;
           debugLog(
             "request to %s %s%s errored - %s",
             method,
             origin,
-            path6,
+            path7,
             error2.message
           );
         }
@@ -2346,7 +2346,7 @@ var require_request = __commonJS({
     var kHandler = /* @__PURE__ */ Symbol("handler");
     var Request = class {
       constructor(origin, {
-        path: path6,
+        path: path7,
         method,
         body,
         headers,
@@ -2363,11 +2363,11 @@ var require_request = __commonJS({
         maxRedirections,
         typeOfService
       }, handler) {
-        if (typeof path6 !== "string") {
+        if (typeof path7 !== "string") {
           throw new InvalidArgumentError("path must be a string");
-        } else if (path6[0] !== "/" && !(path6.startsWith("http://") || path6.startsWith("https://")) && method !== "CONNECT") {
+        } else if (path7[0] !== "/" && !(path7.startsWith("http://") || path7.startsWith("https://")) && method !== "CONNECT") {
           throw new InvalidArgumentError("path must be an absolute URL or start with a slash");
-        } else if (invalidPathRegex.test(path6)) {
+        } else if (invalidPathRegex.test(path7)) {
           throw new InvalidArgumentError("invalid request path");
         }
         if (typeof method !== "string") {
@@ -2442,7 +2442,7 @@ var require_request = __commonJS({
         this.completed = false;
         this.aborted = false;
         this.upgrade = upgrade || null;
-        this.path = query ? serializePathWithQuery(path6, query) : path6;
+        this.path = query ? serializePathWithQuery(path7, query) : path7;
         this.origin = origin;
         this.protocol = getProtocolFromUrlString(origin);
         this.idempotent = idempotent == null ? method === "HEAD" || method === "GET" : idempotent;
@@ -7475,7 +7475,7 @@ var require_client_h1 = __commonJS({
       return method !== "GET" && method !== "HEAD" && method !== "OPTIONS" && method !== "TRACE" && method !== "CONNECT";
     }
     function writeH1(client, request) {
-      const { method, path: path6, host, upgrade, blocking, reset } = request;
+      const { method, path: path7, host, upgrade, blocking, reset } = request;
       let { body, headers, contentLength } = request;
       const expectsPayload = method === "PUT" || method === "POST" || method === "PATCH" || method === "QUERY" || method === "PROPFIND" || method === "PROPPATCH";
       if (util.isFormDataLike(body)) {
@@ -7544,7 +7544,7 @@ var require_client_h1 = __commonJS({
       if (socket.setTypeOfService) {
         socket.setTypeOfService(request.typeOfService);
       }
-      let header = `${method} ${path6} HTTP/1.1\r
+      let header = `${method} ${path7} HTTP/1.1\r
 `;
       if (typeof host === "string") {
         header += `host: ${host}\r
@@ -8197,7 +8197,7 @@ var require_client_h2 = __commonJS({
     function writeH2(client, request) {
       const requestTimeout = request.bodyTimeout ?? client[kBodyTimeout];
       const session = client[kHTTP2Session];
-      const { method, path: path6, host, upgrade, expectContinue, signal, protocol, headers: reqHeaders } = request;
+      const { method, path: path7, host, upgrade, expectContinue, signal, protocol, headers: reqHeaders } = request;
       let { body } = request;
       if (upgrade != null && upgrade !== "websocket") {
         util.errorRequest(client, request, new InvalidArgumentError(`Custom upgrade "${upgrade}" not supported over HTTP/2`));
@@ -8265,7 +8265,7 @@ var require_client_h2 = __commonJS({
           }
           headers[HTTP2_HEADER_METHOD] = "CONNECT";
           headers[HTTP2_HEADER_PROTOCOL] = "websocket";
-          headers[HTTP2_HEADER_PATH] = path6;
+          headers[HTTP2_HEADER_PATH] = path7;
           if (protocol === "ws:" || protocol === "wss:") {
             headers[HTTP2_HEADER_SCHEME] = protocol === "ws:" ? "http" : "https";
           } else {
@@ -8306,7 +8306,7 @@ var require_client_h2 = __commonJS({
         stream.setTimeout(requestTimeout);
         return true;
       }
-      headers[HTTP2_HEADER_PATH] = path6;
+      headers[HTTP2_HEADER_PATH] = path7;
       headers[HTTP2_HEADER_SCHEME] = protocol === "http:" ? "http" : "https";
       const expectsPayload = method === "PUT" || method === "POST" || method === "PATCH";
       if (body && typeof body.read === "function") {
@@ -10603,10 +10603,10 @@ var require_proxy_agent = __commonJS({
         };
         const {
           origin,
-          path: path6 = "/",
+          path: path7 = "/",
           headers = {}
         } = opts;
-        opts.path = origin + path6;
+        opts.path = origin + path7;
         if (!("host" in headers) && !("Host" in headers)) {
           const { host } = new URL(origin);
           headers.host = host;
@@ -12667,20 +12667,20 @@ var require_mock_utils = __commonJS({
       }
       return normalizedQp;
     }
-    function safeUrl(path6) {
-      if (typeof path6 !== "string") {
-        return path6;
+    function safeUrl(path7) {
+      if (typeof path7 !== "string") {
+        return path7;
       }
-      const pathSegments = path6.split("?", 3);
+      const pathSegments = path7.split("?", 3);
       if (pathSegments.length !== 2) {
-        return path6;
+        return path7;
       }
       const qp = new URLSearchParams(pathSegments.pop());
       qp.sort();
       return [...pathSegments, qp.toString()].join("?");
     }
-    function matchKey(mockDispatch2, { path: path6, method, body, headers }) {
-      const pathMatch = matchValue(mockDispatch2.path, path6);
+    function matchKey(mockDispatch2, { path: path7, method, body, headers }) {
+      const pathMatch = matchValue(mockDispatch2.path, path7);
       const methodMatch = matchValue(mockDispatch2.method, method);
       const bodyMatch = typeof mockDispatch2.body !== "undefined" ? matchValue(mockDispatch2.body, body) : true;
       const headersMatch = matchHeaders(mockDispatch2, headers);
@@ -12705,8 +12705,8 @@ var require_mock_utils = __commonJS({
       const basePath = key.query ? serializePathWithQuery(key.path, key.query) : key.path;
       const resolvedPath = typeof basePath === "string" ? safeUrl(basePath) : basePath;
       const resolvedPathWithoutTrailingSlash = removeTrailingSlash(resolvedPath);
-      let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path: path6, ignoreTrailingSlash }) => {
-        return ignoreTrailingSlash ? matchValue(removeTrailingSlash(safeUrl(path6)), resolvedPathWithoutTrailingSlash) : matchValue(safeUrl(path6), resolvedPath);
+      let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path: path7, ignoreTrailingSlash }) => {
+        return ignoreTrailingSlash ? matchValue(removeTrailingSlash(safeUrl(path7)), resolvedPathWithoutTrailingSlash) : matchValue(safeUrl(path7), resolvedPath);
       });
       if (matchedMockDispatches.length === 0) {
         throw new MockNotMatchedError(`Mock dispatch not matched for path '${resolvedPath}'`);
@@ -12744,19 +12744,19 @@ var require_mock_utils = __commonJS({
         mockDispatches.splice(index, 1);
       }
     }
-    function removeTrailingSlash(path6) {
-      while (path6.endsWith("/")) {
-        path6 = path6.slice(0, -1);
+    function removeTrailingSlash(path7) {
+      while (path7.endsWith("/")) {
+        path7 = path7.slice(0, -1);
       }
-      if (path6.length === 0) {
-        path6 = "/";
+      if (path7.length === 0) {
+        path7 = "/";
       }
-      return path6;
+      return path7;
     }
     function buildKey(opts) {
-      const { path: path6, method, body, headers, query } = opts;
+      const { path: path7, method, body, headers, query } = opts;
       return {
-        path: path6,
+        path: path7,
         method,
         body,
         headers,
@@ -13443,10 +13443,10 @@ var require_pending_interceptors_formatter = __commonJS({
       }
       format(pendingInterceptors) {
         const withPrettyHeaders = pendingInterceptors.map(
-          ({ method, path: path6, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
+          ({ method, path: path7, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
             Method: method,
             Origin: origin,
-            Path: path6,
+            Path: path7,
             "Status code": statusCode,
             Persistent: persist ? PERSISTENT : NOT_PERSISTENT,
             Invocations: timesInvoked,
@@ -13528,9 +13528,9 @@ var require_mock_agent = __commonJS({
         const acceptNonStandardSearchParameters = this[kMockAgentAcceptsNonStandardSearchParameters];
         const dispatchOpts = { ...opts };
         if (acceptNonStandardSearchParameters && dispatchOpts.path) {
-          const [path6, searchParams] = dispatchOpts.path.split("?");
+          const [path7, searchParams] = dispatchOpts.path.split("?");
           const normalizedSearchParams = normalizeSearchParams(searchParams, acceptNonStandardSearchParameters);
-          dispatchOpts.path = `${path6}?${normalizedSearchParams}`;
+          dispatchOpts.path = `${path7}?${normalizedSearchParams}`;
         }
         return this[kAgent].dispatch(dispatchOpts, handler);
       }
@@ -13734,7 +13734,7 @@ var require_snapshot_utils = __commonJS({
 var require_snapshot_recorder = __commonJS({
   "node_modules/undici/lib/mock/snapshot-recorder.js"(exports2, module2) {
     "use strict";
-    var { writeFile: writeFile2, readFile, mkdir: mkdir2 } = require("node:fs/promises");
+    var { writeFile: writeFile3, readFile, mkdir: mkdir3 } = require("node:fs/promises");
     var { dirname: dirname3, resolve: resolve2 } = require("node:path");
     var { setTimeout: setTimeout3, clearTimeout: clearTimeout2 } = require("node:timers");
     var { InvalidArgumentError, UndiciError } = require_errors();
@@ -13931,12 +13931,12 @@ var require_snapshot_recorder = __commonJS({
        * @return {Promise<void>} - Resolves when snapshots are loaded
        */
       async loadSnapshots(filePath) {
-        const path6 = filePath || this.#snapshotPath;
-        if (!path6) {
+        const path7 = filePath || this.#snapshotPath;
+        if (!path7) {
           throw new InvalidArgumentError("Snapshot path is required");
         }
         try {
-          const data = await readFile(resolve2(path6), "utf8");
+          const data = await readFile(resolve2(path7), "utf8");
           const parsed = JSON.parse(data);
           if (Array.isArray(parsed)) {
             this.#snapshots.clear();
@@ -13950,7 +13950,7 @@ var require_snapshot_recorder = __commonJS({
           if (error2.code === "ENOENT") {
             this.#snapshots.clear();
           } else {
-            throw new UndiciError(`Failed to load snapshots from ${path6}`, { cause: error2 });
+            throw new UndiciError(`Failed to load snapshots from ${path7}`, { cause: error2 });
           }
         }
       }
@@ -13961,17 +13961,17 @@ var require_snapshot_recorder = __commonJS({
        * @returns {Promise<void>} - Resolves when snapshots are saved
        */
       async saveSnapshots(filePath) {
-        const path6 = filePath || this.#snapshotPath;
-        if (!path6) {
+        const path7 = filePath || this.#snapshotPath;
+        if (!path7) {
           throw new InvalidArgumentError("Snapshot path is required");
         }
-        const resolvedPath = resolve2(path6);
-        await mkdir2(dirname3(resolvedPath), { recursive: true });
+        const resolvedPath = resolve2(path7);
+        await mkdir3(dirname3(resolvedPath), { recursive: true });
         const data = Array.from(this.#snapshots.entries()).map(([hash, snapshot]) => ({
           hash,
           snapshot
         }));
-        await writeFile2(resolvedPath, JSON.stringify(data, null, 2), { flush: true });
+        await writeFile3(resolvedPath, JSON.stringify(data, null, 2), { flush: true });
       }
       /**
        * Clears all recorded snapshots
@@ -14590,15 +14590,15 @@ var require_redirect_handler = __commonJS({
           return;
         }
         const { origin, pathname, search } = util.parseURL(new URL(this.location, this.opts.origin && new URL(this.opts.path, this.opts.origin)));
-        const path6 = search ? `${pathname}${search}` : pathname;
-        const redirectUrlString = `${origin}${path6}`;
+        const path7 = search ? `${pathname}${search}` : pathname;
+        const redirectUrlString = `${origin}${path7}`;
         for (const historyUrl of this.history) {
           if (historyUrl.toString() === redirectUrlString) {
             throw new InvalidArgumentError(`Redirect loop detected. Cannot redirect to ${origin}. This typically happens when using a Client or Pool with cross-origin redirects. Use an Agent for cross-origin redirects.`);
           }
         }
         this.opts.headers = cleanRequestHeaders(this.opts.headers, statusCode === 303, this.opts.origin !== origin);
-        this.opts.path = path6;
+        this.opts.path = path7;
         this.opts.origin = origin;
         this.opts.query = null;
       }
@@ -20798,11 +20798,11 @@ var require_fetch = __commonJS({
       function dispatch({ body }) {
         const url = requestCurrentURL(request);
         const agent = fetchParams.controller.dispatcher;
-        const path6 = url.pathname + url.search;
+        const path7 = url.pathname + url.search;
         const hasTrailingQuestionMark = url.search.length === 0 && url.href[url.href.length - url.hash.length - 1] === "?";
         return new Promise((resolve2, reject) => agent.dispatch(
           {
-            path: hasTrailingQuestionMark ? `${path6}?` : path6,
+            path: hasTrailingQuestionMark ? `${path7}?` : path7,
             origin: url.origin,
             method: request.method,
             body: agent.isMockActive ? request.body && (request.body.source || request.body.stream) : body,
@@ -21733,9 +21733,9 @@ var require_util4 = __commonJS({
         }
       }
     }
-    function validateCookiePath(path6) {
-      for (let i = 0; i < path6.length; ++i) {
-        const code = path6.charCodeAt(i);
+    function validateCookiePath(path7) {
+      for (let i = 0; i < path7.length; ++i) {
+        const code = path7.charCodeAt(i);
         if (code < 32 || // exclude CTLs (0-31)
         code === 127 || // DEL
         code === 59) {
@@ -24896,11 +24896,11 @@ var require_undici = __commonJS({
           if (typeof opts.path !== "string") {
             throw new InvalidArgumentError("invalid opts.path");
           }
-          let path6 = opts.path;
+          let path7 = opts.path;
           if (!opts.path.startsWith("/")) {
-            path6 = `/${path6}`;
+            path7 = `/${path7}`;
           }
-          url = new URL(util.parseOrigin(url).origin + path6);
+          url = new URL(util.parseOrigin(url).origin + path7);
         } else {
           if (!opts) {
             opts = typeof url === "object" ? url : {};
@@ -25009,18 +25009,18 @@ ${captureLines}` : capture.stack;
   }
 });
 
-// src/index.ts
-var index_exports = {};
-__export(index_exports, {
-  createPlannedOutputs: () => createPlannedOutputs,
-  deriveTeamId: () => deriveTeamId,
-  deriveTeamIdFromSession: () => deriveTeamIdFromSession,
-  resolveApiKeyAndTeamId: () => resolveApiKeyAndTeamId,
-  resolveInputs: () => resolveInputs,
-  runOnboarding: () => runOnboarding,
-  validateApiKey: () => validateApiKey
+// src/cli.ts
+var cli_exports = {};
+__export(cli_exports, {
+  ConsoleReporter: () => ConsoleReporter,
+  normalizeCliFlag: () => normalizeCliFlag,
+  parseCliArgs: () => parseCliArgs,
+  runCli: () => runCli,
+  toDotenv: () => toDotenv
 });
-module.exports = __toCommonJS(index_exports);
+module.exports = __toCommonJS(cli_exports);
+var import_promises = require("node:fs/promises");
+var import_node_path = __toESM(require("node:path"), 1);
 
 // node_modules/@actions/core/lib/core.js
 var core_exports = {};
@@ -27459,21 +27459,21 @@ var BifrostCatalogClient = class {
     }
     return h;
   }
-  async proxyRequest(method, path6, body = {}) {
+  async proxyRequest(method, path7, body = {}) {
     const response = await this.fetchFn(BIFROST_BASE, {
       method: "POST",
       headers: this.headers(),
       body: JSON.stringify({
         service: "api-catalog",
         method,
-        path: path6,
+        path: path7,
         body
       })
     });
     if (!response.ok) {
       throw await HttpError.fromResponse(response, {
         method: "POST",
-        url: `bifrost:api-catalog:${method} ${path6}`,
+        url: `bifrost:api-catalog:${method} ${path7}`,
         secretValues: this.secretValues
       });
     }
@@ -27484,14 +27484,14 @@ var BifrostCatalogClient = class {
     }
     return data;
   }
-  async akitaProxyRequest(method, path6, body = {}) {
+  async akitaProxyRequest(method, path7, body = {}) {
     const response = await this.fetchFn(BIFROST_BASE, {
       method: "POST",
       headers: this.headers(),
       body: JSON.stringify({
         service: "akita",
         method,
-        path: path6,
+        path: path7,
         body
       })
     });
@@ -27678,19 +27678,6 @@ var POLL_TIMEOUT_DEFAULT = 120;
 var POLL_INTERVAL_MIN = 2;
 var POLL_INTERVAL_MAX = 60;
 var POLL_INTERVAL_DEFAULT = 10;
-async function deriveTeamId(apiKey) {
-  try {
-    const res = await fetch("https://api.getpostman.com/me", {
-      method: "GET",
-      headers: { "x-api-key": apiKey }
-    });
-    if (!res.ok) return void 0;
-    const data = await res.json();
-    if (data?.user?.teamId) return String(data.user.teamId);
-  } catch {
-  }
-  return void 0;
-}
 async function validateApiKey(apiKey) {
   const res = await fetch("https://api.getpostman.com/me", {
     method: "GET",
@@ -27705,19 +27692,6 @@ async function validateApiKey(apiKey) {
   const data = await res.json();
   const teamId = data?.user?.teamId ? String(data.user.teamId) : void 0;
   return { valid: true, teamId };
-}
-async function deriveTeamIdFromSession(accessToken) {
-  try {
-    const res = await fetch("https://iapub.postman.co/api/sessions/current", {
-      method: "GET",
-      headers: { "x-access-token": accessToken }
-    });
-    if (!res.ok) return void 0;
-    const data = await res.json();
-    if (data?.session?.identity?.team) return String(data.session.identity.team);
-  } catch {
-  }
-  return void 0;
 }
 function clamp(value, min, max, fallback) {
   const parsed = Number.isFinite(value) ? value : fallback;
@@ -27941,15 +27915,173 @@ runAction().catch((error2) => {
   setFailed(message);
   process.exitCode = 1;
 });
+
+// src/cli.ts
+var ConsoleReporter = class {
+  secretValues = [];
+  info(message) {
+    console.error(this.mask(message));
+  }
+  warning(message) {
+    console.error(`WARNING: ${this.mask(message)}`);
+  }
+  setSecret(value) {
+    if (value) {
+      this.secretValues.push(value);
+    }
+  }
+  mask(message) {
+    let masked = message;
+    for (const secret of this.secretValues) {
+      masked = masked.replaceAll(secret, "***");
+    }
+    return masked;
+  }
+};
+function readFlag(argv, name) {
+  const prefix = `--${name}=`;
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === `--${name}`) {
+      return argv[index + 1];
+    }
+    if (arg?.startsWith(prefix)) {
+      return arg.slice(prefix.length);
+    }
+  }
+  return void 0;
+}
+function normalizeCliFlag(name) {
+  return `INPUT_${name.replace(/-/g, "_").toUpperCase()}`;
+}
+function parseCliArgs(argv, env = process.env) {
+  const inputNames = [
+    "project-name",
+    "workspace-id",
+    "environment-id",
+    "system-environment-id",
+    "cluster-name",
+    "git-owner",
+    "git-repository-name",
+    "repo-url",
+    "postman-access-token",
+    "postman-api-key",
+    "postman-team-id",
+    "github-token",
+    "poll-timeout-seconds",
+    "poll-interval-seconds"
+  ];
+  const inputEnv = { ...env };
+  for (const name of inputNames) {
+    const value = readFlag(argv, name);
+    if (value !== void 0) {
+      inputEnv[normalizeCliFlag(name)] = value;
+    }
+  }
+  return {
+    inputEnv,
+    resultJsonPath: readFlag(argv, "result-json") ?? "postman-insights-onboarding-result.json",
+    dotenvPath: readFlag(argv, "dotenv-path")
+  };
+}
+function toDotenv(outputs) {
+  return Object.entries(outputs).map(([key, value]) => [
+    `POSTMAN_INSIGHTS_${key.replace(/-/g, "_").toUpperCase()}`,
+    value
+  ]).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join("\n");
+}
+async function writeOptionalFile(filePath, content) {
+  if (!filePath) {
+    return;
+  }
+  const workspaceRoot = import_node_path.default.resolve(process.cwd());
+  const resolved = import_node_path.default.resolve(workspaceRoot, filePath);
+  const relative2 = import_node_path.default.relative(workspaceRoot, resolved);
+  if (relative2.startsWith("..") || import_node_path.default.isAbsolute(relative2)) {
+    throw new Error(`Output path must stay within workspace: ${filePath}`);
+  }
+  await (0, import_promises.mkdir)(import_node_path.default.dirname(resolved), { recursive: true });
+  await (0, import_promises.writeFile)(resolved, content, "utf8");
+}
+function toOutputs(result) {
+  return {
+    "discovered-service-id": String(result.discoveredServiceId),
+    "discovered-service-name": result.discoveredServiceName,
+    "collection-id": result.collectionId,
+    "application-id": result.applicationId,
+    "verification-token": result.verificationToken ?? "",
+    status: result.status
+  };
+}
+async function runCli(argv = process.argv.slice(2), runtime = {}) {
+  const env = runtime.env ?? process.env;
+  const config = parseCliArgs(argv, env);
+  const inputs = resolveInputs(config.inputEnv);
+  const reporter = new ConsoleReporter();
+  reporter.setSecret(inputs.postmanAccessToken);
+  if (inputs.postmanApiKey) {
+    reporter.setSecret(inputs.postmanApiKey);
+  }
+  if (inputs.githubToken) {
+    reporter.setSecret(inputs.githubToken);
+  }
+  const preliminaryMaskSecret = createSecretMasker([
+    inputs.postmanAccessToken,
+    inputs.postmanApiKey,
+    inputs.githubToken
+  ]);
+  const preliminaryClient = new BifrostCatalogClient({
+    accessToken: inputs.postmanAccessToken,
+    teamId: inputs.postmanTeamId,
+    apiKey: inputs.postmanApiKey,
+    maskSecret: preliminaryMaskSecret
+  });
+  const { apiKey, teamId } = await resolveApiKeyAndTeamId(inputs, preliminaryClient, reporter);
+  if (apiKey) {
+    reporter.setSecret(apiKey);
+  }
+  const maskSecret = createSecretMasker([
+    inputs.postmanAccessToken,
+    inputs.githubToken,
+    apiKey
+  ]);
+  const client = new BifrostCatalogClient({
+    accessToken: inputs.postmanAccessToken,
+    teamId,
+    apiKey,
+    maskSecret
+  });
+  const result = await (runtime.executeOnboarding ?? runOnboarding)(
+    inputs,
+    client,
+    sleep,
+    reporter
+  );
+  const outputs = toOutputs(result);
+  const jsonOutput = JSON.stringify(outputs, null, 2);
+  await writeOptionalFile(config.resultJsonPath, jsonOutput);
+  await writeOptionalFile(config.dotenvPath, toDotenv(outputs));
+  const writeStdout = runtime.writeStdout ?? ((chunk) => process.stdout.write(chunk));
+  writeStdout(`${jsonOutput}
+`);
+}
+var currentModulePath = typeof __filename === "string" ? __filename : "";
+var entrypoint = process.argv[1];
+if (entrypoint && currentModulePath === entrypoint) {
+  runCli().catch((error2) => {
+    const message = error2 instanceof Error ? error2.message : String(error2);
+    process.stderr.write(`${message}
+`);
+    process.exitCode = 1;
+  });
+}
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
-  createPlannedOutputs,
-  deriveTeamId,
-  deriveTeamIdFromSession,
-  resolveApiKeyAndTeamId,
-  resolveInputs,
-  runOnboarding,
-  validateApiKey
+  ConsoleReporter,
+  normalizeCliFlag,
+  parseCliArgs,
+  runCli,
+  toDotenv
 });
 /*! Bundled license information:
 

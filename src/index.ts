@@ -84,6 +84,12 @@ export interface OnboardingResult {
   status: 'success' | 'not-found' | 'error';
 }
 
+export interface Reporter {
+  info(message: string): void;
+  warning(message: string): void;
+  setSecret(value: string): void;
+}
+
 function clamp(value: number, min: number, max: number, fallback: number): number {
   const parsed = Number.isFinite(value) ? value : fallback;
   return Math.min(max, Math.max(min, parsed));
@@ -171,13 +177,14 @@ export function createPlannedOutputs(inputs: ActionInputs): Record<string, strin
 export async function runOnboarding(
   inputs: ActionInputs,
   client: BifrostCatalogClient,
-  sleepFn: (ms: number) => Promise<void> = sleep
+  sleepFn: (ms: number) => Promise<void> = sleep,
+  reporter: Reporter = core
 ): Promise<OnboardingResult> {
   const timeoutMs = inputs.pollTimeoutSeconds * 1000;
   const intervalMs = inputs.pollIntervalSeconds * 1000;
   const startTime = Date.now();
 
-  core.info(`Looking for discovered service matching "${inputs.clusterName ? `${inputs.clusterName}/` : ''}${inputs.projectName}"...`);
+  reporter.info(`Looking for discovered service matching "${inputs.clusterName ? `${inputs.clusterName}/` : ''}${inputs.projectName}"...`);
 
   let match = undefined;
 
@@ -186,17 +193,17 @@ export async function runOnboarding(
     match = findDiscoveredService(discovered, inputs.projectName, inputs.clusterName || undefined);
 
     if (match) {
-      core.info(`Found discovered service: ${match.name} (id: ${match.id})`);
+      reporter.info(`Found discovered service: ${match.name} (id: ${match.id})`);
       break;
     }
 
     const elapsedSec = Math.round((Date.now() - startTime) / 1000);
-    core.info(`Service not yet discovered (${elapsedSec}s elapsed, timeout ${inputs.pollTimeoutSeconds}s). Waiting ${inputs.pollIntervalSeconds}s...`);
+    reporter.info(`Service not yet discovered (${elapsedSec}s elapsed, timeout ${inputs.pollTimeoutSeconds}s). Waiting ${inputs.pollIntervalSeconds}s...`);
     await sleepFn(intervalMs);
   }
 
   if (!match) {
-    core.warning(`Service "${inputs.projectName}" not found in discovered services after ${inputs.pollTimeoutSeconds}s`);
+    reporter.warning(`Service "${inputs.projectName}" not found in discovered services after ${inputs.pollTimeoutSeconds}s`);
     return {
       discoveredServiceId: 0,
       discoveredServiceName: '',
@@ -207,14 +214,14 @@ export async function runOnboarding(
     };
   }
 
-  core.info(`Preparing collection for service ${match.id} in workspace ${inputs.workspaceId}...`);
+  reporter.info(`Preparing collection for service ${match.id} in workspace ${inputs.workspaceId}...`);
   const collectionId = await client.prepareCollection(match.id, inputs.workspaceId);
-  core.info(`Collection prepared: ${collectionId}`);
+  reporter.info(`Collection prepared: ${collectionId}`);
 
   const repoUrl = inputs.repoUrl;
   const isGitHub = /^https?:\/\/(www\.)?github\.com\//i.test(repoUrl);
   if (isGitHub) {
-    core.info(`Onboarding git integration: ${repoUrl}`);
+    reporter.info(`Onboarding git integration: ${repoUrl}`);
     await client.onboardGit({
       serviceId: match.id,
       workspaceId: inputs.workspaceId,
@@ -222,9 +229,9 @@ export async function runOnboarding(
       gitRepositoryUrl: repoUrl,
       gitApiKey: inputs.githubToken || undefined,
     });
-    core.info(`Git onboarding complete for ${match.name}`);
+    reporter.info(`Git onboarding complete for ${match.name}`);
   } else {
-    core.info(`Skipping git onboarding for non-GitHub repo: ${repoUrl}`);
+    reporter.info(`Skipping git onboarding for non-GitHub repo: ${repoUrl}`);
   }
 
   const providerServiceId = await client.resolveProviderServiceId(
@@ -235,32 +242,32 @@ export async function runOnboarding(
   if (providerServiceId) {
     const sysEnvId = inputs.systemEnvironmentId || match.systemEnvironmentId || '';
     if (sysEnvId) {
-      core.info(`Acknowledging Insights onboarding for ${providerServiceId}...`);
+      reporter.info(`Acknowledging Insights onboarding for ${providerServiceId}...`);
       await client.acknowledgeOnboarding(providerServiceId, inputs.workspaceId, sysEnvId);
-      core.info(`Insights acknowledged: ${providerServiceId}`);
+      reporter.info(`Insights acknowledged: ${providerServiceId}`);
 
-      core.info(`Creating application binding for workspace ${inputs.workspaceId} with system_env ${sysEnvId}...`);
+      reporter.info(`Creating application binding for workspace ${inputs.workspaceId} with system_env ${sysEnvId}...`);
       const appResult = await client.createApplication(inputs.workspaceId, sysEnvId);
       applicationId = appResult.application_id;
-      core.info(`Application binding created: ${appResult.application_id} for service ${appResult.service_id}`);
+      reporter.info(`Application binding created: ${appResult.application_id} for service ${appResult.service_id}`);
     } else {
-      core.warning('No systemEnvironmentId available; skipping Insights acknowledgment and application binding');
+      reporter.warning('No systemEnvironmentId available; skipping Insights acknowledgment and application binding');
     }
   } else {
-    core.warning('Could not resolve Akita provider service ID; skipping acknowledgment and application binding');
+    reporter.warning('Could not resolve Akita provider service ID; skipping acknowledgment and application binding');
   }
 
-  core.info(`Acknowledging workspace onboarding for ${inputs.workspaceId}...`);
+  reporter.info(`Acknowledging workspace onboarding for ${inputs.workspaceId}...`);
   await client.acknowledgeWorkspace(inputs.workspaceId);
-  core.info('Workspace onboarding acknowledged');
+  reporter.info('Workspace onboarding acknowledged');
 
-  core.info('Retrieving team verification token...');
+  reporter.info('Retrieving team verification token...');
   const verificationToken = await client.getTeamVerificationToken(inputs.workspaceId);
   if (verificationToken) {
-    core.info('Team verification token retrieved');
-    core.setSecret(verificationToken);
+    reporter.info('Team verification token retrieved');
+    reporter.setSecret(verificationToken);
   } else {
-    core.warning('Failed to retrieve team verification token');
+    reporter.warning('Failed to retrieve team verification token');
   }
 
   return {
@@ -276,6 +283,7 @@ export async function runOnboarding(
 export async function resolveApiKeyAndTeamId(
   inputs: ActionInputs,
   client: BifrostCatalogClient,
+  reporter: Reporter = core
 ): Promise<{ apiKey: string; teamId: string }> {
   let apiKey = inputs.postmanApiKey;
   const teamId = inputs.postmanTeamId;
@@ -286,7 +294,7 @@ export async function resolveApiKeyAndTeamId(
       const result = await validateApiKey(apiKey);
       keyValid = result.valid;
       if (!keyValid) {
-        core.warning('Provided postman-api-key is invalid or expired.');
+        reporter.warning('Provided postman-api-key is invalid or expired.');
       }
     } catch (error: unknown) {
       // Network errors or unexpected status codes: rethrow instead of treating as invalid key
@@ -295,18 +303,18 @@ export async function resolveApiKeyAndTeamId(
   }
 
   if (!keyValid) {
-    core.info('Generating a new Postman API key via Bifrost identity service...');
+    reporter.info('Generating a new Postman API key via Bifrost identity service...');
     const keyName = `insights-onboarding-action-${Date.now()}`;
     apiKey = await client.createApiKey(keyName);
-    core.setSecret(apiKey);
+    reporter.setSecret(apiKey);
     client.setApiKey(apiKey);
-    core.info('New API key created successfully.');
+    reporter.info('New API key created successfully.');
   }
 
   if (teamId) {
-    core.info(`Using explicit postman-team-id for Bifrost headers: ${teamId}`);
+    reporter.info(`Using explicit postman-team-id for Bifrost headers: ${teamId}`);
   } else {
-    core.info('No explicit postman-team-id provided; omitting x-entity-team-id so Bifrost resolves team from the access token.');
+    reporter.info('No explicit postman-team-id provided; omitting x-entity-team-id so Bifrost resolves team from the access token.');
   }
 
   return { apiKey, teamId };
@@ -336,7 +344,7 @@ async function runAction(): Promise<void> {
     maskSecret,
   });
 
-  const { apiKey, teamId } = await resolveApiKeyAndTeamId(inputs, preliminaryClient);
+  const { apiKey, teamId } = await resolveApiKeyAndTeamId(inputs, preliminaryClient, core);
 
   const client = new BifrostCatalogClient({
     accessToken: inputs.postmanAccessToken,
@@ -347,7 +355,7 @@ async function runAction(): Promise<void> {
 
   let result: import('./index.js').OnboardingResult;
   try {
-    result = await runOnboarding(inputs, client);
+    result = await runOnboarding(inputs, client, sleep, core);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     core.setOutput('status', 'error');
