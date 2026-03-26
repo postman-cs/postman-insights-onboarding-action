@@ -26017,15 +26017,20 @@ async function runOnboarding(inputs, client, sleepFn = sleep) {
   const collectionId = await client.prepareCollection(match.id, inputs.workspaceId);
   info(`Collection prepared: ${collectionId}`);
   const repoUrl = inputs.repoUrl;
-  info(`Onboarding git integration: ${repoUrl}`);
-  await client.onboardGit({
-    serviceId: match.id,
-    workspaceId: inputs.workspaceId,
-    environmentId: inputs.environmentId,
-    gitRepositoryUrl: repoUrl,
-    gitApiKey: inputs.githubToken || void 0
-  });
-  info(`Git onboarding complete for ${match.name}`);
+  const isGitHub = /^https?:\/\/(www\.)?github\.com\//i.test(repoUrl);
+  if (isGitHub) {
+    info(`Onboarding git integration: ${repoUrl}`);
+    await client.onboardGit({
+      serviceId: match.id,
+      workspaceId: inputs.workspaceId,
+      environmentId: inputs.environmentId,
+      gitRepositoryUrl: repoUrl,
+      gitApiKey: inputs.githubToken || void 0
+    });
+    info(`Git onboarding complete for ${match.name}`);
+  } else {
+    info(`Skipping git onboarding for non-GitHub repo: ${repoUrl}`);
+  }
   const providerServiceId = await client.resolveProviderServiceId(
     inputs.projectName,
     inputs.clusterName || void 0
