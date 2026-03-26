@@ -238,6 +238,17 @@ The action calls the following API endpoints in order:
 7. **Workspace acknowledge** -- `POST /v2/workspaces/{id}/onboarding/acknowledge` (Bifrost akita) to activate the Insights project.
 8. **Team verification token** -- `GET /v2/workspaces/{id}/team-verification-token` (Bifrost akita) to retrieve the DaemonSet telemetry token.
 
+## Contract smoke monitoring
+
+This repo includes `.github/workflows/contract-smoke.yml`, a scheduled live contract check for the upstream APIs used by Insights onboarding.
+
+Configure these repository secrets before enabling the workflow:
+
+- `SMOKE_ORG_API_KEY`
+- `SMOKE_ORG_ACCESS_TOKEN`
+
+The smoke workflow verifies `/me`, `/teams`, `iapub.postman.co/api/sessions/current`, and Bifrost API key creation so auth or payload drift shows up in CI before it hits production onboarding runs.
+
 ## Local development
 
 ```bash

@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import {
   runOnboarding,
   resolveApiKeyAndTeamId,
+  resolveInputs,
   validateApiKey,
   type ActionInputs,
 } from '../src/index.js';
@@ -274,5 +275,233 @@ describe('validateApiKey', () => {
     globalThis.fetch = vi.fn().mockRejectedValue(new Error('network')) as unknown as typeof fetch;
 
     await expect(validateApiKey('PMAK-err')).rejects.toThrow('network');
+  });
+});
+
+describe('getTeams', () => {
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it('returns parsed teams from API', async () => {
+    const { getTeams } = await import('../src/index.js');
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: 1, name: 'Team Alpha', organizationId: 100 },
+          { id: 2, name: 'Team Beta', organizationId: 100 }
+        ]
+      }),
+    }) as unknown as typeof fetch;
+
+    const result = await getTeams('PMAK-test');
+    expect(result).toEqual([
+      { id: 1, name: 'Team Alpha', organizationId: 100 },
+      { id: 2, name: 'Team Beta', organizationId: 100 },
+    ]);
+  });
+
+  it('returns empty array on API error', async () => {
+    const { getTeams } = await import('../src/index.js');
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+    }) as unknown as typeof fetch;
+
+    const result = await getTeams('PMAK-test');
+    expect(result).toEqual([]);
+  });
+
+  it('returns empty array on network error', async () => {
+    const { getTeams } = await import('../src/index.js');
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('network')) as unknown as typeof fetch;
+
+    const result = await getTeams('PMAK-test');
+    expect(result).toEqual([]);
+  });
+
+  it('filters out teams without id or name', async () => {
+    const { getTeams } = await import('../src/index.js');
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: 1, name: 'Valid Team' },
+          { id: null, name: 'Missing ID' },
+          { id: 2, name: '' },
+          { id: undefined, name: 'Undefined ID' },
+        ]
+      }),
+    }) as unknown as typeof fetch;
+
+    const result = await getTeams('PMAK-test');
+    expect(result).toEqual([{ id: 1, name: 'Valid Team' }]);
+  });
+});
+
+describe('resolveInputs env var fallbacks', () => {
+  it('uses POSTMAN_WORKSPACE_ID env var when input is empty', () => {
+    const env = {
+      INPUT_PROJECT_NAME: 'my-project',
+      INPUT_POSTMAN_ACCESS_TOKEN: 'tok-test',
+      INPUT_WORKSPACE_ID: '',
+      INPUT_ENVIRONMENT_ID: 'env-123',
+      POSTMAN_WORKSPACE_ID: 'ws-env-fallback',
+    };
+    const result = resolveInputs(env);
+    expect(result.workspaceId).toBe('ws-env-fallback');
+  });
+
+  it('uses POSTMAN_ENVIRONMENT_ID env var when input is empty', () => {
+    const env = {
+      INPUT_PROJECT_NAME: 'my-project',
+      INPUT_POSTMAN_ACCESS_TOKEN: 'tok-test',
+      INPUT_WORKSPACE_ID: 'ws-123',
+      INPUT_ENVIRONMENT_ID: '',
+      POSTMAN_ENVIRONMENT_ID: 'env-env-fallback',
+    };
+    const result = resolveInputs(env);
+    expect(result.environmentId).toBe('env-env-fallback');
+  });
+
+  it('throws when both input and env var are missing for workspace-id', () => {
+    const env = {
+      INPUT_PROJECT_NAME: 'my-project',
+      INPUT_POSTMAN_ACCESS_TOKEN: 'tok-test',
+      INPUT_WORKSPACE_ID: '',
+      INPUT_ENVIRONMENT_ID: 'env-123',
+    };
+    expect(() => resolveInputs(env)).toThrow('workspace-id is required');
+  });
+
+  it('throws when both input and env var are missing for environment-id', () => {
+    const env = {
+      INPUT_PROJECT_NAME: 'my-project',
+      INPUT_POSTMAN_ACCESS_TOKEN: 'tok-test',
+      INPUT_WORKSPACE_ID: 'ws-123',
+      INPUT_ENVIRONMENT_ID: '',
+    };
+    expect(() => resolveInputs(env)).toThrow('environment-id is required');
+  });
+});
+
+describe('resolveApiKeyAndTeamId org-mode auto-detection', () => {
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it('auto-detects org-mode and derives team ID when multiple sub-teams exist', async () => {
+    let callCount = 0;
+    globalThis.fetch = vi.fn().mockImplementation(async () => {
+      callCount++;
+      if (callCount === 1) {
+        // getTeams response
+        return {
+          ok: true,
+          json: async () => ({
+            data: [
+              { id: 10, name: 'SubTeam A', organizationId: 999 },
+              { id: 11, name: 'SubTeam B', organizationId: 999 }
+            ]
+          }),
+        };
+      } else {
+        // validateApiKey response
+        return {
+          ok: true,
+          json: async () => ({ user: { teamId: 999 } }),
+        };
+      }
+    }) as unknown as typeof fetch;
+
+    const client = makeClient();
+    const result = await resolveApiKeyAndTeamId(
+      makeInputs({ postmanApiKey: '', postmanTeamId: '' }),
+      client,
+    );
+    expect(result.teamId).toBe('999');
+  });
+
+  it('does not auto-detect org-mode when only one team exists', async () => {
+    let callCount = 0;
+    globalThis.fetch = vi.fn().mockImplementation(async () => {
+      callCount++;
+      if (callCount === 1) {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{ id: 10, name: 'Only Team', organizationId: 999 }]
+          }),
+        };
+      } else {
+        return {
+          ok: true,
+          json: async () => ({ user: { teamId: 999 } }),
+        };
+      }
+    }) as unknown as typeof fetch;
+
+    const client = makeClient();
+    const result = await resolveApiKeyAndTeamId(
+      makeInputs({ postmanApiKey: '', postmanTeamId: '' }),
+      client,
+    );
+    expect(result.teamId).toBe('');
+  });
+
+  it('does not auto-detect org-mode when team IDs do not match org', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async () => {
+      return {
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: 10, name: 'SubTeam A', organizationId: 999 },
+            { id: 11, name: 'SubTeam B', organizationId: 999 }
+          ]
+        }),
+      };
+    }) as unknown as typeof fetch;
+
+    // Override second call to validateApiKey to return different teamId
+    let callCount = 0;
+    globalThis.fetch = vi.fn().mockImplementation(async () => {
+      callCount++;
+      if (callCount === 1) {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [
+              { id: 10, name: 'SubTeam A', organizationId: 999 },
+              { id: 11, name: 'SubTeam B', organizationId: 999 }
+            ]
+          }),
+        };
+      } else {
+        return {
+          ok: true,
+          json: async () => ({ user: { teamId: 888 } }), // different from org 999
+        };
+      }
+    }) as unknown as typeof fetch;
+
+    const client = makeClient();
+    const result = await resolveApiKeyAndTeamId(
+      makeInputs({ postmanApiKey: '', postmanTeamId: '' }),
+      client,
+    );
+    expect(result.teamId).toBe('');
   });
 });
