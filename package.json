@@ -1,6 +1,6 @@
 {
   "name": "@postman-cse/onboarding-insights",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "GitHub Action to onboard Postman Insights discovered services to API Catalog workspaces.",
   "type": "module",
   "main": "dist/index.cjs",
@@ -39,5 +39,9 @@
     "typescript": "^5.9.3",
     "vitest": "^4.0.18",
     "yaml": "^2.8.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/postman-cs/postman-insights-onboarding-action"
   }
 }
