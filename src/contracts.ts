@@ -39,12 +39,8 @@ export const alphaActionContract: AlphaActionContract = {
       description: 'Insights cluster name. Matches {cluster}/{project-name} in discovered services.',
       required: false,
     },
-    'git-owner': {
-      description: 'GitHub organization or user that owns the repository.',
-      required: false,
-    },
-    'git-repository-name': {
-      description: 'GitHub repository name. Defaults to project-name.',
+    'repo-url': {
+      description: 'Repository URL for Git onboarding. Auto-detected from CI context when omitted.',
       required: false,
     },
     'postman-access-token': {

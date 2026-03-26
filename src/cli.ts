@@ -74,8 +74,6 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     'environment-id',
     'system-environment-id',
     'cluster-name',
-    'git-owner',
-    'git-repository-name',
     'repo-url',
     'postman-access-token',
     'postman-api-key',

@@ -84,8 +84,6 @@ export interface ActionInputs {
   environmentId: string;
   systemEnvironmentId: string;
   clusterName: string;
-  gitOwner: string;
-  gitRepositoryName: string;
   repoUrl: string;
   postmanAccessToken: string;
   postmanApiKey: string;
@@ -153,10 +151,6 @@ export function resolveInputs(
       : '') ||
     env.BUILD_REPOSITORY_NAME ||
     '';
-  const repoOwner = repoSlug.split('/')[0] || '';
-  const gitOwner = get('git-owner', repoOwner);
-  const gitRepositoryName = get('git-repository-name', projectName);
-
   // Derive repo URL from CI environment (provider-agnostic)
   const detectedRepoUrl =
     (env.GITHUB_SERVER_URL && env.GITHUB_REPOSITORY
@@ -166,7 +160,7 @@ export function resolveInputs(
     env.BITBUCKET_GIT_HTTP_ORIGIN ||
     env.BUILD_REPOSITORY_URI ||
     '';
-  const repoUrl = get('repo-url', detectedRepoUrl || `https://github.com/${gitOwner}/${gitRepositoryName}`);
+  const repoUrl = get('repo-url', detectedRepoUrl);
 
   const rawTimeout = parseInt(get('poll-timeout-seconds', String(POLL_TIMEOUT_DEFAULT)), 10);
   const rawInterval = parseInt(get('poll-interval-seconds', String(POLL_INTERVAL_DEFAULT)), 10);
@@ -177,8 +171,6 @@ export function resolveInputs(
     environmentId,
     systemEnvironmentId: get('system-environment-id', ''),
     clusterName: get('cluster-name', ''),
-    gitOwner,
-    gitRepositoryName,
     repoUrl,
     postmanAccessToken,
     postmanApiKey,

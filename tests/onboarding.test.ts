@@ -15,8 +15,6 @@ function makeInputs(overrides: Partial<ActionInputs> = {}): ActionInputs {
     environmentId: 'env-456',
     systemEnvironmentId: '',
     clusterName: 'se-catalog-demo',
-    gitOwner: 'postman-cs',
-    gitRepositoryName: 'af-cards-activation',
     repoUrl: 'https://github.com/postman-cs/af-cards-activation',
     postmanAccessToken: 'tok-abc',
     postmanApiKey: 'PMAK-test',

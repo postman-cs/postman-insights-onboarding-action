@@ -78,6 +78,19 @@ describe('alpha action contract', () => {
     expect(inputs.postmanApiKey).toBe('');
   });
 
+  it('auto-detects repo-url from CI context when the input is omitted', () => {
+    const inputs = resolveInputs({
+      INPUT_PROJECT_NAME: 'svc',
+      INPUT_WORKSPACE_ID: 'ws-123',
+      INPUT_ENVIRONMENT_ID: 'env-456',
+      INPUT_POSTMAN_ACCESS_TOKEN: 'tok-abc',
+      GITHUB_SERVER_URL: 'https://github.com',
+      GITHUB_REPOSITORY: 'postman-cs/repo-a'
+    });
+
+    expect(inputs.repoUrl).toBe('https://github.com/postman-cs/repo-a');
+  });
+
   it('reads POSTMAN_TEAM_ID from env when postman-team-id input is empty', () => {
     const inputs = resolveInputs({
       INPUT_PROJECT_NAME: 'svc',
