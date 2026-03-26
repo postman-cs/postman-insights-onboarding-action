@@ -58,6 +58,26 @@ export async function deriveTeamIdFromSession(accessToken: string): Promise<stri
   return undefined;
 }
 
+export async function getTeams(apiKey: string): Promise<Array<{ id: number; name: string; organizationId?: number }>> {
+  try {
+    const res = await fetch('https://api.getpostman.com/teams', {
+      method: 'GET',
+      headers: { 'x-api-key': apiKey },
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { data?: Array<{ id: number; name: string; handle?: string; organizationId?: number }> };
+    return (data?.data ?? [])
+      .filter(t => t?.id && t?.name)
+      .map(t => ({
+        id: Number(t.id),
+        name: String(t.name),
+        ...(t.organizationId != null ? { organizationId: Number(t.organizationId) } : {})
+      }));
+  } catch {
+    return [];
+  }
+}
+
 export interface ActionInputs {
   projectName: string;
   workspaceId: string;
@@ -111,11 +131,19 @@ export function resolveInputs(
   // Read postman-team-id from action input, falling back to POSTMAN_TEAM_ID env
   const postmanTeamId = get('postman-team-id') || env.POSTMAN_TEAM_ID?.trim() || '';
 
-  const workspaceId = get('workspace-id');
-  if (!workspaceId) throw new Error('workspace-id is required');
+  const workspaceId = get('workspace-id') || env.POSTMAN_WORKSPACE_ID?.trim() || '';
+  if (!workspaceId) {
+    throw new Error(
+      'workspace-id is required. Provide it as an input, or set the POSTMAN_WORKSPACE_ID environment variable.'
+    );
+  }
 
-  const environmentId = get('environment-id');
-  if (!environmentId) throw new Error('environment-id is required');
+  const environmentId = get('environment-id') || env.POSTMAN_ENVIRONMENT_ID?.trim() || '';
+  if (!environmentId) {
+    throw new Error(
+      'environment-id is required. Provide it as an input, or set the POSTMAN_ENVIRONMENT_ID environment variable.'
+    );
+  }
 
   const repoSlug =
     env.GITHUB_REPOSITORY ||
@@ -311,13 +339,37 @@ export async function resolveApiKeyAndTeamId(
     reporter.info('New API key created successfully.');
   }
 
-  if (teamId) {
-    reporter.info(`Using explicit postman-team-id for Bifrost headers: ${teamId}`);
-  } else {
-    reporter.info('No explicit postman-team-id provided; omitting x-entity-team-id so Bifrost resolves team from the access token.');
+  // Auto-detect org-mode and derive team ID when not explicitly provided
+  let resolvedTeamId = teamId;
+  if (!resolvedTeamId && apiKey) {
+    try {
+      const teams = await getTeams(apiKey);
+      if (teams.length > 1 && teams.every(t => t.organizationId == null)) {
+        reporter.warning(
+          'GET /teams returned multiple teams but none include organizationId. ' +
+          'Org-mode auto-detection may be degraded due to an upstream API change. ' +
+          'Set postman-team-id explicitly if Bifrost calls fail.'
+        );
+      }
+      const orgIds = new Set(teams.filter(t => t.organizationId != null).map(t => t.organizationId));
+      const meResult = await validateApiKey(apiKey);
+      const meTeamId = meResult.teamId ? parseInt(meResult.teamId, 10) : NaN;
+      if (teams.length > 1 && orgIds.size === 1 && !Number.isNaN(meTeamId) && orgIds.has(meTeamId)) {
+        resolvedTeamId = String(meTeamId);
+        reporter.info(`Org-mode auto-detected (${teams.length} sub-teams). Using team ID ${resolvedTeamId} for Bifrost headers.`);
+      }
+    } catch {
+      // Non-fatal: if detection fails, teamId stays empty (header omitted) which is safe
+    }
   }
 
-  return { apiKey, teamId };
+  if (resolvedTeamId) {
+    reporter.info(`Using postman-team-id for Bifrost headers: ${resolvedTeamId}`);
+  } else {
+    reporter.info('No postman-team-id resolved; omitting x-entity-team-id so Bifrost resolves team from the access token.');
+  }
+
+  return { apiKey, teamId: resolvedTeamId };
 }
 
 async function runAction(): Promise<void> {
