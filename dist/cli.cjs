@@ -27746,6 +27746,23 @@ async function validateApiKey(apiKey) {
   const teamId = data?.user?.teamId ? String(data.user.teamId) : void 0;
   return { valid: true, teamId };
 }
+async function getTeams(apiKey) {
+  try {
+    const res = await fetch("https://api.getpostman.com/teams", {
+      method: "GET",
+      headers: { "x-api-key": apiKey }
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data?.data ?? []).filter((t) => t?.id && t?.name).map((t) => ({
+      id: Number(t.id),
+      name: String(t.name),
+      ...t.organizationId != null ? { organizationId: Number(t.organizationId) } : {}
+    }));
+  } catch {
+    return [];
+  }
+}
 function clamp(value, min, max, fallback) {
   const parsed = Number.isFinite(value) ? value : fallback;
   return Math.min(max, Math.max(min, parsed));
@@ -27758,16 +27775,21 @@ function resolveInputs(env = process.env) {
   if (!postmanAccessToken) throw new Error("postman-access-token is required");
   const postmanApiKey = get("postman-api-key");
   const postmanTeamId = get("postman-team-id") || env.POSTMAN_TEAM_ID?.trim() || "";
-  const workspaceId = get("workspace-id");
-  if (!workspaceId) throw new Error("workspace-id is required");
-  const environmentId = get("environment-id");
-  if (!environmentId) throw new Error("environment-id is required");
+  const workspaceId = get("workspace-id") || env.POSTMAN_WORKSPACE_ID?.trim() || "";
+  if (!workspaceId) {
+    throw new Error(
+      "workspace-id is required. Provide it as an input, or set the POSTMAN_WORKSPACE_ID environment variable."
+    );
+  }
+  const environmentId = get("environment-id") || env.POSTMAN_ENVIRONMENT_ID?.trim() || "";
+  if (!environmentId) {
+    throw new Error(
+      "environment-id is required. Provide it as an input, or set the POSTMAN_ENVIRONMENT_ID environment variable."
+    );
+  }
   const repoSlug = env.GITHUB_REPOSITORY || env.CI_PROJECT_PATH || (env.BITBUCKET_WORKSPACE && env.BITBUCKET_REPO_SLUG ? `${env.BITBUCKET_WORKSPACE}/${env.BITBUCKET_REPO_SLUG}` : "") || env.BUILD_REPOSITORY_NAME || "";
-  const repoOwner = repoSlug.split("/")[0] || "";
-  const gitOwner = get("git-owner", repoOwner);
-  const gitRepositoryName = get("git-repository-name", projectName);
   const detectedRepoUrl = (env.GITHUB_SERVER_URL && env.GITHUB_REPOSITORY ? `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}` : "") || env.CI_PROJECT_URL || env.BITBUCKET_GIT_HTTP_ORIGIN || env.BUILD_REPOSITORY_URI || "";
-  const repoUrl = get("repo-url", detectedRepoUrl || `https://github.com/${gitOwner}/${gitRepositoryName}`);
+  const repoUrl = get("repo-url", detectedRepoUrl);
   const rawTimeout = parseInt(get("poll-timeout-seconds", String(POLL_TIMEOUT_DEFAULT)), 10);
   const rawInterval = parseInt(get("poll-interval-seconds", String(POLL_INTERVAL_DEFAULT)), 10);
   return {
@@ -27776,8 +27798,6 @@ function resolveInputs(env = process.env) {
     environmentId,
     systemEnvironmentId: get("system-environment-id", ""),
     clusterName: get("cluster-name", ""),
-    gitOwner,
-    gitRepositoryName,
     repoUrl,
     postmanAccessToken,
     postmanApiKey,
@@ -27907,12 +27927,31 @@ async function resolveApiKeyAndTeamId(inputs, client, reporter = core_exports) {
     client.setApiKey(apiKey);
     reporter.info("New API key created successfully.");
   }
-  if (teamId) {
-    reporter.info(`Using explicit postman-team-id for Bifrost headers: ${teamId}`);
-  } else {
-    reporter.info("No explicit postman-team-id provided; omitting x-entity-team-id so Bifrost resolves team from the access token.");
+  let resolvedTeamId = teamId;
+  if (!resolvedTeamId && apiKey) {
+    try {
+      const teams = await getTeams(apiKey);
+      if (teams.length > 1 && teams.every((t) => t.organizationId == null)) {
+        reporter.warning(
+          "GET /teams returned multiple teams but none include organizationId. Org-mode auto-detection may be degraded due to an upstream API change. Set postman-team-id explicitly if Bifrost calls fail."
+        );
+      }
+      const orgIds = new Set(teams.filter((t) => t.organizationId != null).map((t) => t.organizationId));
+      const meResult = await validateApiKey(apiKey);
+      const meTeamId = meResult.teamId ? parseInt(meResult.teamId, 10) : NaN;
+      if (teams.length > 1 && orgIds.size === 1 && !Number.isNaN(meTeamId) && orgIds.has(meTeamId)) {
+        resolvedTeamId = String(meTeamId);
+        reporter.info(`Org-mode auto-detected (${teams.length} sub-teams). Using team ID ${resolvedTeamId} for Bifrost headers.`);
+      }
+    } catch {
+    }
   }
-  return { apiKey, teamId };
+  if (resolvedTeamId) {
+    reporter.info(`Using postman-team-id for Bifrost headers: ${resolvedTeamId}`);
+  } else {
+    reporter.info("No postman-team-id resolved; omitting x-entity-team-id so Bifrost resolves team from the access token.");
+  }
+  return { apiKey, teamId: resolvedTeamId };
 }
 async function runAction() {
   const inputs = resolveInputs();
@@ -28014,8 +28053,6 @@ function parseCliArgs(argv, env = process.env) {
     "environment-id",
     "system-environment-id",
     "cluster-name",
-    "git-owner",
-    "git-repository-name",
     "repo-url",
     "postman-access-token",
     "postman-api-key",

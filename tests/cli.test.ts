@@ -11,8 +11,6 @@ describe('parseCliArgs', () => {
         '--environment-id', 'env-456',
         '--system-environment-id', 'sys-789',
         '--cluster-name', 'cluster-a',
-        '--git-owner', 'postman-cs',
-        '--git-repository-name', 'repo-a',
         '--repo-url', 'https://github.com/postman-cs/repo-a',
         '--postman-access-token', 'tok-abc',
         '--postman-api-key', 'PMAK-abc',
@@ -31,8 +29,6 @@ describe('parseCliArgs', () => {
     expect(config.inputEnv[normalizeCliFlag('environment-id')]).toBe('env-456');
     expect(config.inputEnv[normalizeCliFlag('system-environment-id')]).toBe('sys-789');
     expect(config.inputEnv[normalizeCliFlag('cluster-name')]).toBe('cluster-a');
-    expect(config.inputEnv[normalizeCliFlag('git-owner')]).toBe('postman-cs');
-    expect(config.inputEnv[normalizeCliFlag('git-repository-name')]).toBe('repo-a');
     expect(config.inputEnv[normalizeCliFlag('repo-url')]).toBe('https://github.com/postman-cs/repo-a');
     expect(config.inputEnv[normalizeCliFlag('postman-access-token')]).toBe('tok-abc');
     expect(config.inputEnv[normalizeCliFlag('postman-api-key')]).toBe('PMAK-abc');

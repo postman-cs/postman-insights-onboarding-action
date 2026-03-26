@@ -166,8 +166,7 @@ steps:
 | `environment-id` | Yes | | Postman environment UID for the onboarding association. |
 | `system-environment-id` | No | | Postman system environment UUID for service-level Insights acknowledgment. Falls back to the value from the discovered service record. |
 | `cluster-name` | No | | Insights cluster name. When set, the action matches `{cluster-name}/{project-name}` exactly. When omitted, falls back to suffix matching. |
-| `git-owner` | No | `$GITHUB_REPOSITORY_OWNER` | GitHub organization or user for the repository URL. |
-| `git-repository-name` | No | `project-name` | GitHub repository name. Defaults to the project name. |
+| `repo-url` | No | Auto-detected from CI when available | Repository URL used for Git onboarding. |
 | `postman-access-token` | Yes | | Postman session token for Bifrost API calls. See [Obtaining postman-access-token](#obtaining-postman-access-token-open-alpha). |
 | `postman-team-id` | No | | Explicit Postman team ID for org-mode Bifrost requests. When omitted, the action leaves `x-entity-team-id` unset so Bifrost resolves team context from the access token. |
 | `github-token` | No | ambient `GITHUB_TOKEN` env when exported by the workflow | Optional GitHub token passed as `git_api_key` only when repository auth is required by the onboarding endpoint. |
