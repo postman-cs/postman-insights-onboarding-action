@@ -25950,9 +25950,12 @@ function resolveInputs(env = process.env) {
   if (!workspaceId) throw new Error("workspace-id is required");
   const environmentId = get("environment-id");
   if (!environmentId) throw new Error("environment-id is required");
-  const repoOwner = (env.GITHUB_REPOSITORY || "").split("/")[0] || "";
+  const repoSlug = env.GITHUB_REPOSITORY || env.CI_PROJECT_PATH || (env.BITBUCKET_WORKSPACE && env.BITBUCKET_REPO_SLUG ? `${env.BITBUCKET_WORKSPACE}/${env.BITBUCKET_REPO_SLUG}` : "") || env.BUILD_REPOSITORY_NAME || "";
+  const repoOwner = repoSlug.split("/")[0] || "";
   const gitOwner = get("git-owner", repoOwner);
   const gitRepositoryName = get("git-repository-name", projectName);
+  const detectedRepoUrl = (env.GITHUB_SERVER_URL && env.GITHUB_REPOSITORY ? `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}` : "") || env.CI_PROJECT_URL || env.BITBUCKET_GIT_HTTP_ORIGIN || env.BUILD_REPOSITORY_URI || "";
+  const repoUrl = get("repo-url", detectedRepoUrl || `https://github.com/${gitOwner}/${gitRepositoryName}`);
   const rawTimeout = parseInt(get("poll-timeout-seconds", String(POLL_TIMEOUT_DEFAULT)), 10);
   const rawInterval = parseInt(get("poll-interval-seconds", String(POLL_INTERVAL_DEFAULT)), 10);
   return {
@@ -25963,6 +25966,7 @@ function resolveInputs(env = process.env) {
     clusterName: get("cluster-name", ""),
     gitOwner,
     gitRepositoryName,
+    repoUrl,
     postmanAccessToken,
     postmanApiKey,
     postmanTeamId,
@@ -26012,7 +26016,7 @@ async function runOnboarding(inputs, client, sleepFn = sleep) {
   info(`Preparing collection for service ${match.id} in workspace ${inputs.workspaceId}...`);
   const collectionId = await client.prepareCollection(match.id, inputs.workspaceId);
   info(`Collection prepared: ${collectionId}`);
-  const repoUrl = `https://github.com/${inputs.gitOwner}/${inputs.gitRepositoryName}`;
+  const repoUrl = inputs.repoUrl;
   info(`Onboarding git integration: ${repoUrl}`);
   await client.onboardGit({
     serviceId: match.id,

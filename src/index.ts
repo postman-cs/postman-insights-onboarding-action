@@ -66,6 +66,7 @@ export interface ActionInputs {
   clusterName: string;
   gitOwner: string;
   gitRepositoryName: string;
+  repoUrl: string;
   postmanAccessToken: string;
   postmanApiKey: string;
   postmanTeamId: string;
@@ -110,9 +111,28 @@ export function resolveInputs(
   const environmentId = get('environment-id');
   if (!environmentId) throw new Error('environment-id is required');
 
-  const repoOwner = (env.GITHUB_REPOSITORY || '').split('/')[0] || '';
+  const repoSlug =
+    env.GITHUB_REPOSITORY ||
+    env.CI_PROJECT_PATH ||
+    (env.BITBUCKET_WORKSPACE && env.BITBUCKET_REPO_SLUG
+      ? `${env.BITBUCKET_WORKSPACE}/${env.BITBUCKET_REPO_SLUG}`
+      : '') ||
+    env.BUILD_REPOSITORY_NAME ||
+    '';
+  const repoOwner = repoSlug.split('/')[0] || '';
   const gitOwner = get('git-owner', repoOwner);
   const gitRepositoryName = get('git-repository-name', projectName);
+
+  // Derive repo URL from CI environment (provider-agnostic)
+  const detectedRepoUrl =
+    (env.GITHUB_SERVER_URL && env.GITHUB_REPOSITORY
+      ? `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}`
+      : '') ||
+    env.CI_PROJECT_URL ||
+    env.BITBUCKET_GIT_HTTP_ORIGIN ||
+    env.BUILD_REPOSITORY_URI ||
+    '';
+  const repoUrl = get('repo-url', detectedRepoUrl || `https://github.com/${gitOwner}/${gitRepositoryName}`);
 
   const rawTimeout = parseInt(get('poll-timeout-seconds', String(POLL_TIMEOUT_DEFAULT)), 10);
   const rawInterval = parseInt(get('poll-interval-seconds', String(POLL_INTERVAL_DEFAULT)), 10);
@@ -125,6 +145,7 @@ export function resolveInputs(
     clusterName: get('cluster-name', ''),
     gitOwner,
     gitRepositoryName,
+    repoUrl,
     postmanAccessToken,
     postmanApiKey,
     postmanTeamId,
@@ -190,7 +211,7 @@ export async function runOnboarding(
   const collectionId = await client.prepareCollection(match.id, inputs.workspaceId);
   core.info(`Collection prepared: ${collectionId}`);
 
-  const repoUrl = `https://github.com/${inputs.gitOwner}/${inputs.gitRepositoryName}`;
+  const repoUrl = inputs.repoUrl;
   core.info(`Onboarding git integration: ${repoUrl}`);
   await client.onboardGit({
     serviceId: match.id,
