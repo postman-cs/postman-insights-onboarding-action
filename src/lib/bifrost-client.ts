@@ -331,5 +331,9 @@ export function findDiscoveredService(
     // When clusterName is provided, require exact match only (no suffix fallback)
     return services.find((s) => s.name === fullName);
   }
-  return services.find((s) => s.name.endsWith(`/${projectName}`));
+  // First, try suffix match (e.g., "cluster/projectName")
+  const suffixMatch = services.find((s) => s.name.endsWith(`/${projectName}`));
+  if (suffixMatch) return suffixMatch;
+  // Fall back to substring match for Jira/Xray keys in folder names (e.g., "[PROJ-123] test suite")
+  return services.find((s) => s.name.includes(projectName));
 }

@@ -22,6 +22,16 @@ This action does **not** deploy the Insights agent, create workspaces, or manage
 - A Postman workspace and environment must already exist for the service.
 - A `postman-access-token` (session token) is required for Bifrost API access.
 
+## Service name matching
+
+The action matches discovered services to your Postman `project-name` input using these strategies (in order):
+
+1. **Exact match with cluster:** If `cluster-name` is provided, matches `cluster-name/project-name` exactly.
+2. **Suffix match:** Matches service names ending with `/project-name` (e.g., `my-cluster/my-service`).
+3. **Substring match:** Matches if `project-name` appears anywhere in the service name (useful for Jira/Xray keys in folder names, e.g., `[PROJ-123] my tests` matches when `project-name` is `PROJ-123`).
+
+This flexibility avoids requiring exact folder renames when linking test collections to discovered services.
+
 ## Usage
 
 ```yaml
