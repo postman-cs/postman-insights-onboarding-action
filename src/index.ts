@@ -143,14 +143,6 @@ export function resolveInputs(
     );
   }
 
-  const repoSlug =
-    env.GITHUB_REPOSITORY ||
-    env.CI_PROJECT_PATH ||
-    (env.BITBUCKET_WORKSPACE && env.BITBUCKET_REPO_SLUG
-      ? `${env.BITBUCKET_WORKSPACE}/${env.BITBUCKET_REPO_SLUG}`
-      : '') ||
-    env.BUILD_REPOSITORY_NAME ||
-    '';
   // Derive repo URL from CI environment (provider-agnostic)
   const detectedRepoUrl =
     (env.GITHUB_SERVER_URL && env.GITHUB_REPOSITORY
@@ -310,15 +302,10 @@ export async function resolveApiKeyAndTeamId(
   let keyValid = false;
 
   if (apiKey) {
-    try {
-      const result = await validateApiKey(apiKey);
-      keyValid = result.valid;
-      if (!keyValid) {
-        reporter.warning('Provided postman-api-key is invalid or expired.');
-      }
-    } catch (error: unknown) {
-      // Network errors or unexpected status codes: rethrow instead of treating as invalid key
-      throw error;
+    const result = await validateApiKey(apiKey);
+    keyValid = result.valid;
+    if (!keyValid) {
+      reporter.warning('Provided postman-api-key is invalid or expired.');
     }
   }
 

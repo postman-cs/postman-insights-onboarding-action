@@ -27814,7 +27814,6 @@ function resolveInputs(env = process.env) {
       "environment-id is required. Provide it as an input, or set the POSTMAN_ENVIRONMENT_ID environment variable."
     );
   }
-  const repoSlug = env.GITHUB_REPOSITORY || env.CI_PROJECT_PATH || (env.BITBUCKET_WORKSPACE && env.BITBUCKET_REPO_SLUG ? `${env.BITBUCKET_WORKSPACE}/${env.BITBUCKET_REPO_SLUG}` : "") || env.BUILD_REPOSITORY_NAME || "";
   const detectedRepoUrl = (env.GITHUB_SERVER_URL && env.GITHUB_REPOSITORY ? `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}` : "") || env.CI_PROJECT_URL || env.BITBUCKET_GIT_HTTP_ORIGIN || env.BUILD_REPOSITORY_URI || "";
   const repoUrl = get("repo-url", detectedRepoUrl);
   const rawTimeout = parseInt(get("poll-timeout-seconds", String(POLL_TIMEOUT_DEFAULT)), 10);
@@ -27936,14 +27935,10 @@ async function resolveApiKeyAndTeamId(inputs, client, reporter = core_exports) {
   const teamId = inputs.postmanTeamId;
   let keyValid = false;
   if (apiKey) {
-    try {
-      const result = await validateApiKey(apiKey);
-      keyValid = result.valid;
-      if (!keyValid) {
-        reporter.warning("Provided postman-api-key is invalid or expired.");
-      }
-    } catch (error2) {
-      throw error2;
+    const result = await validateApiKey(apiKey);
+    keyValid = result.valid;
+    if (!keyValid) {
+      reporter.warning("Provided postman-api-key is invalid or expired.");
     }
   }
   if (!keyValid) {
