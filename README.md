@@ -122,7 +122,7 @@ Output is JSON to stdout. Use `--result-json` to write the same payload to a fil
 
 ```yaml
 onboarding:
-  image: node:20
+  image: node:22
   script:
     - npm install -g postman-insights-onboarding-action
     - postman-insights-onboard --project-name af-cards-activation --workspace-id "$WORKSPACE_ID" --environment-id "$ENVIRONMENT_ID" --postman-access-token "$POSTMAN_ACCESS_TOKEN" --postman-api-key "$POSTMAN_API_KEY" --cluster-name "$CLUSTER_NAME" --repo-url "$CI_PROJECT_URL" --poll-timeout-seconds 180 --result-json insights-result.json --dotenv-path insights.env
@@ -131,7 +131,7 @@ onboarding:
 ### Bitbucket Pipelines
 
 ```yaml
-image: node:20
+image: node:22
 
 pipelines:
   default:
