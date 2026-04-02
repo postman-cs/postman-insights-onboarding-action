@@ -27,10 +27,10 @@ This action does **not** deploy the Insights agent, create workspaces, or manage
 The action matches discovered services to your Postman `project-name` input using these strategies (in order):
 
 1. **Exact match with cluster:** If `cluster-name` is provided, matches `cluster-name/project-name` exactly.
-2. **Suffix match:** Matches service names ending with `/project-name` (e.g., `my-cluster/my-service`).
-3. **Substring match:** Matches if `project-name` appears anywhere in the service name (useful for Jira/Xray keys in folder names, e.g., `[PROJ-123] my tests` matches when `project-name` is `PROJ-123`).
+2. **Final-segment exact match:** Without `cluster-name`, matches only when the final path segment equals `project-name` (e.g., `my-cluster/my-service`).
+3. **Bracketed Jira/Xray key match:** Without `cluster-name`, matches when the final path segment contains the exact bracketed token `[project-name]` (e.g., `my-cluster/[PROJ-123] my tests` matches when `project-name` is `PROJ-123`).
 
-This flexibility avoids requiring exact folder renames when linking test collections to discovered services.
+This keeps matching explicit for Jira/Xray-style names without allowing unrelated cluster prefixes or partial service names to bind the wrong discovered service.
 
 ## Usage
 
@@ -171,11 +171,11 @@ steps:
 
 | Input | Required | Default | Notes |
 | --- | --- | --- | --- |
-| `project-name` | Yes | | Service name to match against discovered service names. Matches `{cluster-name}/{project-name}` in the API Catalog. |
+| `project-name` | Yes | | Service name or Jira/Xray project key used for strict discovered-service matching. With `cluster-name`, matches `{cluster-name}/{project-name}` exactly. Without `cluster-name`, matches only the final segment exactly or an exact bracketed token such as `[PROJ-123]` in that final segment. |
 | `workspace-id` | Yes | | Postman workspace ID to link the discovered service to. |
 | `environment-id` | Yes | | Postman environment UID for the onboarding association. |
 | `system-environment-id` | No | | Postman system environment UUID for service-level Insights acknowledgment. Falls back to the value from the discovered service record. |
-| `cluster-name` | No | | Insights cluster name. When set, the action matches `{cluster-name}/{project-name}` exactly. When omitted, falls back to suffix matching. |
+| `cluster-name` | No | | Insights cluster name. When set, the action matches `{cluster-name}/{project-name}` exactly. When omitted, it first checks the final service-name segment for an exact `project-name` match, then for a bracketed Jira/Xray token such as `[PROJ-123]`. |
 | `repo-url` | No | Auto-detected from CI when available | Repository URL used for Git onboarding. |
 | `postman-access-token` | Yes | | Postman session token for Bifrost API calls. See [Obtaining postman-access-token](#obtaining-postman-access-token-open-alpha). |
 | `postman-team-id` | No | | Explicit Postman team ID for org-mode Bifrost requests. When omitted, the action leaves `x-entity-team-id` unset so Bifrost resolves team context from the access token. |

@@ -27629,12 +27629,19 @@ var BifrostCatalogClient = class {
       hasMore = services.length >= pageSize;
       page++;
     }
-    const fullName = clusterName ? `${clusterName}/${projectName}` : projectName;
-    const exactMatch = allServices.find((s) => s.name === fullName);
-    if (exactMatch) return exactMatch.id;
-    if (clusterName) return null;
-    const suffixMatch = allServices.find((s) => s.name.endsWith(`/${projectName}`));
-    return suffixMatch?.id || null;
+    if (clusterName) {
+      const fullName = `${clusterName}/${projectName}`;
+      const exactMatch = allServices.find((s) => s.name === fullName);
+      return exactMatch?.id || null;
+    }
+    const finalSegmentMatch = allServices.find(
+      (s) => getFinalServiceSegment(s.name) === projectName
+    );
+    if (finalSegmentMatch) return finalSegmentMatch.id;
+    const bracketedMatch = allServices.find(
+      (s) => getFinalServiceSegment(s.name).includes(`[${projectName}]`)
+    );
+    return bracketedMatch?.id || null;
   }
   async acknowledgeOnboarding(providerServiceId, workspaceId, systemEnvironmentId) {
     const result = await this.akitaProxyRequest(
@@ -27722,7 +27729,17 @@ function findDiscoveredService(services, projectName, clusterName) {
     const fullName = `${clusterName}/${projectName}`;
     return services.find((s) => s.name === fullName);
   }
-  return services.find((s) => s.name.endsWith(`/${projectName}`));
+  const finalSegmentMatch = services.find(
+    (service) => getFinalServiceSegment(service.name) === projectName
+  );
+  if (finalSegmentMatch) return finalSegmentMatch;
+  return services.find(
+    (service) => getFinalServiceSegment(service.name).includes(`[${projectName}]`)
+  );
+}
+function getFinalServiceSegment(serviceName) {
+  const lastSlash = serviceName.lastIndexOf("/");
+  return lastSlash === -1 ? serviceName : serviceName.slice(lastSlash + 1);
 }
 
 // src/index.ts

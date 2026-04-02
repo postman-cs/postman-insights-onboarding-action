@@ -215,14 +215,21 @@ export class BifrostCatalogClient {
       page++;
     }
 
-    const fullName = clusterName ? `${clusterName}/${projectName}` : projectName;
-    // When clusterName is provided, require exact match only (no suffix fallback)
-    const exactMatch = allServices.find((s) => s.name === fullName);
-    if (exactMatch) return exactMatch.id;
-    if (clusterName) return null;
-    // Without clusterName, fall back to suffix match
-    const suffixMatch = allServices.find((s) => s.name.endsWith(`/${projectName}`));
-    return suffixMatch?.id || null;
+    if (clusterName) {
+      const fullName = `${clusterName}/${projectName}`;
+      const exactMatch = allServices.find((s) => s.name === fullName);
+      return exactMatch?.id || null;
+    }
+
+    const finalSegmentMatch = allServices.find(
+      (s) => getFinalServiceSegment(s.name) === projectName
+    );
+    if (finalSegmentMatch) return finalSegmentMatch.id;
+
+    const bracketedMatch = allServices.find(
+      (s) => getFinalServiceSegment(s.name).includes(`[${projectName}]`)
+    );
+    return bracketedMatch?.id || null;
   }
 
   async acknowledgeOnboarding(
@@ -328,12 +335,20 @@ export function findDiscoveredService(
 ): DiscoveredService | undefined {
   if (clusterName) {
     const fullName = `${clusterName}/${projectName}`;
-    // When clusterName is provided, require exact match only (no suffix fallback)
     return services.find((s) => s.name === fullName);
   }
-  // First, try suffix match (e.g., "cluster/projectName")
-  const suffixMatch = services.find((s) => s.name.endsWith(`/${projectName}`));
-  if (suffixMatch) return suffixMatch;
-  // Fall back to substring match for Jira/Xray keys in folder names (e.g., "[PROJ-123] test suite")
-  return services.find((s) => s.name.includes(projectName));
+
+  const finalSegmentMatch = services.find(
+    (service) => getFinalServiceSegment(service.name) === projectName
+  );
+  if (finalSegmentMatch) return finalSegmentMatch;
+
+  return services.find(
+    (service) => getFinalServiceSegment(service.name).includes(`[${projectName}]`)
+  );
+}
+
+function getFinalServiceSegment(serviceName: string): string {
+  const lastSlash = serviceName.lastIndexOf('/');
+  return lastSlash === -1 ? serviceName : serviceName.slice(lastSlash + 1);
 }
