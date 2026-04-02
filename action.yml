@@ -2,7 +2,7 @@ name: 'postman-insights-onboarding-action'
 description: 'Link Postman Insights discovered services to API Catalog workspaces and git repos'
 inputs:
   project-name:
-    description: 'Service name or spec ID to match against discovered service names'
+    description: 'Service name or Jira/Xray project key to match against the final discovered-service segment'
     required: true
   workspace-id:
     description: 'Postman workspace ID to link the discovered service to'
@@ -14,7 +14,7 @@ inputs:
     description: 'Postman system environment UUID for service-level Insights acknowledgment'
     required: false
   cluster-name:
-    description: 'Insights cluster name. Matches {cluster}/{project-name} in discovered services'
+    description: 'Insights cluster name. When set, matches {cluster-name}/{project-name} exactly in discovered services'
     required: false
   repo-url:
     description: 'Repository URL for Git onboarding. Auto-detected from CI context when omitted.'
