@@ -53,5 +53,5 @@ outputs:
   status:
     description: 'Onboarding result: success, not-found, or error'
 runs:
-  using: 'node22'
+  using: 'node24'
   main: 'dist/index.cjs'
