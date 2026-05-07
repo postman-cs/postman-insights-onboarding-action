@@ -2,6 +2,7 @@ export interface ActionInputContract {
   description: string;
   required: boolean;
   default?: string;
+  allowedValues?: string[];
 }
 
 export interface ActionOutputContract {
@@ -69,20 +70,11 @@ export const alphaActionContract: AlphaActionContract = {
       required: false,
       default: '10',
     },
-    'postman-api-base': {
-      description: 'Base URL for the public Postman API (override for beta/staging stacks).',
+    'postman-stack': {
+      description: 'Postman stack profile.',
       required: false,
-      default: 'https://api.getpostman.com',
-    },
-    'postman-bifrost-base': {
-      description: 'Base URL for the Bifrost gateway used by Insights onboarding calls (override for beta/staging stacks).',
-      required: false,
-      default: 'https://bifrost-premium-https-v4.gw.postman.com',
-    },
-    'postman-observability-base': {
-      description: 'Postman observability API base URL; override for beta/alpha stacks.',
-      required: false,
-      default: 'https://api.observability.postman.com',
+      default: 'prod',
+      allowedValues: ['prod', 'beta'],
     },
   },
   outputs: {

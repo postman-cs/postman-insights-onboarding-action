@@ -18,6 +18,7 @@ const actionManifest = parse(
   inputs: Record<string, { required?: boolean; default?: string }>;
   outputs: Record<string, unknown>;
 };
+const readme = readFileSync(resolve(repoRoot, 'README.md'), 'utf8');
 
 describe('alpha action contract', () => {
   it('action.yml name matches contract name', () => {
@@ -34,6 +35,13 @@ describe('alpha action contract', () => {
   it('keeps action.yml aligned with the contract surface', () => {
     expect(Object.keys(actionManifest.inputs)).toEqual(contractInputNames);
     expect(Object.keys(actionManifest.outputs)).toEqual(contractOutputNames);
+  });
+
+  it('keeps postman-stack hidden from README while exposing it in action.yml', () => {
+    expect(alphaActionContract.inputs['postman-stack'].default).toBe('prod');
+    expect(alphaActionContract.inputs['postman-stack'].allowedValues).toEqual(['prod', 'beta']);
+    expect(actionManifest.inputs['postman-stack'].default).toBe('prod');
+    expect(readme).not.toContain('`postman-stack`');
   });
 
   it('marks project-name, workspace-id, environment-id, postman-access-token as required', () => {
@@ -76,6 +84,34 @@ describe('alpha action contract', () => {
       INPUT_POSTMAN_TEAM_ID: '14103640',
     });
     expect(inputs.postmanApiKey).toBe('');
+  });
+
+  it('selects beta endpoint profile from postman-stack', () => {
+    const inputs = resolveInputs({
+      INPUT_PROJECT_NAME: 'svc',
+      INPUT_WORKSPACE_ID: 'ws-123',
+      INPUT_ENVIRONMENT_ID: 'env-456',
+      INPUT_POSTMAN_ACCESS_TOKEN: 'tok-abc',
+      INPUT_POSTMAN_STACK: 'beta',
+      INPUT_POSTMAN_API_BASE: 'https://override.example.com',
+      INPUT_POSTMAN_BIFROST_BASE: 'https://override.example.com',
+      INPUT_POSTMAN_OBSERVABILITY_BASE: 'https://override.example.com',
+    });
+
+    expect(inputs.postmanStack).toBe('beta');
+    expect(inputs.postmanApiBase).toBe('https://api.getpostman-beta.com');
+    expect(inputs.postmanBifrostBase).toBe('https://bifrost-https-v4.gw.postman-beta.com');
+    expect(inputs.postmanObservabilityBase).toBe('https://api.observability.postman-beta.com');
+    expect(inputs.postmanObservabilityEnv).toBe('beta');
+    expect(() =>
+      resolveInputs({
+        INPUT_PROJECT_NAME: 'svc',
+        INPUT_WORKSPACE_ID: 'ws-123',
+        INPUT_ENVIRONMENT_ID: 'env-456',
+        INPUT_POSTMAN_ACCESS_TOKEN: 'tok-abc',
+        INPUT_POSTMAN_STACK: 'stage',
+      })
+    ).toThrow(/Unsupported postman-stack/);
   });
 
   it('auto-detects repo-url from CI context when the input is omitted', () => {

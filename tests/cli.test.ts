@@ -18,6 +18,7 @@ describe('parseCliArgs', () => {
         '--github-token', 'ghp-abc',
         '--poll-timeout-seconds', '180',
         '--poll-interval-seconds', '8',
+        '--postman-stack', 'beta',
         '--result-json', 'out/result.json',
         '--dotenv-path=out/result.env'
       ],
@@ -36,6 +37,7 @@ describe('parseCliArgs', () => {
     expect(config.inputEnv[normalizeCliFlag('github-token')]).toBe('ghp-abc');
     expect(config.inputEnv[normalizeCliFlag('poll-timeout-seconds')]).toBe('180');
     expect(config.inputEnv[normalizeCliFlag('poll-interval-seconds')]).toBe('8');
+    expect(config.inputEnv[normalizeCliFlag('postman-stack')]).toBe('beta');
     expect(config.resultJsonPath).toBe('out/result.json');
     expect(config.dotenvPath).toBe('out/result.env');
   });

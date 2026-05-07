@@ -415,6 +415,72 @@ describe('BifrostCatalogClient', () => {
     // Trailing slash is normalized away
     expect(url).toBe('https://api.observability.postman-beta.com/v2/agent/api-catalog/workspaces/ws-beta/applications');
   });
+
+  it('uses beta x-postman-env for beta observability profile', async () => {
+    const fetchFn = mockFetch([{
+      ok: true,
+      status: 200,
+      body: { application_id: 'app-beta', service_id: 'svc-beta' },
+    }]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: 'PMAK-test',
+      fetchFn,
+      observabilityBaseUrl: 'https://api.observability.postman-beta.com/',
+      observabilityEnv: 'beta',
+    });
+    await client.createApplication('ws-beta', 'env-beta');
+
+    const opts = (fetchFn as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(opts.headers['x-postman-env']).toBe('beta');
+  });
+
+  it('stops discovered-service pagination on repeated cursors', async () => {
+    const fetchFn = mockFetch([
+      {
+        ok: true,
+        status: 200,
+        body: { total: 10, nextCursor: 'cursor-loop', items: [sampleServices[0]] },
+      },
+      {
+        ok: true,
+        status: 200,
+        body: { total: 10, nextCursor: 'cursor-loop', items: [sampleServices[1]] },
+      },
+    ]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: 'PMAK-test',
+      fetchFn,
+    });
+
+    await expect(client.listDiscoveredServices()).resolves.toHaveLength(2);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops provider service pagination when total count is reached', async () => {
+    const fetchFn = mockFetch([
+      {
+        ok: true,
+        status: 200,
+        body: {
+          total: 1,
+          services: [{ id: 'svc-1', name: 'cluster-a/service-a' }],
+        },
+      },
+    ]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: 'PMAK-test',
+      fetchFn,
+    });
+
+    await expect(client.resolveProviderServiceId('service-a', 'cluster-a')).resolves.toBe('svc-1');
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('findDiscoveredService', () => {

@@ -1,7 +1,11 @@
 import * as core from '@actions/core';
 import { BifrostCatalogClient, findDiscoveredService } from './lib/bifrost-client.js';
+import {
+  parsePostmanStack,
+  resolvePostmanEndpointProfile,
+  type PostmanStack
+} from './lib/postman/base-urls.js';
 import { sleep } from './lib/retry.js';
-import { createSecretMasker } from './lib/secrets.js';
 
 const POLL_TIMEOUT_MIN = 10;
 const POLL_TIMEOUT_MAX = 600;
@@ -10,9 +14,10 @@ const POLL_INTERVAL_MIN = 2;
 const POLL_INTERVAL_MAX = 60;
 const POLL_INTERVAL_DEFAULT = 10;
 
-export const DEFAULT_POSTMAN_API_BASE = 'https://api.getpostman.com';
-export const DEFAULT_POSTMAN_BIFROST_BASE = 'https://bifrost-premium-https-v4.gw.postman.com';
-export const DEFAULT_POSTMAN_OBSERVABILITY_BASE = 'https://api.observability.postman.com';
+const PROD_ENDPOINTS = resolvePostmanEndpointProfile('prod');
+export const DEFAULT_POSTMAN_API_BASE = PROD_ENDPOINTS.apiBaseUrl;
+export const DEFAULT_POSTMAN_BIFROST_BASE = PROD_ENDPOINTS.bifrostBaseUrl;
+export const DEFAULT_POSTMAN_OBSERVABILITY_BASE = PROD_ENDPOINTS.observabilityBaseUrl;
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, '');
@@ -73,9 +78,11 @@ export interface ActionInputs {
   githubToken: string;
   pollTimeoutSeconds: number;
   pollIntervalSeconds: number;
+  postmanStack: PostmanStack;
   postmanApiBase: string;
   postmanBifrostBase: string;
   postmanObservabilityBase: string;
+  postmanObservabilityEnv: string;
 }
 
 export interface OnboardingResult {
@@ -141,6 +148,8 @@ export function resolveInputs(
 
   const rawTimeout = parseInt(get('poll-timeout-seconds', String(POLL_TIMEOUT_DEFAULT)), 10);
   const rawInterval = parseInt(get('poll-interval-seconds', String(POLL_INTERVAL_DEFAULT)), 10);
+  const postmanStack = parsePostmanStack(get('postman-stack'));
+  const endpointProfile = resolvePostmanEndpointProfile(postmanStack);
 
   return {
     projectName,
@@ -155,9 +164,11 @@ export function resolveInputs(
     githubToken: get('github-token', env.GITHUB_TOKEN || ''),
     pollTimeoutSeconds: clamp(rawTimeout, POLL_TIMEOUT_MIN, POLL_TIMEOUT_MAX, POLL_TIMEOUT_DEFAULT),
     pollIntervalSeconds: clamp(rawInterval, POLL_INTERVAL_MIN, POLL_INTERVAL_MAX, POLL_INTERVAL_DEFAULT),
-    postmanApiBase: get('postman-api-base', DEFAULT_POSTMAN_API_BASE),
-    postmanBifrostBase: get('postman-bifrost-base', DEFAULT_POSTMAN_BIFROST_BASE),
-    postmanObservabilityBase: get('postman-observability-base', DEFAULT_POSTMAN_OBSERVABILITY_BASE),
+    postmanStack,
+    postmanApiBase: endpointProfile.apiBaseUrl,
+    postmanBifrostBase: endpointProfile.bifrostBaseUrl,
+    postmanObservabilityBase: endpointProfile.observabilityBaseUrl,
+    postmanObservabilityEnv: endpointProfile.observabilityEnv,
   };
 }
 
@@ -359,12 +370,6 @@ async function runAction(): Promise<void> {
     core.setOutput(key, value);
   }
 
-  const maskSecret = createSecretMasker([
-    inputs.postmanAccessToken,
-    inputs.postmanApiKey,
-    inputs.githubToken,
-  ].filter(Boolean));
-
   core.setSecret(inputs.postmanAccessToken);
   if (inputs.postmanApiKey) core.setSecret(inputs.postmanApiKey);
   if (inputs.githubToken) core.setSecret(inputs.githubToken);
@@ -373,9 +378,9 @@ async function runAction(): Promise<void> {
     accessToken: inputs.postmanAccessToken,
     teamId: inputs.postmanTeamId,
     apiKey: inputs.postmanApiKey,
-    maskSecret,
     bifrostBaseUrl: inputs.postmanBifrostBase,
     observabilityBaseUrl: inputs.postmanObservabilityBase,
+    observabilityEnv: inputs.postmanObservabilityEnv,
   });
 
   const { apiKey, teamId } = await resolveApiKeyAndTeamId(inputs, preliminaryClient, core);
@@ -384,9 +389,9 @@ async function runAction(): Promise<void> {
     accessToken: inputs.postmanAccessToken,
     teamId,
     apiKey,
-    maskSecret,
     bifrostBaseUrl: inputs.postmanBifrostBase,
     observabilityBaseUrl: inputs.postmanObservabilityBase,
+    observabilityEnv: inputs.postmanObservabilityEnv,
   });
 
   let result: import('./index.js').OnboardingResult;

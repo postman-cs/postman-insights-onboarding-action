@@ -27349,9 +27349,6 @@ function redactSecrets(input, secretValues, replacement = REDACTED) {
     return sanitized.split(secret).join(replacement);
   }, source);
 }
-function createSecretMasker(secretValues, replacement = REDACTED) {
-  return (input) => redactSecrets(input, secretValues, replacement);
-}
 function headerEntries(headers) {
   if (headers instanceof Headers) {
     return Array.from(headers.entries());
@@ -27478,10 +27475,39 @@ async function retry(operation, options = {}) {
   throw new Error("Retry exhausted without returning or throwing");
 }
 
+// src/lib/postman/base-urls.ts
+var POSTMAN_ENDPOINT_PROFILES = {
+  prod: {
+    apiBaseUrl: "https://api.getpostman.com",
+    bifrostBaseUrl: "https://bifrost-premium-https-v4.gw.postman.com",
+    observabilityBaseUrl: "https://api.observability.postman.com",
+    observabilityEnv: "production"
+  },
+  beta: {
+    apiBaseUrl: "https://api.getpostman-beta.com",
+    bifrostBaseUrl: "https://bifrost-https-v4.gw.postman-beta.com",
+    observabilityBaseUrl: "https://api.observability.postman-beta.com",
+    observabilityEnv: "beta"
+  }
+};
+function parsePostmanStack(value) {
+  const normalized = String(value || "prod").trim().toLowerCase();
+  if (normalized === "prod" || normalized === "beta") {
+    return normalized;
+  }
+  throw new Error(`Unsupported postman-stack "${value}". Supported values: prod, beta`);
+}
+function resolvePostmanEndpointProfile(stack) {
+  return POSTMAN_ENDPOINT_PROFILES[stack];
+}
+
 // src/lib/bifrost-client.ts
-var DEFAULT_BIFROST_BASE_URL = "https://bifrost-premium-https-v4.gw.postman.com";
+var DEFAULT_BIFROST_BASE_URL = POSTMAN_ENDPOINT_PROFILES.prod.bifrostBaseUrl;
 var BIFROST_PROXY_PATH = "/ws/proxy";
-var DEFAULT_OBSERVABILITY_BASE_URL = "https://api.observability.postman.com";
+var DEFAULT_OBSERVABILITY_BASE_URL = POSTMAN_ENDPOINT_PROFILES.prod.observabilityBaseUrl;
+var DEFAULT_OBSERVABILITY_ENV = POSTMAN_ENDPOINT_PROFILES.prod.observabilityEnv;
+var MAX_DISCOVERED_SERVICE_PAGES = 100;
+var MAX_PROVIDER_SERVICE_PAGES = 100;
 var BifrostCatalogClient = class {
   accessToken;
   teamId;
@@ -27490,6 +27516,7 @@ var BifrostCatalogClient = class {
   secretValues;
   bifrostProxyUrl;
   observabilityBaseUrl;
+  observabilityEnv;
   constructor(options) {
     this.accessToken = options.accessToken;
     this.teamId = options.teamId;
@@ -27499,6 +27526,7 @@ var BifrostCatalogClient = class {
     const base = (options.bifrostBaseUrl || DEFAULT_BIFROST_BASE_URL).replace(/\/+$/, "");
     this.bifrostProxyUrl = `${base}${BIFROST_PROXY_PATH}`;
     this.observabilityBaseUrl = (options.observabilityBaseUrl || DEFAULT_OBSERVABILITY_BASE_URL).replace(/\/+$/, "");
+    this.observabilityEnv = options.observabilityEnv || DEFAULT_OBSERVABILITY_ENV;
   }
   setApiKey(apiKey) {
     this.apiKey = apiKey;
@@ -27569,16 +27597,23 @@ var BifrostCatalogClient = class {
       async () => {
         const allItems = [];
         let cursor = null;
-        let hasMore = true;
-        while (hasMore) {
+        const seenCursors = /* @__PURE__ */ new Set();
+        for (let page = 0; page < MAX_DISCOVERED_SERVICE_PAGES; page += 1) {
           const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
           const data = await this.proxyRequest(
             "GET",
             `/api/v1/onboarding/discovered-services?status=discovered${cursorParam}`
           );
           allItems.push(...data.items || []);
-          cursor = data.nextCursor || null;
-          hasMore = cursor !== null;
+          if (data.total && allItems.length >= data.total) {
+            break;
+          }
+          const nextCursor = data.nextCursor || null;
+          if (!nextCursor || seenCursors.has(nextCursor)) {
+            break;
+          }
+          seenCursors.add(nextCursor);
+          cursor = nextCursor;
         }
         return allItems;
       },
@@ -27625,8 +27660,7 @@ var BifrostCatalogClient = class {
     const allServices = [];
     let page = 1;
     const pageSize = 100;
-    let hasMore = true;
-    while (hasMore) {
+    for (let pageCount = 0; pageCount < MAX_PROVIDER_SERVICE_PAGES; pageCount += 1) {
       const result = await this.akitaProxyRequest(
         "GET",
         `/v2/api-catalog/services?status=discovered&populate_endpoints=false&populate_discovery_metadata=true&page=${page}&page_size=${pageSize}`
@@ -27634,7 +27668,12 @@ var BifrostCatalogClient = class {
       if (!result.ok || !result.data) return null;
       const services = result.data.services || [];
       allServices.push(...services);
-      hasMore = services.length >= pageSize;
+      if (result.data.total && allServices.length >= result.data.total) {
+        break;
+      }
+      if (services.length < pageSize) {
+        break;
+      }
       page++;
     }
     const fullName = clusterName ? `${clusterName}/${projectName}` : projectName;
@@ -27676,7 +27715,7 @@ var BifrostCatalogClient = class {
         method: "POST",
         headers: {
           "x-api-key": this.apiKey,
-          "x-postman-env": "production",
+          "x-postman-env": this.observabilityEnv,
           "Content-Type": "application/json"
         },
         body: JSON.stringify({ system_env: systemEnv })
@@ -27740,9 +27779,10 @@ var POLL_TIMEOUT_DEFAULT = 120;
 var POLL_INTERVAL_MIN = 2;
 var POLL_INTERVAL_MAX = 60;
 var POLL_INTERVAL_DEFAULT = 10;
-var DEFAULT_POSTMAN_API_BASE = "https://api.getpostman.com";
-var DEFAULT_POSTMAN_BIFROST_BASE = "https://bifrost-premium-https-v4.gw.postman.com";
-var DEFAULT_POSTMAN_OBSERVABILITY_BASE = "https://api.observability.postman.com";
+var PROD_ENDPOINTS = resolvePostmanEndpointProfile("prod");
+var DEFAULT_POSTMAN_API_BASE = PROD_ENDPOINTS.apiBaseUrl;
+var DEFAULT_POSTMAN_BIFROST_BASE = PROD_ENDPOINTS.bifrostBaseUrl;
+var DEFAULT_POSTMAN_OBSERVABILITY_BASE = PROD_ENDPOINTS.observabilityBaseUrl;
 function trimTrailingSlash(value) {
   return value.replace(/\/+$/, "");
 }
@@ -27806,6 +27846,8 @@ function resolveInputs(env = process.env) {
   const repoUrl = get("repo-url", detectedRepoUrl);
   const rawTimeout = parseInt(get("poll-timeout-seconds", String(POLL_TIMEOUT_DEFAULT)), 10);
   const rawInterval = parseInt(get("poll-interval-seconds", String(POLL_INTERVAL_DEFAULT)), 10);
+  const postmanStack = parsePostmanStack(get("postman-stack"));
+  const endpointProfile = resolvePostmanEndpointProfile(postmanStack);
   return {
     projectName,
     workspaceId,
@@ -27819,9 +27861,11 @@ function resolveInputs(env = process.env) {
     githubToken: get("github-token", env.GITHUB_TOKEN || ""),
     pollTimeoutSeconds: clamp(rawTimeout, POLL_TIMEOUT_MIN, POLL_TIMEOUT_MAX, POLL_TIMEOUT_DEFAULT),
     pollIntervalSeconds: clamp(rawInterval, POLL_INTERVAL_MIN, POLL_INTERVAL_MAX, POLL_INTERVAL_DEFAULT),
-    postmanApiBase: get("postman-api-base", DEFAULT_POSTMAN_API_BASE),
-    postmanBifrostBase: get("postman-bifrost-base", DEFAULT_POSTMAN_BIFROST_BASE),
-    postmanObservabilityBase: get("postman-observability-base", DEFAULT_POSTMAN_OBSERVABILITY_BASE)
+    postmanStack,
+    postmanApiBase: endpointProfile.apiBaseUrl,
+    postmanBifrostBase: endpointProfile.bifrostBaseUrl,
+    postmanObservabilityBase: endpointProfile.observabilityBaseUrl,
+    postmanObservabilityEnv: endpointProfile.observabilityEnv
   };
 }
 function createPlannedOutputs(inputs) {
@@ -27984,11 +28028,6 @@ async function runAction() {
   for (const [key, value] of Object.entries(planned)) {
     setOutput(key, value);
   }
-  const maskSecret = createSecretMasker([
-    inputs.postmanAccessToken,
-    inputs.postmanApiKey,
-    inputs.githubToken
-  ].filter(Boolean));
   setSecret(inputs.postmanAccessToken);
   if (inputs.postmanApiKey) setSecret(inputs.postmanApiKey);
   if (inputs.githubToken) setSecret(inputs.githubToken);
@@ -27996,18 +28035,18 @@ async function runAction() {
     accessToken: inputs.postmanAccessToken,
     teamId: inputs.postmanTeamId,
     apiKey: inputs.postmanApiKey,
-    maskSecret,
     bifrostBaseUrl: inputs.postmanBifrostBase,
-    observabilityBaseUrl: inputs.postmanObservabilityBase
+    observabilityBaseUrl: inputs.postmanObservabilityBase,
+    observabilityEnv: inputs.postmanObservabilityEnv
   });
   const { apiKey, teamId } = await resolveApiKeyAndTeamId(inputs, preliminaryClient, core_exports);
   const client = new BifrostCatalogClient({
     accessToken: inputs.postmanAccessToken,
     teamId,
     apiKey,
-    maskSecret,
     bifrostBaseUrl: inputs.postmanBifrostBase,
-    observabilityBaseUrl: inputs.postmanObservabilityBase
+    observabilityBaseUrl: inputs.postmanObservabilityBase,
+    observabilityEnv: inputs.postmanObservabilityEnv
   });
   let result;
   try {
