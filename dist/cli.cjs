@@ -27948,12 +27948,23 @@ async function resolveApiKeyAndTeamId(inputs, client, reporter = core_exports) {
           "GET /teams returned multiple teams but none include organizationId. Org-mode auto-detection may be degraded due to an upstream API change. Set postman-team-id explicitly if Bifrost calls fail."
         );
       }
-      const orgIds = new Set(teams.filter((t) => t.organizationId != null).map((t) => t.organizationId));
-      const meResult = await validateApiKey(apiKey, apiBase);
-      const meTeamId = meResult.teamId ? parseInt(meResult.teamId, 10) : NaN;
-      if (teams.length > 1 && orgIds.size === 1 && !Number.isNaN(meTeamId) && orgIds.has(meTeamId)) {
-        resolvedTeamId = String(meTeamId);
-        reporter.info(`Org-mode auto-detected (${teams.length} sub-teams). Using team ID ${resolvedTeamId} for Bifrost headers.`);
+      const isOrgMode = teams.some((t) => t.organizationId != null);
+      if (isOrgMode) {
+        if (teams.length === 1) {
+          resolvedTeamId = String(teams[0].id);
+          reporter.info(
+            `Org-mode account detected. Using sub-team ${teams[0].id} (${teams[0].name ?? "unknown"}) for Bifrost calls.`
+          );
+        } else {
+          const meResult = await validateApiKey(apiKey, apiBase);
+          const meTeamId = meResult.teamId ? parseInt(meResult.teamId, 10) : NaN;
+          if (!Number.isNaN(meTeamId) && teams.some((t) => t.id === meTeamId)) {
+            resolvedTeamId = String(meTeamId);
+            reporter.info(
+              `Org-mode account detected. Using sub-team ${meTeamId} (from /me) for Bifrost calls.`
+            );
+          }
+        }
       }
     } catch {
     }

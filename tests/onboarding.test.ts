@@ -432,7 +432,7 @@ describe('resolveApiKeyAndTeamId org-mode auto-detection', () => {
     globalThis.fetch = vi.fn().mockImplementation(async () => {
       callCount++;
       if (callCount === 1) {
-        // getTeams response
+        // getTeams response - realistic IDs: sub-team IDs distinct from org ID
         return {
           ok: true,
           json: async () => ({
@@ -443,10 +443,10 @@ describe('resolveApiKeyAndTeamId org-mode auto-detection', () => {
           }),
         };
       } else {
-        // validateApiKey response
+        // validateApiKey response - /me returns a sub-team ID, not org ID
         return {
           ok: true,
-          json: async () => ({ user: { teamId: 999 } }),
+          json: async () => ({ user: { teamId: 10 } }),
         };
       }
     }) as unknown as typeof fetch;
@@ -456,54 +456,34 @@ describe('resolveApiKeyAndTeamId org-mode auto-detection', () => {
       makeInputs({ postmanApiKey: '', postmanTeamId: '' }),
       client,
     );
-    expect(result.teamId).toBe('999');
+    expect(result.teamId).toBe('10');
   });
 
-  it('does not auto-detect org-mode when only one team exists', async () => {
-    let callCount = 0;
+  it('auto-detects org-mode and auto-picks team when only one sub-team exists', async () => {
     globalThis.fetch = vi.fn().mockImplementation(async () => {
-      callCount++;
-      if (callCount === 1) {
-        return {
-          ok: true,
-          json: async () => ({
-            data: [{ id: 10, name: 'Only Team', organizationId: 999 }]
-          }),
-        };
-      } else {
-        return {
-          ok: true,
-          json: async () => ({ user: { teamId: 999 } }),
-        };
-      }
-    }) as unknown as typeof fetch;
-
-    const client = makeClient();
-    const result = await resolveApiKeyAndTeamId(
-      makeInputs({ postmanApiKey: '', postmanTeamId: '' }),
-      client,
-    );
-    expect(result.teamId).toBe('');
-  });
-
-  it('does not auto-detect org-mode when team IDs do not match org', async () => {
-    globalThis.fetch = vi.fn().mockImplementation(async () => {
+      // getTeams response - single sub-team with org ID
       return {
         ok: true,
         json: async () => ({
-          data: [
-            { id: 10, name: 'SubTeam A', organizationId: 999 },
-            { id: 11, name: 'SubTeam B', organizationId: 999 }
-          ]
+          data: [{ id: 10, name: 'Only Team', organizationId: 999 }]
         }),
       };
     }) as unknown as typeof fetch;
 
-    // Override second call to validateApiKey to return different teamId
+    const client = makeClient();
+    const result = await resolveApiKeyAndTeamId(
+      makeInputs({ postmanApiKey: '', postmanTeamId: '' }),
+      client,
+    );
+    expect(result.teamId).toBe('10');
+  });
+
+  it('does not auto-pick team when /me teamId does not match any sub-team', async () => {
     let callCount = 0;
     globalThis.fetch = vi.fn().mockImplementation(async () => {
       callCount++;
       if (callCount === 1) {
+        // getTeams response - two sub-teams with org ID
         return {
           ok: true,
           json: async () => ({
@@ -514,9 +494,10 @@ describe('resolveApiKeyAndTeamId org-mode auto-detection', () => {
           }),
         };
       } else {
+        // validateApiKey response - /me returns a team ID not in the sub-teams list
         return {
           ok: true,
-          json: async () => ({ user: { teamId: 888 } }), // different from org 999
+          json: async () => ({ user: { teamId: 888 } }),
         };
       }
     }) as unknown as typeof fetch;

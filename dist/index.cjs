@@ -25016,8 +25016,6 @@ __export(index_exports, {
   DEFAULT_POSTMAN_BIFROST_BASE: () => DEFAULT_POSTMAN_BIFROST_BASE,
   DEFAULT_POSTMAN_OBSERVABILITY_BASE: () => DEFAULT_POSTMAN_OBSERVABILITY_BASE,
   createPlannedOutputs: () => createPlannedOutputs,
-  deriveTeamId: () => deriveTeamId,
-  deriveTeamIdFromSession: () => deriveTeamIdFromSession,
   getTeams: () => getTeams,
   resolveApiKeyAndTeamId: () => resolveApiKeyAndTeamId,
   resolveInputs: () => resolveInputs,
@@ -27748,19 +27746,6 @@ var DEFAULT_POSTMAN_OBSERVABILITY_BASE = "https://api.observability.postman.com"
 function trimTrailingSlash(value) {
   return value.replace(/\/+$/, "");
 }
-async function deriveTeamId(apiKey, apiBase = DEFAULT_POSTMAN_API_BASE) {
-  try {
-    const res = await fetch(`${trimTrailingSlash(apiBase)}/me`, {
-      method: "GET",
-      headers: { "x-api-key": apiKey }
-    });
-    if (!res.ok) return void 0;
-    const data = await res.json();
-    if (data?.user?.teamId) return String(data.user.teamId);
-  } catch {
-  }
-  return void 0;
-}
 async function validateApiKey(apiKey, apiBase = DEFAULT_POSTMAN_API_BASE) {
   const res = await fetch(`${trimTrailingSlash(apiBase)}/me`, {
     method: "GET",
@@ -27775,19 +27760,6 @@ async function validateApiKey(apiKey, apiBase = DEFAULT_POSTMAN_API_BASE) {
   const data = await res.json();
   const teamId = data?.user?.teamId ? String(data.user.teamId) : void 0;
   return { valid: true, teamId };
-}
-async function deriveTeamIdFromSession(accessToken) {
-  try {
-    const res = await fetch("https://iapub.postman.co/api/sessions/current", {
-      method: "GET",
-      headers: { "x-access-token": accessToken }
-    });
-    if (!res.ok) return void 0;
-    const data = await res.json();
-    if (data?.session?.identity?.team) return String(data.session.identity.team);
-  } catch {
-  }
-  return void 0;
 }
 async function getTeams(apiKey, apiBase = DEFAULT_POSTMAN_API_BASE) {
   try {
@@ -27978,12 +27950,23 @@ async function resolveApiKeyAndTeamId(inputs, client, reporter = core_exports) {
           "GET /teams returned multiple teams but none include organizationId. Org-mode auto-detection may be degraded due to an upstream API change. Set postman-team-id explicitly if Bifrost calls fail."
         );
       }
-      const orgIds = new Set(teams.filter((t) => t.organizationId != null).map((t) => t.organizationId));
-      const meResult = await validateApiKey(apiKey, apiBase);
-      const meTeamId = meResult.teamId ? parseInt(meResult.teamId, 10) : NaN;
-      if (teams.length > 1 && orgIds.size === 1 && !Number.isNaN(meTeamId) && orgIds.has(meTeamId)) {
-        resolvedTeamId = String(meTeamId);
-        reporter.info(`Org-mode auto-detected (${teams.length} sub-teams). Using team ID ${resolvedTeamId} for Bifrost headers.`);
+      const isOrgMode = teams.some((t) => t.organizationId != null);
+      if (isOrgMode) {
+        if (teams.length === 1) {
+          resolvedTeamId = String(teams[0].id);
+          reporter.info(
+            `Org-mode account detected. Using sub-team ${teams[0].id} (${teams[0].name ?? "unknown"}) for Bifrost calls.`
+          );
+        } else {
+          const meResult = await validateApiKey(apiKey, apiBase);
+          const meTeamId = meResult.teamId ? parseInt(meResult.teamId, 10) : NaN;
+          if (!Number.isNaN(meTeamId) && teams.some((t) => t.id === meTeamId)) {
+            resolvedTeamId = String(meTeamId);
+            reporter.info(
+              `Org-mode account detected. Using sub-team ${meTeamId} (from /me) for Bifrost calls.`
+            );
+          }
+        }
       }
     } catch {
     }
@@ -28059,8 +28042,6 @@ runAction().catch((error2) => {
   DEFAULT_POSTMAN_BIFROST_BASE,
   DEFAULT_POSTMAN_OBSERVABILITY_BASE,
   createPlannedOutputs,
-  deriveTeamId,
-  deriveTeamIdFromSession,
   getTeams,
   resolveApiKeyAndTeamId,
   resolveInputs,
