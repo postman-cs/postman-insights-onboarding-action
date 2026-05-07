@@ -22,6 +22,8 @@ function makeInputs(overrides: Partial<ActionInputs> = {}): ActionInputs {
     githubToken: 'ghp_test',
     pollTimeoutSeconds: 5,
     pollIntervalSeconds: 1,
+    postmanApiBase: 'https://api.getpostman.com',
+    postmanBifrostBase: 'https://bifrost-premium-https-v4.gw.postman.com',
     ...overrides,
   };
 }
@@ -235,6 +237,29 @@ describe('validateApiKey', () => {
     const result = await validateApiKey('PMAK-good');
     expect(result.valid).toBe(true);
     expect(result.teamId).toBe('12345');
+  });
+
+  it('defaults to prod /me when no base URL is provided', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ user: { teamId: 12345 } }),
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await validateApiKey('PMAK-good');
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.getpostman.com/me');
+  });
+
+  it('routes /me through a custom api base URL when provided', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ user: { teamId: 12345 } }),
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    // Trailing slash should be normalized away so the path joins cleanly.
+    await validateApiKey('PMAK-good', 'https://api.getpostman-beta.com/');
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.getpostman-beta.com/me');
   });
 
   it('returns valid=false for a 401 key', async () => {

@@ -27477,19 +27477,23 @@ async function retry(operation, options = {}) {
 }
 
 // src/lib/bifrost-client.ts
-var BIFROST_BASE = "https://bifrost-premium-https-v4.gw.postman.com/ws/proxy";
+var DEFAULT_BIFROST_BASE_URL = "https://bifrost-premium-https-v4.gw.postman.com";
+var BIFROST_PROXY_PATH = "/ws/proxy";
 var BifrostCatalogClient = class {
   accessToken;
   teamId;
   apiKey;
   fetchFn;
   secretValues;
+  bifrostProxyUrl;
   constructor(options) {
     this.accessToken = options.accessToken;
     this.teamId = options.teamId;
     this.apiKey = options.apiKey;
     this.fetchFn = options.fetchFn ?? globalThis.fetch;
     this.secretValues = [options.accessToken, options.apiKey].filter(Boolean);
+    const base = (options.bifrostBaseUrl || DEFAULT_BIFROST_BASE_URL).replace(/\/+$/, "");
+    this.bifrostProxyUrl = `${base}${BIFROST_PROXY_PATH}`;
   }
   setApiKey(apiKey) {
     this.apiKey = apiKey;
@@ -27513,7 +27517,7 @@ var BifrostCatalogClient = class {
     return h;
   }
   async proxyRequest(method, path7, body = {}) {
-    const response = await this.fetchFn(BIFROST_BASE, {
+    const response = await this.fetchFn(this.bifrostProxyUrl, {
       method: "POST",
       headers: this.headers(),
       body: JSON.stringify({
@@ -27538,7 +27542,7 @@ var BifrostCatalogClient = class {
     return data;
   }
   async akitaProxyRequest(method, path7, body = {}) {
-    const response = await this.fetchFn(BIFROST_BASE, {
+    const response = await this.fetchFn(this.bifrostProxyUrl, {
       method: "POST",
       headers: this.headers(),
       body: JSON.stringify({
@@ -27691,7 +27695,7 @@ var BifrostCatalogClient = class {
     return result.data.team_verification_token || null;
   }
   async createApiKey(name) {
-    const response = await this.fetchFn(BIFROST_BASE, {
+    const response = await this.fetchFn(this.bifrostProxyUrl, {
       method: "POST",
       headers: this.headers(),
       body: JSON.stringify({
@@ -27731,8 +27735,13 @@ var POLL_TIMEOUT_DEFAULT = 120;
 var POLL_INTERVAL_MIN = 2;
 var POLL_INTERVAL_MAX = 60;
 var POLL_INTERVAL_DEFAULT = 10;
-async function validateApiKey(apiKey) {
-  const res = await fetch("https://api.getpostman.com/me", {
+var DEFAULT_POSTMAN_API_BASE = "https://api.getpostman.com";
+var DEFAULT_POSTMAN_BIFROST_BASE = "https://bifrost-premium-https-v4.gw.postman.com";
+function trimTrailingSlash(value) {
+  return value.replace(/\/+$/, "");
+}
+async function validateApiKey(apiKey, apiBase = DEFAULT_POSTMAN_API_BASE) {
+  const res = await fetch(`${trimTrailingSlash(apiBase)}/me`, {
     method: "GET",
     headers: { "x-api-key": apiKey }
   });
@@ -27746,9 +27755,9 @@ async function validateApiKey(apiKey) {
   const teamId = data?.user?.teamId ? String(data.user.teamId) : void 0;
   return { valid: true, teamId };
 }
-async function getTeams(apiKey) {
+async function getTeams(apiKey, apiBase = DEFAULT_POSTMAN_API_BASE) {
   try {
-    const res = await fetch("https://api.getpostman.com/teams", {
+    const res = await fetch(`${trimTrailingSlash(apiBase)}/teams`, {
       method: "GET",
       headers: { "x-api-key": apiKey }
     });
@@ -27803,7 +27812,9 @@ function resolveInputs(env = process.env) {
     postmanTeamId,
     githubToken: get("github-token", env.GITHUB_TOKEN || ""),
     pollTimeoutSeconds: clamp(rawTimeout, POLL_TIMEOUT_MIN, POLL_TIMEOUT_MAX, POLL_TIMEOUT_DEFAULT),
-    pollIntervalSeconds: clamp(rawInterval, POLL_INTERVAL_MIN, POLL_INTERVAL_MAX, POLL_INTERVAL_DEFAULT)
+    pollIntervalSeconds: clamp(rawInterval, POLL_INTERVAL_MIN, POLL_INTERVAL_MAX, POLL_INTERVAL_DEFAULT),
+    postmanApiBase: get("postman-api-base", DEFAULT_POSTMAN_API_BASE),
+    postmanBifrostBase: get("postman-bifrost-base", DEFAULT_POSTMAN_BIFROST_BASE)
   };
 }
 function createPlannedOutputs(inputs) {
@@ -27907,8 +27918,9 @@ async function resolveApiKeyAndTeamId(inputs, client, reporter = core_exports) {
   let apiKey = inputs.postmanApiKey;
   const teamId = inputs.postmanTeamId;
   let keyValid = false;
+  const apiBase = inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE;
   if (apiKey) {
-    const result = await validateApiKey(apiKey);
+    const result = await validateApiKey(apiKey, apiBase);
     keyValid = result.valid;
     if (!keyValid) {
       reporter.warning("Provided postman-api-key is invalid or expired.");
@@ -27925,14 +27937,14 @@ async function resolveApiKeyAndTeamId(inputs, client, reporter = core_exports) {
   let resolvedTeamId = teamId;
   if (!resolvedTeamId && apiKey) {
     try {
-      const teams = await getTeams(apiKey);
+      const teams = await getTeams(apiKey, apiBase);
       if (teams.length > 1 && teams.every((t) => t.organizationId == null)) {
         reporter.warning(
           "GET /teams returned multiple teams but none include organizationId. Org-mode auto-detection may be degraded due to an upstream API change. Set postman-team-id explicitly if Bifrost calls fail."
         );
       }
       const orgIds = new Set(teams.filter((t) => t.organizationId != null).map((t) => t.organizationId));
-      const meResult = await validateApiKey(apiKey);
+      const meResult = await validateApiKey(apiKey, apiBase);
       const meTeamId = meResult.teamId ? parseInt(meResult.teamId, 10) : NaN;
       if (teams.length > 1 && orgIds.size === 1 && !Number.isNaN(meTeamId) && orgIds.has(meTeamId)) {
         resolvedTeamId = String(meTeamId);
@@ -27966,14 +27978,16 @@ async function runAction() {
     accessToken: inputs.postmanAccessToken,
     teamId: inputs.postmanTeamId,
     apiKey: inputs.postmanApiKey,
-    maskSecret
+    maskSecret,
+    bifrostBaseUrl: inputs.postmanBifrostBase
   });
   const { apiKey, teamId } = await resolveApiKeyAndTeamId(inputs, preliminaryClient, core_exports);
   const client = new BifrostCatalogClient({
     accessToken: inputs.postmanAccessToken,
     teamId,
     apiKey,
-    maskSecret
+    maskSecret,
+    bifrostBaseUrl: inputs.postmanBifrostBase
   });
   let result;
   try {
@@ -28054,7 +28068,9 @@ function parseCliArgs(argv, env = process.env) {
     "postman-team-id",
     "github-token",
     "poll-timeout-seconds",
-    "poll-interval-seconds"
+    "poll-interval-seconds",
+    "postman-api-base",
+    "postman-bifrost-base"
   ];
   const inputEnv = { ...env };
   for (const name of inputNames) {
@@ -28119,7 +28135,8 @@ async function runCli(argv = process.argv.slice(2), runtime = {}) {
     accessToken: inputs.postmanAccessToken,
     teamId: inputs.postmanTeamId,
     apiKey: inputs.postmanApiKey,
-    maskSecret: preliminaryMaskSecret
+    maskSecret: preliminaryMaskSecret,
+    bifrostBaseUrl: inputs.postmanBifrostBase
   });
   const { apiKey, teamId } = await resolveApiKeyAndTeamId(inputs, preliminaryClient, reporter);
   if (apiKey) {
@@ -28134,7 +28151,8 @@ async function runCli(argv = process.argv.slice(2), runtime = {}) {
     accessToken: inputs.postmanAccessToken,
     teamId,
     apiKey,
-    maskSecret
+    maskSecret,
+    bifrostBaseUrl: inputs.postmanBifrostBase
   });
   const result = await (runtime.executeOnboarding ?? runOnboarding)(
     inputs,

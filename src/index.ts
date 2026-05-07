@@ -10,9 +10,19 @@ const POLL_INTERVAL_MIN = 2;
 const POLL_INTERVAL_MAX = 60;
 const POLL_INTERVAL_DEFAULT = 10;
 
-export async function deriveTeamId(apiKey: string): Promise<string | undefined> {
+export const DEFAULT_POSTMAN_API_BASE = 'https://api.getpostman.com';
+export const DEFAULT_POSTMAN_BIFROST_BASE = 'https://bifrost-premium-https-v4.gw.postman.com';
+
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, '');
+}
+
+export async function deriveTeamId(
+  apiKey: string,
+  apiBase: string = DEFAULT_POSTMAN_API_BASE
+): Promise<string | undefined> {
   try {
-    const res = await fetch('https://api.getpostman.com/me', {
+    const res = await fetch(`${trimTrailingSlash(apiBase)}/me`, {
       method: 'GET',
       headers: { 'x-api-key': apiKey },
     });
@@ -25,8 +35,11 @@ export async function deriveTeamId(apiKey: string): Promise<string | undefined> 
   return undefined;
 }
 
-export async function validateApiKey(apiKey: string): Promise<{ valid: boolean; teamId?: string }> {
-  const res = await fetch('https://api.getpostman.com/me', {
+export async function validateApiKey(
+  apiKey: string,
+  apiBase: string = DEFAULT_POSTMAN_API_BASE
+): Promise<{ valid: boolean; teamId?: string }> {
+  const res = await fetch(`${trimTrailingSlash(apiBase)}/me`, {
     method: 'GET',
     headers: { 'x-api-key': apiKey },
   });
@@ -58,9 +71,12 @@ export async function deriveTeamIdFromSession(accessToken: string): Promise<stri
   return undefined;
 }
 
-export async function getTeams(apiKey: string): Promise<Array<{ id: number; name: string; organizationId?: number }>> {
+export async function getTeams(
+  apiKey: string,
+  apiBase: string = DEFAULT_POSTMAN_API_BASE
+): Promise<Array<{ id: number; name: string; organizationId?: number }>> {
   try {
-    const res = await fetch('https://api.getpostman.com/teams', {
+    const res = await fetch(`${trimTrailingSlash(apiBase)}/teams`, {
       method: 'GET',
       headers: { 'x-api-key': apiKey },
     });
@@ -91,6 +107,8 @@ export interface ActionInputs {
   githubToken: string;
   pollTimeoutSeconds: number;
   pollIntervalSeconds: number;
+  postmanApiBase: string;
+  postmanBifrostBase: string;
 }
 
 export interface OnboardingResult {
@@ -170,6 +188,8 @@ export function resolveInputs(
     githubToken: get('github-token', env.GITHUB_TOKEN || ''),
     pollTimeoutSeconds: clamp(rawTimeout, POLL_TIMEOUT_MIN, POLL_TIMEOUT_MAX, POLL_TIMEOUT_DEFAULT),
     pollIntervalSeconds: clamp(rawInterval, POLL_INTERVAL_MIN, POLL_INTERVAL_MAX, POLL_INTERVAL_DEFAULT),
+    postmanApiBase: get('postman-api-base', DEFAULT_POSTMAN_API_BASE),
+    postmanBifrostBase: get('postman-bifrost-base', DEFAULT_POSTMAN_BIFROST_BASE),
   };
 }
 
@@ -301,8 +321,10 @@ export async function resolveApiKeyAndTeamId(
   const teamId = inputs.postmanTeamId;
   let keyValid = false;
 
+  const apiBase = inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE;
+
   if (apiKey) {
-    const result = await validateApiKey(apiKey);
+    const result = await validateApiKey(apiKey, apiBase);
     keyValid = result.valid;
     if (!keyValid) {
       reporter.warning('Provided postman-api-key is invalid or expired.');
@@ -322,7 +344,7 @@ export async function resolveApiKeyAndTeamId(
   let resolvedTeamId = teamId;
   if (!resolvedTeamId && apiKey) {
     try {
-      const teams = await getTeams(apiKey);
+      const teams = await getTeams(apiKey, apiBase);
       if (teams.length > 1 && teams.every(t => t.organizationId == null)) {
         reporter.warning(
           'GET /teams returned multiple teams but none include organizationId. ' +
@@ -331,7 +353,7 @@ export async function resolveApiKeyAndTeamId(
         );
       }
       const orgIds = new Set(teams.filter(t => t.organizationId != null).map(t => t.organizationId));
-      const meResult = await validateApiKey(apiKey);
+      const meResult = await validateApiKey(apiKey, apiBase);
       const meTeamId = meResult.teamId ? parseInt(meResult.teamId, 10) : NaN;
       if (teams.length > 1 && orgIds.size === 1 && !Number.isNaN(meTeamId) && orgIds.has(meTeamId)) {
         resolvedTeamId = String(meTeamId);
@@ -373,6 +395,7 @@ async function runAction(): Promise<void> {
     teamId: inputs.postmanTeamId,
     apiKey: inputs.postmanApiKey,
     maskSecret,
+    bifrostBaseUrl: inputs.postmanBifrostBase,
   });
 
   const { apiKey, teamId } = await resolveApiKeyAndTeamId(inputs, preliminaryClient, core);
@@ -382,6 +405,7 @@ async function runAction(): Promise<void> {
     teamId,
     apiKey,
     maskSecret,
+    bifrostBaseUrl: inputs.postmanBifrostBase,
   });
 
   let result: import('./index.js').OnboardingResult;

@@ -319,6 +319,45 @@ describe('BifrostCatalogClient', () => {
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
+  it('defaults bifrost base URL to prod host', async () => {
+    const fetchFn = mockFetch([{
+      ok: true,
+      status: 200,
+      body: { total: 0, nextCursor: null, items: [] },
+    }]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: 'PMAK-test',
+      fetchFn,
+    });
+    await client.listDiscoveredServices();
+
+    const url = (fetchFn as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(url).toBe('https://bifrost-premium-https-v4.gw.postman.com/ws/proxy');
+  });
+
+  it('routes bifrost calls through a custom base URL when provided', async () => {
+    const fetchFn = mockFetch([
+      { ok: true, status: 200, body: { total: 0, nextCursor: null, items: [] } },
+      { ok: true, status: 200, body: { apikey: { key: 'PMAK-new' } } },
+    ]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: 'PMAK-test',
+      fetchFn,
+      bifrostBaseUrl: 'https://bifrost-beta.gw.postman-beta.com/',
+    });
+    await client.listDiscoveredServices();
+    await client.createApiKey('beta-key');
+
+    const urls = (fetchFn as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]);
+    // Trailing slash is normalized away; /ws/proxy appended for both api-catalog and identity services.
+    expect(urls[0]).toBe('https://bifrost-beta.gw.postman-beta.com/ws/proxy');
+    expect(urls[1]).toBe('https://bifrost-beta.gw.postman-beta.com/ws/proxy');
+  });
+
   it('setApiKey updates the key used for observability calls', async () => {
     const fetchFn = mockFetch([{
       ok: true,
