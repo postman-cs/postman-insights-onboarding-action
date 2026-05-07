@@ -2,7 +2,8 @@ import { HttpError } from './http-error.js';
 import { retry } from './retry.js';
 import type { SecretMasker } from './secrets.js';
 
-const BIFROST_BASE = 'https://bifrost-premium-https-v4.gw.postman.com/ws/proxy';
+const DEFAULT_BIFROST_BASE_URL = 'https://bifrost-premium-https-v4.gw.postman.com';
+const BIFROST_PROXY_PATH = '/ws/proxy';
 
 export interface DiscoveredService {
   id: number;
@@ -38,6 +39,11 @@ export interface BifrostClientOptions {
   apiKey: string;
   fetchFn?: typeof globalThis.fetch;
   maskSecret?: SecretMasker;
+  /**
+   * Base URL for the Bifrost gateway (override for beta/staging stacks).
+   * Defaults to the prod host; `/ws/proxy` is appended automatically.
+   */
+  bifrostBaseUrl?: string;
 }
 
 export class BifrostCatalogClient {
@@ -46,6 +52,7 @@ export class BifrostCatalogClient {
   private apiKey: string;
   private readonly fetchFn: typeof globalThis.fetch;
   private readonly secretValues: string[];
+  private readonly bifrostProxyUrl: string;
 
   constructor(options: BifrostClientOptions) {
     this.accessToken = options.accessToken;
@@ -53,6 +60,8 @@ export class BifrostCatalogClient {
     this.apiKey = options.apiKey;
     this.fetchFn = options.fetchFn ?? globalThis.fetch;
     this.secretValues = [options.accessToken, options.apiKey].filter(Boolean);
+    const base = (options.bifrostBaseUrl || DEFAULT_BIFROST_BASE_URL).replace(/\/+$/, '');
+    this.bifrostProxyUrl = `${base}${BIFROST_PROXY_PATH}`;
   }
 
   setApiKey(apiKey: string): void {
@@ -83,7 +92,7 @@ export class BifrostCatalogClient {
     path: string,
     body: unknown = {}
   ): Promise<T> {
-    const response = await this.fetchFn(BIFROST_BASE, {
+    const response = await this.fetchFn(this.bifrostProxyUrl, {
       method: 'POST',
       headers: this.headers(),
       body: JSON.stringify({
@@ -116,7 +125,7 @@ export class BifrostCatalogClient {
     path: string,
     body: unknown = {}
   ): Promise<{ ok: boolean; status: number; data: T | null; errorText: string }> {
-    const response = await this.fetchFn(BIFROST_BASE, {
+    const response = await this.fetchFn(this.bifrostProxyUrl, {
       method: 'POST',
       headers: this.headers(),
       body: JSON.stringify({
@@ -292,7 +301,7 @@ export class BifrostCatalogClient {
   }
 
   async createApiKey(name: string): Promise<string> {
-    const response = await this.fetchFn(BIFROST_BASE, {
+    const response = await this.fetchFn(this.bifrostProxyUrl, {
       method: 'POST',
       headers: this.headers(),
       body: JSON.stringify({

@@ -80,7 +80,9 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     'postman-team-id',
     'github-token',
     'poll-timeout-seconds',
-    'poll-interval-seconds'
+    'poll-interval-seconds',
+    'postman-api-base',
+    'postman-bifrost-base'
   ];
 
   const inputEnv: NodeJS.ProcessEnv = { ...env };
@@ -159,7 +161,8 @@ export async function runCli(
     accessToken: inputs.postmanAccessToken,
     teamId: inputs.postmanTeamId,
     apiKey: inputs.postmanApiKey,
-    maskSecret: preliminaryMaskSecret
+    maskSecret: preliminaryMaskSecret,
+    bifrostBaseUrl: inputs.postmanBifrostBase
   });
 
   const { apiKey, teamId } = await resolveApiKeyAndTeamId(inputs, preliminaryClient, reporter);
@@ -176,7 +179,8 @@ export async function runCli(
     accessToken: inputs.postmanAccessToken,
     teamId,
     apiKey,
-    maskSecret
+    maskSecret,
+    bifrostBaseUrl: inputs.postmanBifrostBase
   });
 
   const result = await (runtime.executeOnboarding ?? runOnboarding)(
