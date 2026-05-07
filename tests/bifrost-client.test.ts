@@ -377,6 +377,44 @@ describe('BifrostCatalogClient', () => {
     const headers = callOpts.headers as Record<string, string>;
     expect(headers['x-api-key']).toBe('PMAK-new');
   });
+
+  it('defaults observability base URL to prod host', async () => {
+    const fetchFn = mockFetch([{
+      ok: true,
+      status: 200,
+      body: { application_id: 'app-123', service_id: 'svc-456' },
+    }]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: 'PMAK-test',
+      fetchFn,
+    });
+    await client.createApplication('ws-abc', 'env-xyz');
+
+    const url = (fetchFn as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(url).toBe('https://api.observability.postman.com/v2/agent/api-catalog/workspaces/ws-abc/applications');
+  });
+
+  it('routes observability calls through a custom base URL when provided', async () => {
+    const fetchFn = mockFetch([{
+      ok: true,
+      status: 200,
+      body: { application_id: 'app-beta', service_id: 'svc-beta' },
+    }]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: 'PMAK-test',
+      fetchFn,
+      observabilityBaseUrl: 'https://api.observability.postman-beta.com/',
+    });
+    await client.createApplication('ws-beta', 'env-beta');
+
+    const url = (fetchFn as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    // Trailing slash is normalized away
+    expect(url).toBe('https://api.observability.postman-beta.com/v2/agent/api-catalog/workspaces/ws-beta/applications');
+  });
 });
 
 describe('findDiscoveredService', () => {

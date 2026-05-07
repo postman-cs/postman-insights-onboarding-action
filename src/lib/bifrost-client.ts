@@ -4,6 +4,7 @@ import type { SecretMasker } from './secrets.js';
 
 const DEFAULT_BIFROST_BASE_URL = 'https://bifrost-premium-https-v4.gw.postman.com';
 const BIFROST_PROXY_PATH = '/ws/proxy';
+const DEFAULT_OBSERVABILITY_BASE_URL = 'https://api.observability.postman.com';
 
 export interface DiscoveredService {
   id: number;
@@ -44,6 +45,11 @@ export interface BifrostClientOptions {
    * Defaults to the prod host; `/ws/proxy` is appended automatically.
    */
   bifrostBaseUrl?: string;
+  /**
+   * Base URL for the Observability API (override for beta/staging stacks).
+   * Defaults to https://api.observability.postman.com.
+   */
+  observabilityBaseUrl?: string;
 }
 
 export class BifrostCatalogClient {
@@ -53,6 +59,7 @@ export class BifrostCatalogClient {
   private readonly fetchFn: typeof globalThis.fetch;
   private readonly secretValues: string[];
   private readonly bifrostProxyUrl: string;
+  private readonly observabilityBaseUrl: string;
 
   constructor(options: BifrostClientOptions) {
     this.accessToken = options.accessToken;
@@ -62,6 +69,7 @@ export class BifrostCatalogClient {
     this.secretValues = [options.accessToken, options.apiKey].filter(Boolean);
     const base = (options.bifrostBaseUrl || DEFAULT_BIFROST_BASE_URL).replace(/\/+$/, '');
     this.bifrostProxyUrl = `${base}${BIFROST_PROXY_PATH}`;
+    this.observabilityBaseUrl = (options.observabilityBaseUrl || DEFAULT_OBSERVABILITY_BASE_URL).replace(/\/+$/, '');
   }
 
   setApiKey(apiKey: string): void {
@@ -270,7 +278,7 @@ export class BifrostCatalogClient {
     systemEnv: string,
   ): Promise<{ application_id: string; service_id: string }> {
     const response = await this.fetchFn(
-      `https://api.observability.postman.com/v2/agent/api-catalog/workspaces/${workspaceId}/applications`,
+      `${this.observabilityBaseUrl}/v2/agent/api-catalog/workspaces/${workspaceId}/applications`,
       {
         method: 'POST',
         headers: {

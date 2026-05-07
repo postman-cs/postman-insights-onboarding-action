@@ -79,6 +79,11 @@ export const alphaActionContract: AlphaActionContract = {
       required: false,
       default: 'https://bifrost-premium-https-v4.gw.postman.com',
     },
+    'postman-observability-base': {
+      description: 'Postman observability API base URL; override for beta/alpha stacks.',
+      required: false,
+      default: 'https://api.observability.postman.com',
+    },
   },
   outputs: {
     'discovered-service-id': {
