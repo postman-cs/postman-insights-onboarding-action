@@ -9,7 +9,6 @@ import {
 } from './index.js';
 import { BifrostCatalogClient } from './lib/bifrost-client.js';
 import { sleep } from './lib/retry.js';
-import { createSecretMasker } from './lib/secrets.js';
 
 interface CliConfig {
   inputEnv: NodeJS.ProcessEnv;
@@ -81,9 +80,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     'github-token',
     'poll-timeout-seconds',
     'poll-interval-seconds',
-    'postman-api-base',
-    'postman-bifrost-base',
-    'postman-observability-base'
+    'postman-stack'
   ];
 
   const inputEnv: NodeJS.ProcessEnv = { ...env };
@@ -153,18 +150,13 @@ export async function runCli(
     reporter.setSecret(inputs.githubToken);
   }
 
-  const preliminaryMaskSecret = createSecretMasker([
-    inputs.postmanAccessToken,
-    inputs.postmanApiKey,
-    inputs.githubToken
-  ]);
   const preliminaryClient = new BifrostCatalogClient({
     accessToken: inputs.postmanAccessToken,
     teamId: inputs.postmanTeamId,
     apiKey: inputs.postmanApiKey,
-    maskSecret: preliminaryMaskSecret,
     bifrostBaseUrl: inputs.postmanBifrostBase,
-    observabilityBaseUrl: inputs.postmanObservabilityBase
+    observabilityBaseUrl: inputs.postmanObservabilityBase,
+    observabilityEnv: inputs.postmanObservabilityEnv
   });
 
   const { apiKey, teamId } = await resolveApiKeyAndTeamId(inputs, preliminaryClient, reporter);
@@ -172,18 +164,13 @@ export async function runCli(
     reporter.setSecret(apiKey);
   }
 
-  const maskSecret = createSecretMasker([
-    inputs.postmanAccessToken,
-    inputs.githubToken,
-    apiKey
-  ]);
   const client = new BifrostCatalogClient({
     accessToken: inputs.postmanAccessToken,
     teamId,
     apiKey,
-    maskSecret,
     bifrostBaseUrl: inputs.postmanBifrostBase,
-    observabilityBaseUrl: inputs.postmanObservabilityBase
+    observabilityBaseUrl: inputs.postmanObservabilityBase,
+    observabilityEnv: inputs.postmanObservabilityEnv
   });
 
   const result = await (runtime.executeOnboarding ?? runOnboarding)(

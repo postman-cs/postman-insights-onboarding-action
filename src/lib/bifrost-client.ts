@@ -1,10 +1,13 @@
 import { HttpError } from './http-error.js';
 import { retry } from './retry.js';
-import type { SecretMasker } from './secrets.js';
+import { POSTMAN_ENDPOINT_PROFILES } from './postman/base-urls.js';
 
-const DEFAULT_BIFROST_BASE_URL = 'https://bifrost-premium-https-v4.gw.postman.com';
+const DEFAULT_BIFROST_BASE_URL = POSTMAN_ENDPOINT_PROFILES.prod.bifrostBaseUrl;
 const BIFROST_PROXY_PATH = '/ws/proxy';
-const DEFAULT_OBSERVABILITY_BASE_URL = 'https://api.observability.postman.com';
+const DEFAULT_OBSERVABILITY_BASE_URL = POSTMAN_ENDPOINT_PROFILES.prod.observabilityBaseUrl;
+const DEFAULT_OBSERVABILITY_ENV = POSTMAN_ENDPOINT_PROFILES.prod.observabilityEnv;
+const MAX_DISCOVERED_SERVICE_PAGES = 100;
+const MAX_PROVIDER_SERVICE_PAGES = 100;
 
 export interface DiscoveredService {
   id: number;
@@ -39,7 +42,6 @@ export interface BifrostClientOptions {
   teamId: string;
   apiKey: string;
   fetchFn?: typeof globalThis.fetch;
-  maskSecret?: SecretMasker;
   /**
    * Base URL for the Bifrost gateway (override for beta/staging stacks).
    * Defaults to the prod host; `/ws/proxy` is appended automatically.
@@ -50,6 +52,7 @@ export interface BifrostClientOptions {
    * Defaults to https://api.observability.postman.com.
    */
   observabilityBaseUrl?: string;
+  observabilityEnv?: string;
 }
 
 export class BifrostCatalogClient {
@@ -60,6 +63,7 @@ export class BifrostCatalogClient {
   private readonly secretValues: string[];
   private readonly bifrostProxyUrl: string;
   private readonly observabilityBaseUrl: string;
+  private readonly observabilityEnv: string;
 
   constructor(options: BifrostClientOptions) {
     this.accessToken = options.accessToken;
@@ -70,6 +74,7 @@ export class BifrostCatalogClient {
     const base = (options.bifrostBaseUrl || DEFAULT_BIFROST_BASE_URL).replace(/\/+$/, '');
     this.bifrostProxyUrl = `${base}${BIFROST_PROXY_PATH}`;
     this.observabilityBaseUrl = (options.observabilityBaseUrl || DEFAULT_OBSERVABILITY_BASE_URL).replace(/\/+$/, '');
+    this.observabilityEnv = options.observabilityEnv || DEFAULT_OBSERVABILITY_ENV;
   }
 
   setApiKey(apiKey: string): void {
@@ -156,16 +161,23 @@ export class BifrostCatalogClient {
       async () => {
         const allItems: DiscoveredService[] = [];
         let cursor: string | null = null;
-        let hasMore = true;
-        while (hasMore) {
+        const seenCursors = new Set<string>();
+        for (let page = 0; page < MAX_DISCOVERED_SERVICE_PAGES; page += 1) {
           const cursorParam: string = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
           const data: DiscoveredServicesResponse = await this.proxyRequest<DiscoveredServicesResponse>(
             'GET',
             `/api/v1/onboarding/discovered-services?status=discovered${cursorParam}`
           );
           allItems.push(...(data.items || []));
-          cursor = data.nextCursor || null;
-          hasMore = cursor !== null;
+          if (data.total && allItems.length >= data.total) {
+            break;
+          }
+          const nextCursor = data.nextCursor || null;
+          if (!nextCursor || seenCursors.has(nextCursor)) {
+            break;
+          }
+          seenCursors.add(nextCursor);
+          cursor = nextCursor;
         }
         return allItems;
       },
@@ -218,17 +230,21 @@ export class BifrostCatalogClient {
     const allServices: Array<{ id: string; name: string }> = [];
     let page = 1;
     const pageSize = 100;
-    let hasMore = true;
 
-    while (hasMore) {
-      const result = await this.akitaProxyRequest<{ services?: Array<{ id: string; name: string }> }>(
+    for (let pageCount = 0; pageCount < MAX_PROVIDER_SERVICE_PAGES; pageCount += 1) {
+      const result = await this.akitaProxyRequest<{ services?: Array<{ id: string; name: string }>; total?: number }>(
         'GET',
         `/v2/api-catalog/services?status=discovered&populate_endpoints=false&populate_discovery_metadata=true&page=${page}&page_size=${pageSize}`
       );
       if (!result.ok || !result.data) return null;
       const services = result.data.services || [];
       allServices.push(...services);
-      hasMore = services.length >= pageSize;
+      if (result.data.total && allServices.length >= result.data.total) {
+        break;
+      }
+      if (services.length < pageSize) {
+        break;
+      }
       page++;
     }
 
@@ -283,7 +299,7 @@ export class BifrostCatalogClient {
         method: 'POST',
         headers: {
           'x-api-key': this.apiKey,
-          'x-postman-env': 'production',
+          'x-postman-env': this.observabilityEnv,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ system_env: systemEnv }),

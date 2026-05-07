@@ -22,9 +22,11 @@ function makeInputs(overrides: Partial<ActionInputs> = {}): ActionInputs {
     githubToken: 'ghp_test',
     pollTimeoutSeconds: 5,
     pollIntervalSeconds: 1,
+    postmanStack: 'prod',
     postmanApiBase: 'https://api.getpostman.com',
     postmanBifrostBase: 'https://bifrost-premium-https-v4.gw.postman.com',
     postmanObservabilityBase: 'https://api.observability.postman.com',
+    postmanObservabilityEnv: 'production',
     ...overrides,
   };
 }
