@@ -18,24 +18,6 @@ function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, '');
 }
 
-export async function deriveTeamId(
-  apiKey: string,
-  apiBase: string = DEFAULT_POSTMAN_API_BASE
-): Promise<string | undefined> {
-  try {
-    const res = await fetch(`${trimTrailingSlash(apiBase)}/me`, {
-      method: 'GET',
-      headers: { 'x-api-key': apiKey },
-    });
-    if (!res.ok) return undefined;
-    const data = (await res.json()) as { user?: { teamId?: number | string } };
-    if (data?.user?.teamId) return String(data.user.teamId);
-  } catch {
-    // derivation is best-effort
-  }
-  return undefined;
-}
-
 export async function validateApiKey(
   apiKey: string,
   apiBase: string = DEFAULT_POSTMAN_API_BASE
@@ -53,23 +35,6 @@ export async function validateApiKey(
   const data = (await res.json()) as { user?: { teamId?: number | string } };
   const teamId = data?.user?.teamId ? String(data.user.teamId) : undefined;
   return { valid: true, teamId };
-}
-
-export async function deriveTeamIdFromSession(accessToken: string): Promise<string | undefined> {
-  try {
-    const res = await fetch('https://iapub.postman.co/api/sessions/current', {
-      method: 'GET',
-      headers: { 'x-access-token': accessToken },
-    });
-    if (!res.ok) return undefined;
-    const data = (await res.json()) as {
-      session?: { identity?: { team?: number | string } };
-    };
-    if (data?.session?.identity?.team) return String(data.session.identity.team);
-  } catch {
-    // fallback is best-effort
-  }
-  return undefined;
 }
 
 export async function getTeams(
@@ -355,12 +320,23 @@ export async function resolveApiKeyAndTeamId(
           'Set postman-team-id explicitly if Bifrost calls fail.'
         );
       }
-      const orgIds = new Set(teams.filter(t => t.organizationId != null).map(t => t.organizationId));
-      const meResult = await validateApiKey(apiKey, apiBase);
-      const meTeamId = meResult.teamId ? parseInt(meResult.teamId, 10) : NaN;
-      if (teams.length > 1 && orgIds.size === 1 && !Number.isNaN(meTeamId) && orgIds.has(meTeamId)) {
-        resolvedTeamId = String(meTeamId);
-        reporter.info(`Org-mode auto-detected (${teams.length} sub-teams). Using team ID ${resolvedTeamId} for Bifrost headers.`);
+      const isOrgMode = teams.some(t => t.organizationId != null);
+      if (isOrgMode) {
+        if (teams.length === 1) {
+          resolvedTeamId = String(teams[0].id);
+          reporter.info(
+            `Org-mode account detected. Using sub-team ${teams[0].id} (${teams[0].name ?? 'unknown'}) for Bifrost calls.`
+          );
+        } else {
+          const meResult = await validateApiKey(apiKey, apiBase);
+          const meTeamId = meResult.teamId ? parseInt(meResult.teamId, 10) : NaN;
+          if (!Number.isNaN(meTeamId) && teams.some(t => t.id === meTeamId)) {
+            resolvedTeamId = String(meTeamId);
+            reporter.info(
+              `Org-mode account detected. Using sub-team ${meTeamId} (from /me) for Bifrost calls.`
+            );
+          }
+        }
       }
     } catch {
       // Non-fatal: if detection fails, teamId stays empty (header omitted) which is safe
