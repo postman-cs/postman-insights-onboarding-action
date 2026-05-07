@@ -24,6 +24,7 @@ function makeInputs(overrides: Partial<ActionInputs> = {}): ActionInputs {
     pollIntervalSeconds: 1,
     postmanApiBase: 'https://api.getpostman.com',
     postmanBifrostBase: 'https://bifrost-premium-https-v4.gw.postman.com',
+    postmanObservabilityBase: 'https://api.observability.postman.com',
     ...overrides,
   };
 }

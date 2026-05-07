@@ -82,7 +82,8 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     'poll-timeout-seconds',
     'poll-interval-seconds',
     'postman-api-base',
-    'postman-bifrost-base'
+    'postman-bifrost-base',
+    'postman-observability-base'
   ];
 
   const inputEnv: NodeJS.ProcessEnv = { ...env };
@@ -162,7 +163,8 @@ export async function runCli(
     teamId: inputs.postmanTeamId,
     apiKey: inputs.postmanApiKey,
     maskSecret: preliminaryMaskSecret,
-    bifrostBaseUrl: inputs.postmanBifrostBase
+    bifrostBaseUrl: inputs.postmanBifrostBase,
+    observabilityBaseUrl: inputs.postmanObservabilityBase
   });
 
   const { apiKey, teamId } = await resolveApiKeyAndTeamId(inputs, preliminaryClient, reporter);
@@ -180,7 +182,8 @@ export async function runCli(
     teamId,
     apiKey,
     maskSecret,
-    bifrostBaseUrl: inputs.postmanBifrostBase
+    bifrostBaseUrl: inputs.postmanBifrostBase,
+    observabilityBaseUrl: inputs.postmanObservabilityBase
   });
 
   const result = await (runtime.executeOnboarding ?? runOnboarding)(

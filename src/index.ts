@@ -12,6 +12,7 @@ const POLL_INTERVAL_DEFAULT = 10;
 
 export const DEFAULT_POSTMAN_API_BASE = 'https://api.getpostman.com';
 export const DEFAULT_POSTMAN_BIFROST_BASE = 'https://bifrost-premium-https-v4.gw.postman.com';
+export const DEFAULT_POSTMAN_OBSERVABILITY_BASE = 'https://api.observability.postman.com';
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, '');
@@ -109,6 +110,7 @@ export interface ActionInputs {
   pollIntervalSeconds: number;
   postmanApiBase: string;
   postmanBifrostBase: string;
+  postmanObservabilityBase: string;
 }
 
 export interface OnboardingResult {
@@ -190,6 +192,7 @@ export function resolveInputs(
     pollIntervalSeconds: clamp(rawInterval, POLL_INTERVAL_MIN, POLL_INTERVAL_MAX, POLL_INTERVAL_DEFAULT),
     postmanApiBase: get('postman-api-base', DEFAULT_POSTMAN_API_BASE),
     postmanBifrostBase: get('postman-bifrost-base', DEFAULT_POSTMAN_BIFROST_BASE),
+    postmanObservabilityBase: get('postman-observability-base', DEFAULT_POSTMAN_OBSERVABILITY_BASE),
   };
 }
 
@@ -396,6 +399,7 @@ async function runAction(): Promise<void> {
     apiKey: inputs.postmanApiKey,
     maskSecret,
     bifrostBaseUrl: inputs.postmanBifrostBase,
+    observabilityBaseUrl: inputs.postmanObservabilityBase,
   });
 
   const { apiKey, teamId } = await resolveApiKeyAndTeamId(inputs, preliminaryClient, core);
@@ -406,6 +410,7 @@ async function runAction(): Promise<void> {
     apiKey,
     maskSecret,
     bifrostBaseUrl: inputs.postmanBifrostBase,
+    observabilityBaseUrl: inputs.postmanObservabilityBase,
   });
 
   let result: import('./index.js').OnboardingResult;

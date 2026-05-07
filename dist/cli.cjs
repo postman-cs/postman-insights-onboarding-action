@@ -27479,6 +27479,7 @@ async function retry(operation, options = {}) {
 // src/lib/bifrost-client.ts
 var DEFAULT_BIFROST_BASE_URL = "https://bifrost-premium-https-v4.gw.postman.com";
 var BIFROST_PROXY_PATH = "/ws/proxy";
+var DEFAULT_OBSERVABILITY_BASE_URL = "https://api.observability.postman.com";
 var BifrostCatalogClient = class {
   accessToken;
   teamId;
@@ -27486,6 +27487,7 @@ var BifrostCatalogClient = class {
   fetchFn;
   secretValues;
   bifrostProxyUrl;
+  observabilityBaseUrl;
   constructor(options) {
     this.accessToken = options.accessToken;
     this.teamId = options.teamId;
@@ -27494,6 +27496,7 @@ var BifrostCatalogClient = class {
     this.secretValues = [options.accessToken, options.apiKey].filter(Boolean);
     const base = (options.bifrostBaseUrl || DEFAULT_BIFROST_BASE_URL).replace(/\/+$/, "");
     this.bifrostProxyUrl = `${base}${BIFROST_PROXY_PATH}`;
+    this.observabilityBaseUrl = (options.observabilityBaseUrl || DEFAULT_OBSERVABILITY_BASE_URL).replace(/\/+$/, "");
   }
   setApiKey(apiKey) {
     this.apiKey = apiKey;
@@ -27666,7 +27669,7 @@ var BifrostCatalogClient = class {
   }
   async createApplication(workspaceId, systemEnv) {
     const response = await this.fetchFn(
-      `https://api.observability.postman.com/v2/agent/api-catalog/workspaces/${workspaceId}/applications`,
+      `${this.observabilityBaseUrl}/v2/agent/api-catalog/workspaces/${workspaceId}/applications`,
       {
         method: "POST",
         headers: {
@@ -27737,6 +27740,7 @@ var POLL_INTERVAL_MAX = 60;
 var POLL_INTERVAL_DEFAULT = 10;
 var DEFAULT_POSTMAN_API_BASE = "https://api.getpostman.com";
 var DEFAULT_POSTMAN_BIFROST_BASE = "https://bifrost-premium-https-v4.gw.postman.com";
+var DEFAULT_POSTMAN_OBSERVABILITY_BASE = "https://api.observability.postman.com";
 function trimTrailingSlash(value) {
   return value.replace(/\/+$/, "");
 }
@@ -27814,7 +27818,8 @@ function resolveInputs(env = process.env) {
     pollTimeoutSeconds: clamp(rawTimeout, POLL_TIMEOUT_MIN, POLL_TIMEOUT_MAX, POLL_TIMEOUT_DEFAULT),
     pollIntervalSeconds: clamp(rawInterval, POLL_INTERVAL_MIN, POLL_INTERVAL_MAX, POLL_INTERVAL_DEFAULT),
     postmanApiBase: get("postman-api-base", DEFAULT_POSTMAN_API_BASE),
-    postmanBifrostBase: get("postman-bifrost-base", DEFAULT_POSTMAN_BIFROST_BASE)
+    postmanBifrostBase: get("postman-bifrost-base", DEFAULT_POSTMAN_BIFROST_BASE),
+    postmanObservabilityBase: get("postman-observability-base", DEFAULT_POSTMAN_OBSERVABILITY_BASE)
   };
 }
 function createPlannedOutputs(inputs) {
@@ -27979,7 +27984,8 @@ async function runAction() {
     teamId: inputs.postmanTeamId,
     apiKey: inputs.postmanApiKey,
     maskSecret,
-    bifrostBaseUrl: inputs.postmanBifrostBase
+    bifrostBaseUrl: inputs.postmanBifrostBase,
+    observabilityBaseUrl: inputs.postmanObservabilityBase
   });
   const { apiKey, teamId } = await resolveApiKeyAndTeamId(inputs, preliminaryClient, core_exports);
   const client = new BifrostCatalogClient({
@@ -27987,7 +27993,8 @@ async function runAction() {
     teamId,
     apiKey,
     maskSecret,
-    bifrostBaseUrl: inputs.postmanBifrostBase
+    bifrostBaseUrl: inputs.postmanBifrostBase,
+    observabilityBaseUrl: inputs.postmanObservabilityBase
   });
   let result;
   try {
@@ -28070,7 +28077,8 @@ function parseCliArgs(argv, env = process.env) {
     "poll-timeout-seconds",
     "poll-interval-seconds",
     "postman-api-base",
-    "postman-bifrost-base"
+    "postman-bifrost-base",
+    "postman-observability-base"
   ];
   const inputEnv = { ...env };
   for (const name of inputNames) {
@@ -28136,7 +28144,8 @@ async function runCli(argv = process.argv.slice(2), runtime = {}) {
     teamId: inputs.postmanTeamId,
     apiKey: inputs.postmanApiKey,
     maskSecret: preliminaryMaskSecret,
-    bifrostBaseUrl: inputs.postmanBifrostBase
+    bifrostBaseUrl: inputs.postmanBifrostBase,
+    observabilityBaseUrl: inputs.postmanObservabilityBase
   });
   const { apiKey, teamId } = await resolveApiKeyAndTeamId(inputs, preliminaryClient, reporter);
   if (apiKey) {
@@ -28152,7 +28161,8 @@ async function runCli(argv = process.argv.slice(2), runtime = {}) {
     teamId,
     apiKey,
     maskSecret,
-    bifrostBaseUrl: inputs.postmanBifrostBase
+    bifrostBaseUrl: inputs.postmanBifrostBase,
+    observabilityBaseUrl: inputs.postmanObservabilityBase
   });
   const result = await (runtime.executeOnboarding ?? runOnboarding)(
     inputs,
