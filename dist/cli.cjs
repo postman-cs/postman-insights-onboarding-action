@@ -21528,16 +21528,6 @@ function resolveInputs(env = process.env) {
     postmanObservabilityEnv: endpointProfile.observabilityEnv
   };
 }
-function createPlannedOutputs(inputs) {
-  return {
-    "discovered-service-id": "",
-    "discovered-service-name": inputs.clusterName ? `${inputs.clusterName}/${inputs.projectName}` : inputs.projectName,
-    "collection-id": "",
-    "application-id": "",
-    "verification-token": "",
-    "status": "pending"
-  };
-}
 async function runOnboarding(inputs, client, sleepFn = sleep, reporter = core_exports) {
   const timeoutMs = inputs.pollTimeoutSeconds * 1e3;
   const intervalMs = inputs.pollIntervalSeconds * 1e3;
@@ -21682,59 +21672,6 @@ async function resolveApiKeyAndTeamId(inputs, client, reporter = core_exports) {
   }
   return { apiKey, teamId: resolvedTeamId };
 }
-async function runAction() {
-  const inputs = resolveInputs();
-  const planned = createPlannedOutputs(inputs);
-  for (const [key, value] of Object.entries(planned)) {
-    setOutput(key, value);
-  }
-  setSecret(inputs.postmanAccessToken);
-  if (inputs.postmanApiKey) setSecret(inputs.postmanApiKey);
-  if (inputs.githubToken) setSecret(inputs.githubToken);
-  const preliminaryClient = new BifrostCatalogClient({
-    accessToken: inputs.postmanAccessToken,
-    teamId: inputs.postmanTeamId,
-    apiKey: inputs.postmanApiKey,
-    bifrostBaseUrl: inputs.postmanBifrostBase,
-    observabilityBaseUrl: inputs.postmanObservabilityBase,
-    observabilityEnv: inputs.postmanObservabilityEnv
-  });
-  const { apiKey, teamId } = await resolveApiKeyAndTeamId(inputs, preliminaryClient, core_exports);
-  const client = new BifrostCatalogClient({
-    accessToken: inputs.postmanAccessToken,
-    teamId,
-    apiKey,
-    bifrostBaseUrl: inputs.postmanBifrostBase,
-    observabilityBaseUrl: inputs.postmanObservabilityBase,
-    observabilityEnv: inputs.postmanObservabilityEnv
-  });
-  let result;
-  try {
-    result = await runOnboarding(inputs, client, sleep, core_exports);
-  } catch (error2) {
-    const message = error2 instanceof Error ? error2.message : String(error2);
-    setOutput("status", "error");
-    setFailed(`Insights onboarding failed: ${message}`);
-    return;
-  }
-  setOutput("discovered-service-id", String(result.discoveredServiceId));
-  setOutput("discovered-service-name", result.discoveredServiceName);
-  setOutput("collection-id", result.collectionId);
-  setOutput("application-id", result.applicationId);
-  setOutput("verification-token", result.verificationToken || "");
-  setOutput("status", result.status);
-  if (result.status === "not-found") {
-    warning("Insights onboarding skipped: service not found in discovered list");
-  } else {
-    info(`Insights onboarding succeeded: ${result.discoveredServiceName} -> workspace ${inputs.workspaceId}`);
-  }
-}
-runAction().catch((error2) => {
-  const message = error2 instanceof Error ? error2.message : String(error2);
-  setOutput("status", "error");
-  setFailed(message);
-  process.exitCode = 1;
-});
 
 // src/cli.ts
 var ConsoleReporter = class {

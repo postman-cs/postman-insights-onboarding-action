@@ -363,7 +363,7 @@ export async function resolveApiKeyAndTeamId(
   return { apiKey, teamId: resolvedTeamId };
 }
 
-async function runAction(): Promise<void> {
+export async function runAction(): Promise<void> {
   const inputs = resolveInputs();
   const planned = createPlannedOutputs(inputs);
   for (const [key, value] of Object.entries(planned)) {
@@ -417,10 +417,3 @@ async function runAction(): Promise<void> {
     core.info(`Insights onboarding succeeded: ${result.discoveredServiceName} -> workspace ${inputs.workspaceId}`);
   }
 }
-
-runAction().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  core.setOutput('status', 'error');
-  core.setFailed(message);
-  process.exitCode = 1;
-});

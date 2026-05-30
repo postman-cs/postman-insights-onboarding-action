@@ -28,7 +28,6 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
-var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // node_modules/tunnel/lib/tunnel.js
 var require_tunnel = __commonJS({
@@ -18671,21 +18670,6 @@ var require_undici = __commonJS({
   }
 });
 
-// src/index.ts
-var index_exports = {};
-__export(index_exports, {
-  DEFAULT_POSTMAN_API_BASE: () => DEFAULT_POSTMAN_API_BASE,
-  DEFAULT_POSTMAN_BIFROST_BASE: () => DEFAULT_POSTMAN_BIFROST_BASE,
-  DEFAULT_POSTMAN_OBSERVABILITY_BASE: () => DEFAULT_POSTMAN_OBSERVABILITY_BASE,
-  createPlannedOutputs: () => createPlannedOutputs,
-  getTeams: () => getTeams,
-  resolveApiKeyAndTeamId: () => resolveApiKeyAndTeamId,
-  resolveInputs: () => resolveInputs,
-  runOnboarding: () => runOnboarding,
-  validateApiKey: () => validateApiKey
-});
-module.exports = __toCommonJS(index_exports);
-
 // node_modules/@actions/core/lib/core.js
 var core_exports = {};
 __export(core_exports, {
@@ -21731,23 +21715,13 @@ async function runAction() {
     info(`Insights onboarding succeeded: ${result.discoveredServiceName} -> workspace ${inputs.workspaceId}`);
   }
 }
+
+// src/main.ts
 runAction().catch((error2) => {
   const message = error2 instanceof Error ? error2.message : String(error2);
   setOutput("status", "error");
   setFailed(message);
   process.exitCode = 1;
-});
-// Annotate the CommonJS export names for ESM import in node:
-0 && (module.exports = {
-  DEFAULT_POSTMAN_API_BASE,
-  DEFAULT_POSTMAN_BIFROST_BASE,
-  DEFAULT_POSTMAN_OBSERVABILITY_BASE,
-  createPlannedOutputs,
-  getTeams,
-  resolveApiKeyAndTeamId,
-  resolveInputs,
-  runOnboarding,
-  validateApiKey
 });
 /*! Bundled license information:
 
