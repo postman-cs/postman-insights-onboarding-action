@@ -58,4 +58,4 @@ outputs:
     description: 'Onboarding result: success, not-found, or error'
 runs:
   using: 'node24'
-  main: 'dist/index.cjs'
+  main: 'dist/action.cjs'

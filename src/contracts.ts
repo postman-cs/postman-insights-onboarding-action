@@ -9,14 +9,14 @@ export interface ActionOutputContract {
   description: string;
 }
 
-export interface AlphaActionContract {
+export interface CustomerPreviewActionContract {
   name: string;
   description: string;
   inputs: Record<string, ActionInputContract>;
   outputs: Record<string, ActionOutputContract>;
 }
 
-export const alphaActionContract: AlphaActionContract = {
+export const customerPreviewActionContract: CustomerPreviewActionContract = {
   name: 'postman-insights-onboarding-action',
   description: 'Links Postman Insights discovered services to API Catalog workspaces and git repos.',
   inputs: {
@@ -99,5 +99,5 @@ export const alphaActionContract: AlphaActionContract = {
   },
 };
 
-export const contractInputNames = Object.keys(alphaActionContract.inputs);
-export const contractOutputNames = Object.keys(alphaActionContract.outputs);
+export const contractInputNames = Object.keys(customerPreviewActionContract.inputs);
+export const contractOutputNames = Object.keys(customerPreviewActionContract.outputs);

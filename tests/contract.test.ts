@@ -4,7 +4,7 @@ import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
 
 import {
-  alphaActionContract,
+  customerPreviewActionContract,
   contractInputNames,
   contractOutputNames
 } from '../src/contracts.js';
@@ -17,12 +17,19 @@ const actionManifest = parse(
   name: string;
   inputs: Record<string, { required?: boolean; default?: string }>;
   outputs: Record<string, unknown>;
+  runs: { using: string; main: string };
+};
+const packageManifest = JSON.parse(
+  readFileSync(resolve(repoRoot, 'package.json'), 'utf8')
+) as {
+  main: string;
+  scripts: { build: string };
 };
 const readme = readFileSync(resolve(repoRoot, 'README.md'), 'utf8');
 
 describe('alpha action contract', () => {
   it('action.yml name matches contract name', () => {
-    expect(actionManifest.name).toBe(alphaActionContract.name);
+    expect(actionManifest.name).toBe(customerPreviewActionContract.name);
   });
 
   it('uses kebab-case input and output names', () => {
@@ -37,15 +44,27 @@ describe('alpha action contract', () => {
     expect(Object.keys(actionManifest.outputs)).toEqual(contractOutputNames);
   });
 
+  it('keeps package imports separate from the GitHub Actions runner bundle', () => {
+    expect(actionManifest.runs).toEqual({
+      using: 'node24',
+      main: 'dist/action.cjs'
+    });
+    expect(packageManifest.main).toBe('dist/index.cjs');
+    expect(packageManifest.scripts.build).toContain('src/index.ts --bundle');
+    expect(packageManifest.scripts.build).toContain('--outfile=dist/index.cjs');
+    expect(packageManifest.scripts.build).toContain('src/main.ts --bundle');
+    expect(packageManifest.scripts.build).toContain('--outfile=dist/action.cjs');
+  });
+
   it('keeps postman-stack hidden from README while exposing it in action.yml', () => {
-    expect(alphaActionContract.inputs['postman-stack'].default).toBe('prod');
-    expect(alphaActionContract.inputs['postman-stack'].allowedValues).toEqual(['prod', 'beta']);
+    expect(customerPreviewActionContract.inputs['postman-stack'].default).toBe('prod');
+    expect(customerPreviewActionContract.inputs['postman-stack'].allowedValues).toEqual(['prod', 'beta']);
     expect(actionManifest.inputs['postman-stack'].default).toBe('prod');
     expect(readme).not.toContain('`postman-stack`');
   });
 
   it('marks project-name, workspace-id, environment-id, postman-access-token as required', () => {
-    const requiredInputs = Object.entries(alphaActionContract.inputs)
+    const requiredInputs = Object.entries(customerPreviewActionContract.inputs)
       .filter(([, v]) => v.required)
       .map(([k]) => k);
     expect(requiredInputs).toEqual([
@@ -57,13 +76,13 @@ describe('alpha action contract', () => {
   });
 
   it('marks postman-api-key as optional', () => {
-    expect(alphaActionContract.inputs['postman-api-key'].required).toBe(false);
+    expect(customerPreviewActionContract.inputs['postman-api-key'].required).toBe(false);
     expect(actionManifest.inputs['postman-api-key'].required).toBe(false);
   });
 
   it('defaults poll-timeout-seconds to 120 and poll-interval-seconds to 10', () => {
-    expect(alphaActionContract.inputs['poll-timeout-seconds'].default).toBe('120');
-    expect(alphaActionContract.inputs['poll-interval-seconds'].default).toBe('10');
+    expect(customerPreviewActionContract.inputs['poll-timeout-seconds'].default).toBe('120');
+    expect(customerPreviewActionContract.inputs['poll-interval-seconds'].default).toBe('10');
     expect(actionManifest.inputs['poll-timeout-seconds'].default).toBe('120');
     expect(actionManifest.inputs['poll-interval-seconds'].default).toBe('10');
   });

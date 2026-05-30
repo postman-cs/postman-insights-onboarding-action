@@ -167,7 +167,7 @@ steps:
 | `system-environment-id` | No | | Postman system environment UUID for service-level Insights acknowledgment. Falls back to the value from the discovered service record. |
 | `cluster-name` | No | | Insights cluster name. When set, the action matches `{cluster-name}/{project-name}` exactly. When omitted, falls back to suffix matching. |
 | `repo-url` | No | Auto-detected from CI when available | Repository URL used for Git onboarding. |
-| `postman-access-token` | Yes | | Postman session token for Bifrost API calls. See [Obtaining postman-access-token](#obtaining-postman-access-token-open-alpha). |
+| `postman-access-token` | Yes | | Postman session token for Bifrost API calls. See [Obtaining postman-access-token](#obtaining-postman-access-token-customer-preview). |
 | `postman-team-id` | No | | Explicit Postman team ID for org-mode Bifrost requests. When omitted, the action leaves `x-entity-team-id` unset so Bifrost resolves team context from the access token. |
 | `github-token` | No | ambient `GITHUB_TOKEN` env when exported by the workflow | Optional GitHub token passed as `git_api_key` only when repository auth is required by the onboarding endpoint. |
 | `postman-api-key` | No | | Postman API key (`PMAK-*`) for the application binding call to the observability API. Auto-created from `postman-access-token` when omitted or invalid after a clear 401/403 validation failure. |
@@ -178,9 +178,9 @@ Supply `postman-team-id` only for org-mode tokens that require an explicit team 
 
 If `postman-api-key` is omitted or the `/me` validation call returns `401` or `403`, the action creates a new API key via the Bifrost identity service using the `postman-access-token`. Network failures and unexpected validation responses fail the action instead of silently rotating credentials.
 
-### Obtaining `postman-access-token` (Open Alpha)
+### Obtaining `postman-access-token` (Customer Preview)
 
-> **Open-alpha limitation:** The `postman-access-token` input requires a manually-extracted session token. There is currently no public API to exchange a Postman API key (PMAK) for an access token programmatically. This manual step will be eliminated before GA.
+> **Customer Preview limitation:** The `postman-access-token` input requires a manually-extracted session token. There is currently no public API to exchange a Postman API key (PMAK) for an access token programmatically. This manual step will be eliminated before GA.
 
 The `postman-access-token` is a Postman session token (`x-access-token`) required for the Bifrost API Catalog onboarding endpoints. Without it, this action cannot function.
 
@@ -259,8 +259,8 @@ npm run build
 
 `npm run build` produces `dist/index.cjs`, the bundled action entrypoint referenced by `action.yml`.
 
-## Open-Alpha Release Strategy
+## Customer Preview Release Strategy
 
-- Open-alpha channel tags use `v0.x.y`.
+- Customer Preview channel tags use `v0.x.y`.
 - Consumers can pin immutable tags such as `v0.1.0` for reproducibility.
-- Moving tag `v0` is used as the rolling open-alpha channel.
+- Moving tag `v0` is used as the rolling customer preview channel.
