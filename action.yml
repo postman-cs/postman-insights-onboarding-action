@@ -1,5 +1,5 @@
-name: 'postman-insights-onboarding-action'
-description: 'Link Postman Insights discovered services to API Catalog workspaces and git repos'
+name: 'Postman Insights Onboarding'
+description: 'Link Postman Insights discovered services to API Catalog workspaces and git repositories after deployment.'
 author: Postman
 branding:
   icon: link
