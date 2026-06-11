@@ -1,5 +1,10 @@
 # postman-insights-onboarding-action
 
+[![CI](https://github.com/postman-cs/postman-insights-onboarding-action/actions/workflows/ci.yml/badge.svg)](https://github.com/postman-cs/postman-insights-onboarding-action/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/postman-cs/postman-insights-onboarding-action?sort=semver)](https://github.com/postman-cs/postman-insights-onboarding-action/releases)
+[![npm](https://img.shields.io/npm/v/%40postman-cse%2Fonboarding-insights)](https://www.npmjs.com/package/@postman-cse/onboarding-insights)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 GitHub Action that links Postman Insights discovered services to API Catalog workspaces and git repositories. Designed for Kubernetes discovery-mode deployments where the Insights DaemonSet agent automatically finds running services.
 
 ## Scope

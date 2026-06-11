@@ -1,5 +1,9 @@
 name: 'postman-insights-onboarding-action'
 description: 'Link Postman Insights discovered services to API Catalog workspaces and git repos'
+author: Postman
+branding:
+  icon: link
+  color: orange
 inputs:
   project-name:
     description: 'Service name or spec ID to match against discovered service names'
