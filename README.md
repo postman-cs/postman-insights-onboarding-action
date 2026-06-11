@@ -1,33 +1,43 @@
-# postman-insights-onboarding-action
+# Postman Insights Onboarding
 
 [![CI](https://github.com/postman-cs/postman-insights-onboarding-action/actions/workflows/ci.yml/badge.svg)](https://github.com/postman-cs/postman-insights-onboarding-action/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/postman-cs/postman-insights-onboarding-action?sort=semver)](https://github.com/postman-cs/postman-insights-onboarding-action/releases)
 [![npm](https://img.shields.io/npm/v/%40postman-cse%2Fonboarding-insights)](https://www.npmjs.com/package/@postman-cse/onboarding-insights)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-GitHub Action that links Postman Insights discovered services to API Catalog workspaces and git repositories. Designed for Kubernetes discovery-mode deployments where the Insights DaemonSet agent automatically finds running services.
+Links Postman Insights discovered services to API Catalog workspaces and git repositories after deployment, so every service the Insights agent finds lands in your catalog with a collection, a repo link, and live telemetry.
 
-## Scope
+## Usage
 
-After the Postman Insights agent discovers a service on your cluster, this action:
+```yaml
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
 
-- Polls the API Catalog discovered-services list until the service appears (with configurable timeout).
-- Prepares an API Catalog collection for the discovered service in your workspace.
-- Links the service to a GitHub repository through the API Catalog git onboarding flow.
-- Acknowledges the service and workspace with the Insights backend (Akita).
-- Creates an application binding with the observability API (required for service graph edges).
-- Retrieves the team verification token for DaemonSet telemetry.
+      # ... deploy your service to Kubernetes ...
 
-This action does **not** deploy the Insights agent, create workspaces, or manage environments. Use [postman-bootstrap-action](https://github.com/postman-cs/postman-bootstrap-action) and [postman-repo-sync-action](https://github.com/postman-cs/postman-repo-sync-action) for those concerns.
+      - uses: postman-cs/postman-insights-onboarding-action@v1
+        with:
+          project-name: af-cards-activation
+          workspace-id: ${{ vars.POSTMAN_WORKSPACE_ID }}
+          environment-id: ${{ vars.POSTMAN_ENVIRONMENT_ID }}
+          postman-access-token: ${{ secrets.POSTMAN_ACCESS_TOKEN }}
+```
 
-## Prerequisites
+### Prerequisites
 
 - The Postman Insights DaemonSet agent must be running on your cluster in discovery mode.
 - The target service must be deployed and running (the agent discovers it from live traffic).
 - A Postman workspace and environment must already exist for the service.
-- A `postman-access-token` (session token) is required for Bifrost API access.
+- A `postman-access-token` (session token) is required for Bifrost API access. See [Credentials and Identity](docs/credentials.md).
 
-## Usage
+This action does **not** deploy the Insights agent, create workspaces, or manage environments. Use [postman-bootstrap-action](https://github.com/postman-cs/postman-bootstrap-action) and [postman-repo-sync-action](https://github.com/postman-cs/postman-repo-sync-action) for those concerns.
+
+## Examples
+
+### Standalone after a Kubernetes deploy
 
 ```yaml
 jobs:
@@ -50,7 +60,7 @@ jobs:
           poll-timeout-seconds: 180
 ```
 
-### With the full onboarding pipeline
+### Full onboarding pipeline
 
 ```yaml
 jobs:
@@ -93,179 +103,118 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-## CLI Usage (Non-GitHub CI)
+### Tuning discovery polling
 
-The CLI is available for GitLab CI, Bitbucket Pipelines, Azure DevOps, and other CI systems. GitHub Actions users should continue using the `action.yml` interface.
+The Insights agent takes time to discover services after pods start. The action polls the API Catalog discovered-services list until the service appears or the timeout is reached. For services that take longer to appear (cold cluster, large pod startup time), raise the timeout:
 
-Install globally:
-
-```bash
-npm install -g postman-insights-onboarding-action
+```yaml
+      - uses: postman-cs/postman-insights-onboarding-action@v1
+        with:
+          project-name: af-cards-activation
+          workspace-id: ${{ vars.POSTMAN_WORKSPACE_ID }}
+          environment-id: ${{ vars.POSTMAN_ENVIRONMENT_ID }}
+          postman-access-token: ${{ secrets.POSTMAN_ACCESS_TOKEN }}
+          poll-timeout-seconds: 300
+          poll-interval-seconds: 15
 ```
 
-Basic usage:
+`poll-timeout-seconds` is clamped to 10-600 and `poll-interval-seconds` to 2-60. If the service never appears within the timeout, the action sets `status` to `not-found` and emits a warning without failing the workflow.
+
+### Credential preflight modes
+
+Before any onboarding write, the action can verify that `postman-api-key` and `postman-access-token` resolve to the same parent organization. Set `credential-preflight` to `enforce` to fail fast on mismatched credentials, or `off` to skip the probes (the default `warn` logs and continues):
+
+```yaml
+      - uses: postman-cs/postman-insights-onboarding-action@v1
+        with:
+          project-name: af-cards-activation
+          workspace-id: ${{ vars.POSTMAN_WORKSPACE_ID }}
+          environment-id: ${{ vars.POSTMAN_ENVIRONMENT_ID }}
+          postman-access-token: ${{ secrets.POSTMAN_ACCESS_TOKEN }}
+          postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
+          credential-preflight: enforce
+```
+
+See [Credentials and Identity](docs/credentials.md) for the full policy, API key auto-creation behavior, and how to obtain the access token.
+
+### Non-GitHub CI via the CLI
+
+The same logic ships as a CLI (`postman-insights-onboard`) for GitLab CI, Bitbucket Pipelines, Azure DevOps, and other CI systems:
 
 ```bash
+npm install -g @postman-cse/onboarding-insights
 postman-insights-onboard \
   --project-name af-cards-activation \
   --workspace-id ws_123 \
   --environment-id env_123 \
   --postman-access-token "$POSTMAN_ACCESS_TOKEN" \
-  --postman-api-key "$POSTMAN_API_KEY" \
-  --cluster-name my-cluster \
-  --repo-url https://gitlab.com/acme/af-cards-activation \
-  --poll-timeout-seconds 180 \
-  --result-json /tmp/insights-result.json \
-  --dotenv-path /tmp/insights.env
+  --cluster-name my-cluster
 ```
 
-The CLI auto-detects the CI provider from environment variables and uses that to resolve the repo URL and owner. For non-GitHub repositories, API Catalog git onboarding is skipped because of a backend limitation, but the remaining Insights steps continue normally.
-
-Output is JSON to stdout. Use `--result-json` to write the same payload to a file, or `--dotenv-path` to write shell-sourceable `KEY=VALUE` pairs with the `POSTMAN_INSIGHTS_` prefix. All logs go to stderr, and stdout is reserved for JSON output.
-
-### GitLab CI
-
-```yaml
-onboarding:
-  image: node:24
-  script:
-    - npm install -g postman-insights-onboarding-action
-    - postman-insights-onboard --project-name af-cards-activation --workspace-id "$WORKSPACE_ID" --environment-id "$ENVIRONMENT_ID" --postman-access-token "$POSTMAN_ACCESS_TOKEN" --postman-api-key "$POSTMAN_API_KEY" --cluster-name "$CLUSTER_NAME" --repo-url "$CI_PROJECT_URL" --poll-timeout-seconds 180 --result-json insights-result.json --dotenv-path insights.env
-```
-
-### Bitbucket Pipelines
-
-```yaml
-image: node:24
-
-pipelines:
-  default:
-    - step:
-        script:
-          - npm install -g postman-insights-onboarding-action
-          - postman-insights-onboard --project-name af-cards-activation --workspace-id "$WORKSPACE_ID" --environment-id "$ENVIRONMENT_ID" --postman-access-token "$POSTMAN_ACCESS_TOKEN" --postman-api-key "$POSTMAN_API_KEY" --cluster-name "$CLUSTER_NAME" --repo-url "$BITBUCKET_GIT_HTTP_ORIGIN" --poll-timeout-seconds 180 --result-json insights-result.json --dotenv-path insights.env
-```
-
-### Azure DevOps
-
-```yaml
-pool:
-  vmImage: ubuntu-latest
-
-steps:
-  - task: NodeTool@0
-    inputs:
-      versionSpec: '24.x'
-  - script: |
-      npm install -g postman-insights-onboarding-action
-      postman-insights-onboard --project-name af-cards-activation --workspace-id "$(WORKSPACE_ID)" --environment-id "$(ENVIRONMENT_ID)" --postman-access-token "$(POSTMAN_ACCESS_TOKEN)" --postman-api-key "$(POSTMAN_API_KEY)" --cluster-name "$(CLUSTER_NAME)" --repo-url "$(BUILD_REPOSITORY_URI)" --poll-timeout-seconds 180 --result-json insights-result.json --dotenv-path insights.env
-    displayName: Run Postman Insights onboarding
-```
+See [CLI Usage](docs/cli.md) for provider auto-detection, output formats, and GitLab/Bitbucket/Azure pipeline examples.
 
 ## Inputs
 
-| Input | Required | Default | Notes |
+<!-- inputs-table:start -->
+| Name | Description | Required | Default |
 | --- | --- | --- | --- |
-| `project-name` | Yes | | Service name to match against discovered service names. Matches `{cluster-name}/{project-name}` in the API Catalog. |
-| `workspace-id` | Yes | | Postman workspace ID to link the discovered service to. |
-| `environment-id` | Yes | | Postman environment UID for the onboarding association. |
-| `system-environment-id` | No | | Postman system environment UUID for service-level Insights acknowledgment. Falls back to the value from the discovered service record. |
-| `cluster-name` | No | | Insights cluster name. When set, the action matches `{cluster-name}/{project-name}` exactly. When omitted, falls back to suffix matching. |
-| `repo-url` | No | Auto-detected from CI when available | Repository URL used for Git onboarding. |
-| `postman-access-token` | Yes | | Postman session token for Bifrost API calls. See [Obtaining postman-access-token](#obtaining-postman-access-token-customer-preview). |
-| `postman-team-id` | No | | Explicit Postman team ID for org-mode Bifrost requests. When omitted, the action leaves `x-entity-team-id` unset so Bifrost resolves team context from the access token. |
-| `github-token` | No | ambient `GITHUB_TOKEN` env when exported by the workflow | Optional GitHub token passed as `git_api_key` only when repository auth is required by the onboarding endpoint. |
-| `postman-api-key` | No | | Postman API key (`PMAK-*`) for the application binding call to the observability API. Auto-created from `postman-access-token` when omitted or invalid after a clear 401/403 validation failure. |
-| `poll-timeout-seconds` | No | `120` | Maximum seconds to wait for the service to appear in the discovered list. Clamped to 10--600. |
-| `poll-interval-seconds` | No | `10` | Seconds between polling attempts. Clamped to 2--60. |
+| `project-name` | Service name or spec ID to match against discovered service names | Yes |  |
+| `workspace-id` | Postman workspace ID to link the discovered service to | Yes |  |
+| `environment-id` | Postman environment UID for the onboarding association | Yes |  |
+| `system-environment-id` | Postman system environment UUID for service-level Insights acknowledgment | No |  |
+| `cluster-name` | Insights cluster name. Matches {cluster}/{project-name} in discovered services | No |  |
+| `repo-url` | Repository URL for Git onboarding. Auto-detected from CI context when omitted. | No |  |
+| `postman-access-token` | Postman access token for Bifrost API calls | Yes |  |
+| `postman-team-id` | Explicit Postman team ID for org-mode Bifrost request headers. When omitted, x-entity-team-id is not sent. | No |  |
+| `github-token` | Optional GitHub token passed as git_api_key when repository auth is required by onboarding/git | No |  |
+| `postman-api-key` | Postman API key (PMAK-*) for the application binding call. Auto-created from postman-access-token when omitted or invalid after a clear 401/403 validation failure. | No |  |
+| `credential-preflight` | Credential identity preflight policy. warn (default) logs a note and continues when postman-api-key and postman-access-token resolve to different parent orgs; enforce fails the run on that condition before any onboarding write; off skips the identity probes entirely (the reactive error guidance still applies). A rejected or auto-created postman-api-key is never failed on. | No | `warn` |
+| `poll-timeout-seconds` | Maximum seconds to wait for the service to appear in the discovered list | No | `120` |
+| `poll-interval-seconds` | Seconds between discovery polling attempts | No | `10` |
+<!-- inputs-table:end -->
 
-Supply `postman-team-id` only for org-mode tokens that require an explicit team header. For non-org tokens, leave it unset so Bifrost can infer team context from the access token.
-
-If `postman-api-key` is omitted or the `/me` validation call returns `401` or `403`, the action creates a new API key via the Bifrost identity service using the `postman-access-token`. Network failures and unexpected validation responses fail the action instead of silently rotating credentials.
-
-### Obtaining `postman-access-token` (Customer Preview)
-
-> **Customer Preview limitation:** The `postman-access-token` input requires a manually-extracted session token. There is currently no public API to exchange a Postman API key (PMAK) for an access token programmatically. This manual step will be eliminated before GA.
-
-The `postman-access-token` is a Postman session token (`x-access-token`) required for the Bifrost API Catalog onboarding endpoints. Without it, this action cannot function.
-
-**To obtain and configure the token:**
-
-1. **Log in via the Postman CLI** (requires a browser):
-   ```bash
-   postman login
-   ```
-
-2. **Extract the access token:**
-   ```bash
-   cat ~/.postman/postmanrc | jq -r '.login._profiles[].accessToken'
-   ```
-
-3. **Set it as a GitHub secret:**
-   ```bash
-   gh secret set POSTMAN_ACCESS_TOKEN --repo <owner>/<repo>
-   ```
-
-> **Important:** This token is session-scoped and will expire. When it does, the action will fail. You will need to repeat the login and secret update process.
+Supply `postman-team-id` only for org-mode tokens that require an explicit team header. For non-org tokens, leave it unset so Bifrost can infer team context from the access token. Credential details, the preflight policy, and API key auto-creation are documented in [Credentials and Identity](docs/credentials.md).
 
 ## Outputs
 
-| Output | Notes |
-| --- | --- |
-| `discovered-service-id` | Numeric ID from the API Catalog discovered-services list. |
-| `discovered-service-name` | Full `cluster/service` name of the discovered service. |
-| `collection-id` | Collection ID returned by the prepare-collection step. |
-| `application-id` | Insights application binding ID from the observability API. |
-| `verification-token` | Insights team verification token (`tvt_*`) for DaemonSet telemetry. |
-| `status` | Result: `success`, `not-found`, or `error`. Failures set `status=error` before the action exits. |
+<!-- outputs-table:start -->
+| Name | Description | Required | Default |
+| --- | --- | --- | --- |
+| `discovered-service-id` | Numeric ID from the API Catalog discovered-services list |  |  |
+| `discovered-service-name` | Full cluster/service name of the discovered service |  |  |
+| `collection-id` | Collection ID returned by the prepare-collection step |  |  |
+| `application-id` | Insights application binding ID from the observability API |  |  |
+| `verification-token` | Insights team verification token (tvt_*) for DaemonSet telemetry |  |  |
+| `status` | Onboarding result: success, not-found, or error |  |  |
+<!-- outputs-table:end -->
 
-## Discovery polling
-
-The Insights agent takes time to discover services after pods start. This action polls the API Catalog discovered-services list at the configured interval until the service appears or the timeout is reached.
-
-- Default timeout: 120 seconds (configurable via `poll-timeout-seconds`, clamped to 10--600).
-- Default interval: 10 seconds (configurable via `poll-interval-seconds`, clamped to 2--60).
-- If the service is not found after the timeout, the action sets `status` to `not-found` and emits a warning (does not fail the workflow).
-
-For services that take longer to appear (cold cluster, large pod startup time), increase `poll-timeout-seconds` to 300 or more.
+Failures set `status=error` before the action exits.
 
 ## How it works
 
-The action calls the following API endpoints in order:
+**Discovery poll.** The action polls the API Catalog discovered-services list (`GET /api/v1/onboarding/discovered-services?status=discovered` on Bifrost api-catalog) at the configured interval until a service matching `{cluster-name}/{project-name}` appears (suffix matching when `cluster-name` is omitted) or the timeout is reached.
 
-1. **List discovered services** -- `GET /api/v1/onboarding/discovered-services?status=discovered` (Bifrost api-catalog) to find the numeric service ID by matching the service name.
-2. **Prepare collection** -- `POST /api/v1/onboarding/prepare-collection` (Bifrost api-catalog) to create the API Catalog collection entry.
-3. **Onboard git** -- `POST /api/v1/onboarding/git` (Bifrost api-catalog) with `via_integrations: false` to link the service to the GitHub repository.
-4. **Resolve provider service ID** -- `GET /v2/api-catalog/services?status=discovered&...` (Bifrost akita) to find the `svc_*` Akita service ID.
-5. **Service-level acknowledge** -- `POST /v2/api-catalog/services/onboard` (Bifrost akita) to mark the service as managed.
-6. **Application binding** -- `POST /v2/agent/api-catalog/workspaces/{id}/applications` (direct to `api.observability.postman.com`, NOT Bifrost) to bind the workspace to the Insights application. Required for service graph edge generation.
-7. **Workspace acknowledge** -- `POST /v2/workspaces/{id}/onboarding/acknowledge` (Bifrost akita) to activate the Insights project.
-8. **Team verification token** -- `GET /v2/workspaces/{id}/team-verification-token` (Bifrost akita) to retrieve the DaemonSet telemetry token.
+**Catalog prep.** It then calls `POST /api/v1/onboarding/prepare-collection` to create the API Catalog collection entry for the discovered service in your workspace.
 
-## Contract smoke monitoring
+**Git link.** `POST /api/v1/onboarding/git` with `via_integrations: false` links the service to the GitHub repository (`repo-url` input, auto-detected from CI context when omitted; `github-token` is passed as `git_api_key` only when the endpoint requires repository auth).
 
-This repo includes `.github/workflows/contract-smoke.yml`, a scheduled live contract check for the upstream APIs used by Insights onboarding.
+**Acknowledgment.** The action resolves the `svc_*` Akita service ID, marks the service as managed (`POST /v2/api-catalog/services/onboard`), and acknowledges the workspace (`POST /v2/workspaces/{id}/onboarding/acknowledge`) to activate the Insights project.
 
-Configure these repository secrets before enabling the workflow:
+**Binding.** Finally it creates an application binding with the observability API (`POST /v2/agent/api-catalog/workspaces/{id}/applications`, sent directly to `api.observability.postman.com` rather than through Bifrost), which is required for service graph edge generation, and retrieves the team verification token (`tvt_*`) for DaemonSet telemetry.
 
-- `SMOKE_ORG_API_KEY`
-- `SMOKE_ORG_ACCESS_TOKEN`
+For local builds, contract smoke monitoring, and release channels, see [Development and Operations](docs/development.md).
 
-The smoke workflow verifies `/me`, `/teams`, `iapub.postman.co/api/sessions/current`, and Bifrost API key creation so auth or payload drift shows up in CI before it hits production onboarding runs.
+## Resources
 
-## Local development
+- [postman-resolve-service-token-action](https://github.com/postman-cs/postman-resolve-service-token-action): mints a service-account access token and team ID.
+- [postman-api-onboarding-action](https://github.com/postman-cs/postman-api-onboarding-action): composite action that orchestrates the onboarding pipeline.
+- [postman-bootstrap-action](https://github.com/postman-cs/postman-bootstrap-action): workspace provisioning, spec upload, and collection generation.
+- [postman-smoke-flow-action](https://github.com/postman-cs/postman-smoke-flow-action): applies a curated flow.yaml to the canonical Smoke collection.
+- [postman-repo-sync-action](https://github.com/postman-cs/postman-repo-sync-action): artifact sync, environments, mocks, monitors, and CI templates.
+- [postman-aws-spec-discovery-action](https://github.com/postman-cs/postman-aws-spec-discovery-action): discovers API specs from AWS.
+- npm package: [@postman-cse/onboarding-insights](https://www.npmjs.com/package/@postman-cse/onboarding-insights)
+- [Postman Insights documentation](https://learning.postman.com/docs/insights/insights-overview/)
 
-```bash
-npm install
-npm test
-npm run typecheck
-npm run build
-```
+## License
 
-`npm run build` produces `dist/index.cjs`, the bundled action entrypoint referenced by `action.yml`.
-
-## Customer Preview Release Strategy
-
-- Customer Preview channel tags use `v1.x.y`.
-- Consumers can pin immutable tags such as `v1.0.0` for reproducibility.
-- Moving tag `v1` is used as the rolling customer preview channel.
+[MIT](LICENSE)
