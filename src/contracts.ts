@@ -17,8 +17,8 @@ export interface CustomerPreviewActionContract {
 }
 
 export const customerPreviewActionContract: CustomerPreviewActionContract = {
-  name: 'Postman Insights Onboarding',
-  description: 'Link Postman Insights discovered services to API Catalog workspaces and git repositories after deployment.',
+  name: 'Postman Onboarding: Insights Linking',
+  description: 'Link Postman Insights discovered services to workspaces and git repos. Part of the Postman API Onboarding suite.',
   inputs: {
     'project-name': {
       description: 'Service name or spec ID to match against discovered service names.',
