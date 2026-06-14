@@ -11,7 +11,8 @@ import {
 } from './index.js';
 import { BifrostCatalogClient } from './lib/bifrost-client.js';
 import { sleep } from './lib/retry.js';
-import { createTelemetryContext } from './lib/telemetry.js';
+import { getMemoizedSessionIdentity } from './lib/credential-identity.js';
+import { createTelemetryContext } from '@postman-cse/automation-telemetry-core';
 
 interface CliConfig {
   inputEnv: NodeJS.ProcessEnv;
@@ -198,9 +199,11 @@ export async function runCli(
       reporter
     );
   } catch (error) {
+    telemetry.setAccountType(getMemoizedSessionIdentity()?.consumerType);
     telemetry.emitCompletion('failure');
     throw error;
   }
+  telemetry.setAccountType(getMemoizedSessionIdentity()?.consumerType);
   telemetry.emitCompletion(
     result.status === 'error' || result.status === 'not-found' ? 'failure' : 'success'
   );

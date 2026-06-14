@@ -35,6 +35,7 @@
   },
   "dependencies": {
     "@actions/core": "^3.0.1",
+    "@postman-cse/automation-telemetry-core": "^0.1.0",
     "undici": "^6.24.0"
   },
   "overrides": {

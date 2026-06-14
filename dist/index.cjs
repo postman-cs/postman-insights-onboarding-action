@@ -21813,11 +21813,7 @@ function findDiscoveredService(services, projectName, clusterName) {
   return services.find((s) => s.name.endsWith(`/${projectName}`));
 }
 
-// src/lib/telemetry.ts
-var import_node_crypto = require("node:crypto");
-var import_undici2 = __toESM(require_undici(), 1);
-
-// src/lib/ci-context.ts
+// node_modules/@postman-cse/automation-telemetry-core/dist/ci-context.js
 function norm(value) {
   const trimmed = (value ?? "").trim();
   return trimmed.length > 0 ? trimmed : void 0;
@@ -21910,7 +21906,7 @@ function detectCiContext(env = process.env) {
   return { ciProvider: "unknown", runnerKind: "unknown" };
 }
 
-// src/lib/repo/context.ts
+// node_modules/@postman-cse/automation-telemetry-core/dist/repo-context.js
 function normalize(value) {
   const trimmed = (value ?? "").trim();
   return trimmed.length > 0 ? trimmed : void 0;
@@ -21975,15 +21971,20 @@ function detectRepoContext(input, env = process.env) {
   };
 }
 
-// src/lib/telemetry.ts
-var SCHEMA_VERSION = 1;
+// node_modules/@postman-cse/automation-telemetry-core/dist/telemetry.js
+var import_node_crypto = require("node:crypto");
+var import_undici2 = __toESM(require_undici(), 1);
+var SCHEMA_VERSION = 2;
 var DEFAULT_TIMEOUT_MS = 1500;
 var DEFAULT_ENDPOINT = "https://events.pm-cse.dev/v1/events";
 var proxyDispatcher;
 function getProxyDispatcher() {
   return proxyDispatcher ??= new import_undici2.EnvHttpProxyAgent();
 }
-function actionVersion() {
+function resolveActionVersion(explicit) {
+  if (explicit) {
+    return explicit;
+  }
   return "1.0.3" ? "1.0.3" : "unknown";
 }
 function telemetryDisabled(env) {
@@ -22000,30 +22001,41 @@ function telemetryDisabled(env) {
 function sha256(value) {
   return (0, import_node_crypto.createHash)("sha256").update(value).digest("hex");
 }
+function accountTypeFromConsumer(consumerType) {
+  const t = (consumerType ?? "").trim().toLowerCase();
+  if (!t) {
+    return "unknown";
+  }
+  return t === "service_account" ? "service" : "user";
+}
 var noticeShown = false;
 function maybeNotice(logger) {
   if (noticeShown || !logger) {
     return;
   }
   noticeShown = true;
-  logger.info(
-    "note: postman-actions sends anonymous usage data (team id, action, CI provider). Disable with POSTMAN_ACTIONS_TELEMETRY=off or DO_NOT_TRACK=1."
-  );
+  logger.info("note: postman-actions sends anonymous usage data (team id, action, CI provider, account type). Disable with POSTMAN_ACTIONS_TELEMETRY=off or DO_NOT_TRACK=1.");
 }
-function buildTelemetryEvent(action, teamId, outcome, env, now) {
+function buildTelemetryEvent(params) {
+  const { action, actionVersion, teamId, accountType, outcome, env, now } = params;
   const ci = detectCiContext(env);
   const repo = detectRepoContext({}, env);
-  const repoSource = repo.repoSlug ?? repo.repoUrl;
+  const repoSlug = repo.repoSlug;
+  const repoSource = repoSlug ?? repo.repoUrl;
+  const owner = repoSlug && repoSlug.includes("/") ? repoSlug.split("/")[0] : void 0;
   return {
     schema_version: SCHEMA_VERSION,
     event: "completion",
     action,
-    action_version: actionVersion(),
+    action_version: actionVersion || "unknown",
     team_id: teamId,
     ci_provider: ci.ciProvider,
+    git_provider: repo.provider,
     run_id: ci.runId,
     runner_kind: ci.runnerKind,
     repo_id: repoSource ? sha256(repoSource) : void 0,
+    org_id: owner ? sha256(owner) : void 0,
+    account_type: accountType,
     outcome,
     ts: now()
   };
@@ -22052,13 +22064,18 @@ async function send(event, options) {
 function createTelemetryContext(options) {
   const env = options.env ?? process.env;
   const now = options.now ?? Date.now;
+  const actionVersion = resolveActionVersion(options.actionVersion);
   let teamId = "";
+  let accountType = "unknown";
   let emitted = false;
   return {
     setTeamId(value) {
       if (value) {
         teamId = String(value);
       }
+    },
+    setAccountType(consumerType) {
+      accountType = accountTypeFromConsumer(consumerType);
     },
     emitCompletion(outcome) {
       if (emitted) {
@@ -22069,7 +22086,15 @@ function createTelemetryContext(options) {
         if (telemetryDisabled(env) || !teamId) {
           return;
         }
-        const event = buildTelemetryEvent(options.action, teamId, outcome, env, now);
+        const event = buildTelemetryEvent({
+          action: options.action,
+          actionVersion,
+          teamId,
+          accountType,
+          outcome,
+          env,
+          now
+        });
         maybeNotice(options.logger);
         void send(event, options).catch(() => {
         });
@@ -22395,6 +22420,7 @@ async function runAction() {
     const message = error2 instanceof Error ? error2.message : String(error2);
     setOutput("status", "error");
     setFailed(`Insights onboarding failed: ${message}`);
+    telemetry.setAccountType(getMemoizedSessionIdentity()?.consumerType);
     telemetry.emitCompletion("failure");
     return;
   }
@@ -22404,6 +22430,7 @@ async function runAction() {
   setOutput("application-id", result.applicationId);
   setOutput("verification-token", result.verificationToken || "");
   setOutput("status", result.status);
+  telemetry.setAccountType(getMemoizedSessionIdentity()?.consumerType);
   if (result.status === "not-found") {
     warning("Insights onboarding skipped: service not found in discovered list");
     telemetry.emitCompletion("failure");

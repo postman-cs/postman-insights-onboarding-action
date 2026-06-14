@@ -1,6 +1,7 @@
 import * as core from '@actions/core';
 import { BifrostCatalogClient, findDiscoveredService } from './lib/bifrost-client.js';
 import {
+  getMemoizedSessionIdentity,
   runCredentialPreflight,
   type CredentialIdentity,
   type PreflightMode
@@ -14,7 +15,7 @@ import {
 } from './lib/postman/base-urls.js';
 import { sleep } from './lib/retry.js';
 import { createSecretMasker } from './lib/secrets.js';
-import { createTelemetryContext } from './lib/telemetry.js';
+import { createTelemetryContext } from '@postman-cse/automation-telemetry-core';
 
 const POLL_TIMEOUT_MIN = 10;
 const POLL_TIMEOUT_MAX = 600;
@@ -466,6 +467,7 @@ export async function runAction(): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
     core.setOutput('status', 'error');
     core.setFailed(`Insights onboarding failed: ${message}`);
+    telemetry.setAccountType(getMemoizedSessionIdentity()?.consumerType);
     telemetry.emitCompletion('failure');
     return;
   }
@@ -477,6 +479,7 @@ export async function runAction(): Promise<void> {
   core.setOutput('verification-token', result.verificationToken || '');
   core.setOutput('status', result.status);
 
+  telemetry.setAccountType(getMemoizedSessionIdentity()?.consumerType);
   if (result.status === 'not-found') {
     core.warning('Insights onboarding skipped: service not found in discovered list');
     telemetry.emitCompletion('failure');

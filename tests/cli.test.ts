@@ -12,12 +12,14 @@ import { __resetIdentityMemo } from '../src/lib/credential-identity.js';
 // failure). index.ts runAction shares the identical try placement.
 const telemetrySpies = vi.hoisted(() => ({
   emitCompletion: vi.fn(),
-  setTeamId: vi.fn()
+  setTeamId: vi.fn(),
+  setAccountType: vi.fn()
 }));
 
-vi.mock('../src/lib/telemetry.js', () => ({
+vi.mock('@postman-cse/automation-telemetry-core', () => ({
   createTelemetryContext: vi.fn(() => ({
     setTeamId: telemetrySpies.setTeamId,
+    setAccountType: telemetrySpies.setAccountType,
     emitCompletion: telemetrySpies.emitCompletion
   }))
 }));
@@ -84,6 +86,7 @@ describe('runCli credential preflight', () => {
     __resetIdentityMemo();
     telemetrySpies.emitCompletion.mockClear();
     telemetrySpies.setTeamId.mockClear();
+    telemetrySpies.setAccountType.mockClear();
   });
 
   afterEach(() => {
