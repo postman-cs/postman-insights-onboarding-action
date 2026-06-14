@@ -1,15 +1,16 @@
+import { realpathSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
   resolveApiKeyAndTeamId,
   resolveInputs,
+  runCredentialPreflightForInputs,
   runOnboarding,
   type Reporter
 } from './index.js';
 import { BifrostCatalogClient } from './lib/bifrost-client.js';
 import { sleep } from './lib/retry.js';
-import { createSecretMasker } from './lib/secrets.js';
 
 interface CliConfig {
   inputEnv: NodeJS.ProcessEnv;
@@ -77,10 +78,12 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     'repo-url',
     'postman-access-token',
     'postman-api-key',
+    'credential-preflight',
     'postman-team-id',
     'github-token',
     'poll-timeout-seconds',
-    'poll-interval-seconds'
+    'poll-interval-seconds',
+    'postman-stack'
   ];
 
   const inputEnv: NodeJS.ProcessEnv = { ...env };
@@ -150,33 +153,33 @@ export async function runCli(
     reporter.setSecret(inputs.githubToken);
   }
 
-  const preliminaryMaskSecret = createSecretMasker([
-    inputs.postmanAccessToken,
-    inputs.postmanApiKey,
-    inputs.githubToken
-  ]);
   const preliminaryClient = new BifrostCatalogClient({
     accessToken: inputs.postmanAccessToken,
     teamId: inputs.postmanTeamId,
     apiKey: inputs.postmanApiKey,
-    maskSecret: preliminaryMaskSecret
+    bifrostBaseUrl: inputs.postmanBifrostBase,
+    observabilityBaseUrl: inputs.postmanObservabilityBase,
+    observabilityEnv: inputs.postmanObservabilityEnv
   });
 
-  const { apiKey, teamId } = await resolveApiKeyAndTeamId(inputs, preliminaryClient, reporter);
+  const { apiKey, teamId, pmakIdentity } = await resolveApiKeyAndTeamId(
+    inputs,
+    preliminaryClient,
+    reporter
+  );
   if (apiKey) {
     reporter.setSecret(apiKey);
   }
 
-  const maskSecret = createSecretMasker([
-    inputs.postmanAccessToken,
-    inputs.githubToken,
-    apiKey
-  ]);
+  await runCredentialPreflightForInputs(inputs, pmakIdentity, reporter);
+
   const client = new BifrostCatalogClient({
     accessToken: inputs.postmanAccessToken,
     teamId,
     apiKey,
-    maskSecret
+    bifrostBaseUrl: inputs.postmanBifrostBase,
+    observabilityBaseUrl: inputs.postmanObservabilityBase,
+    observabilityEnv: inputs.postmanObservabilityEnv
   });
 
   const result = await (runtime.executeOnboarding ?? runOnboarding)(
@@ -198,7 +201,18 @@ export async function runCli(
 const currentModulePath = typeof __filename === 'string' ? __filename : '';
 const entrypoint = process.argv[1];
 
-if (entrypoint && currentModulePath === entrypoint) {
+function isEntrypoint(currentPath: string, entrypointPath: string | undefined): boolean {
+  if (!currentPath || !entrypointPath) {
+    return false;
+  }
+  try {
+    return realpathSync(currentPath) === realpathSync(entrypointPath);
+  } catch {
+    return path.resolve(currentPath) === path.resolve(entrypointPath);
+  }
+}
+
+if (isEntrypoint(currentModulePath, entrypoint)) {
   runCli().catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`${message}\n`);

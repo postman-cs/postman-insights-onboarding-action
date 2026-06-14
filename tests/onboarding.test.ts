@@ -1,5 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import {
+  parsePreflightMode,
+  runCredentialPreflightForInputs,
   runOnboarding,
   resolveApiKeyAndTeamId,
   resolveInputs,
@@ -7,6 +9,7 @@ import {
   type ActionInputs,
 } from '../src/index.js';
 import { BifrostCatalogClient, type DiscoveredService } from '../src/lib/bifrost-client.js';
+import { __resetIdentityMemo } from '../src/lib/credential-identity.js';
 
 function makeInputs(overrides: Partial<ActionInputs> = {}): ActionInputs {
   return {
@@ -20,8 +23,15 @@ function makeInputs(overrides: Partial<ActionInputs> = {}): ActionInputs {
     postmanApiKey: 'PMAK-test',
     postmanTeamId: '14103640',
     githubToken: 'ghp_test',
+    credentialPreflight: 'warn',
     pollTimeoutSeconds: 5,
     pollIntervalSeconds: 1,
+    postmanStack: 'prod',
+    postmanApiBase: 'https://api.getpostman.com',
+    postmanBifrostBase: 'https://bifrost-premium-https-v4.gw.postman.com',
+    postmanIapubBase: 'https://iapub.postman.co',
+    postmanObservabilityBase: 'https://api.observability.postman.com',
+    postmanObservabilityEnv: 'production',
     ...overrides,
   };
 }
@@ -237,6 +247,29 @@ describe('validateApiKey', () => {
     expect(result.teamId).toBe('12345');
   });
 
+  it('defaults to prod /me when no base URL is provided', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ user: { teamId: 12345 } }),
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await validateApiKey('PMAK-good');
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.getpostman.com/me');
+  });
+
+  it('routes /me through a custom api base URL when provided', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ user: { teamId: 12345 } }),
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    // Trailing slash should be normalized away so the path joins cleanly.
+    await validateApiKey('PMAK-good', 'https://api.getpostman-beta.com/');
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.getpostman-beta.com/me');
+  });
+
   it('returns valid=false for a 401 key', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
@@ -406,7 +439,7 @@ describe('resolveApiKeyAndTeamId org-mode auto-detection', () => {
     globalThis.fetch = vi.fn().mockImplementation(async () => {
       callCount++;
       if (callCount === 1) {
-        // getTeams response
+        // getTeams response - realistic IDs: sub-team IDs distinct from org ID
         return {
           ok: true,
           json: async () => ({
@@ -417,10 +450,10 @@ describe('resolveApiKeyAndTeamId org-mode auto-detection', () => {
           }),
         };
       } else {
-        // validateApiKey response
+        // validateApiKey response - /me returns a sub-team ID, not org ID
         return {
           ok: true,
-          json: async () => ({ user: { teamId: 999 } }),
+          json: async () => ({ user: { teamId: 10 } }),
         };
       }
     }) as unknown as typeof fetch;
@@ -430,54 +463,34 @@ describe('resolveApiKeyAndTeamId org-mode auto-detection', () => {
       makeInputs({ postmanApiKey: '', postmanTeamId: '' }),
       client,
     );
-    expect(result.teamId).toBe('999');
+    expect(result.teamId).toBe('10');
   });
 
-  it('does not auto-detect org-mode when only one team exists', async () => {
-    let callCount = 0;
+  it('auto-detects org-mode and auto-picks team when only one sub-team exists', async () => {
     globalThis.fetch = vi.fn().mockImplementation(async () => {
-      callCount++;
-      if (callCount === 1) {
-        return {
-          ok: true,
-          json: async () => ({
-            data: [{ id: 10, name: 'Only Team', organizationId: 999 }]
-          }),
-        };
-      } else {
-        return {
-          ok: true,
-          json: async () => ({ user: { teamId: 999 } }),
-        };
-      }
-    }) as unknown as typeof fetch;
-
-    const client = makeClient();
-    const result = await resolveApiKeyAndTeamId(
-      makeInputs({ postmanApiKey: '', postmanTeamId: '' }),
-      client,
-    );
-    expect(result.teamId).toBe('');
-  });
-
-  it('does not auto-detect org-mode when team IDs do not match org', async () => {
-    globalThis.fetch = vi.fn().mockImplementation(async () => {
+      // getTeams response - single sub-team with org ID
       return {
         ok: true,
         json: async () => ({
-          data: [
-            { id: 10, name: 'SubTeam A', organizationId: 999 },
-            { id: 11, name: 'SubTeam B', organizationId: 999 }
-          ]
+          data: [{ id: 10, name: 'Only Team', organizationId: 999 }]
         }),
       };
     }) as unknown as typeof fetch;
 
-    // Override second call to validateApiKey to return different teamId
+    const client = makeClient();
+    const result = await resolveApiKeyAndTeamId(
+      makeInputs({ postmanApiKey: '', postmanTeamId: '' }),
+      client,
+    );
+    expect(result.teamId).toBe('10');
+  });
+
+  it('does not auto-pick team when /me teamId does not match any sub-team', async () => {
     let callCount = 0;
     globalThis.fetch = vi.fn().mockImplementation(async () => {
       callCount++;
       if (callCount === 1) {
+        // getTeams response - two sub-teams with org ID
         return {
           ok: true,
           json: async () => ({
@@ -488,9 +501,10 @@ describe('resolveApiKeyAndTeamId org-mode auto-detection', () => {
           }),
         };
       } else {
+        // validateApiKey response - /me returns a team ID not in the sub-teams list
         return {
           ok: true,
-          json: async () => ({ user: { teamId: 888 } }), // different from org 999
+          json: async () => ({ user: { teamId: 888 } }),
         };
       }
     }) as unknown as typeof fetch;
@@ -501,5 +515,144 @@ describe('resolveApiKeyAndTeamId org-mode auto-detection', () => {
       client,
     );
     expect(result.teamId).toBe('');
+  });
+});
+
+describe('credential preflight seam', () => {
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    __resetIdentityMemo();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  function createReporter() {
+    const infos: string[] = [];
+    const warnings: string[] = [];
+    return {
+      infos,
+      warnings,
+      reporter: {
+        info: (message: string) => {
+          infos.push(message);
+        },
+        warning: (message: string) => {
+          warnings.push(message);
+        },
+        setSecret: () => {},
+      },
+    };
+  }
+
+  function sessionResponse(team: number) {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        identity: { team, domain: 'session-domain' },
+        data: { user: { id: 2, roles: ['admin'] } },
+        consumerType: 'service_account',
+      }),
+    };
+  }
+
+  it('resolveApiKeyAndTeamId surfaces the validated /me identity for preflight reuse', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ user: { teamId: 13347347 } }),
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await resolveApiKeyAndTeamId(makeInputs({ postmanTeamId: '55555' }), makeClient());
+    expect(result.pmakIdentity).toEqual({ source: 'pmak/me', teamId: '13347347' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejected PMAK yields no pmak identity and the preflight never FAILs, even under enforce', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 401 }) as unknown as typeof fetch;
+    const resolved = await resolveApiKeyAndTeamId(makeInputs({ postmanTeamId: '55555' }), makeClient());
+    expect(resolved.apiKey).toBe('PMAK-generated');
+    expect(resolved.pmakIdentity).toBeUndefined();
+
+    const { infos, warnings, reporter } = createReporter();
+    const preflightFetch = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/me')) {
+        throw new Error('preflight must not probe /me');
+      }
+      return sessionResponse(13347347);
+    });
+
+    await expect(
+      runCredentialPreflightForInputs(
+        makeInputs({ credentialPreflight: 'enforce', postmanAccessToken: 'seam-token-rejected' }),
+        resolved.pmakIdentity,
+        reporter,
+        preflightFetch as unknown as typeof fetch
+      )
+    ).resolves.toBeUndefined();
+    expect(warnings.some((entry) => entry.includes('cross-check skipped'))).toBe(true);
+    expect(infos.some((entry) => entry.includes('access-token session identity'))).toBe(true);
+  });
+
+  it('reuses the pre-resolved pmak identity without a /me probe and FAILs under enforce on cross-org credentials', async () => {
+    const { reporter } = createReporter();
+    const preflightFetch = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/me')) {
+        throw new Error('preflight must not probe /me');
+      }
+      return sessionResponse(13347347);
+    });
+
+    await expect(
+      runCredentialPreflightForInputs(
+        makeInputs({ credentialPreflight: 'enforce', postmanAccessToken: 'seam-token-enforce' }),
+        { source: 'pmak/me', teamId: '10490519' },
+        reporter,
+        preflightFetch as unknown as typeof fetch
+      )
+    ).rejects.toThrow(/credential preflight FAILED/);
+    const meCalls = preflightFetch.mock.calls.filter((call) => String(call[0]).endsWith('/me'));
+    expect(meCalls).toHaveLength(0);
+  });
+
+  it('logs preflight OK when both identities resolve the same parent org', async () => {
+    const { infos, reporter } = createReporter();
+    const preflightFetch = vi.fn(async () => sessionResponse(13347347));
+
+    await runCredentialPreflightForInputs(
+      makeInputs({ credentialPreflight: 'enforce', postmanAccessToken: 'seam-token-ok' }),
+      { source: 'pmak/me', teamId: '13347347' },
+      reporter,
+      preflightFetch as unknown as typeof fetch
+    );
+    expect(infos.some((entry) => entry.includes('PMAK identity'))).toBe(true);
+    expect(infos.some((entry) => entry.includes('credential preflight OK'))).toBe(true);
+  });
+
+  it('mode off skips the identity probes entirely', async () => {
+    const { infos, warnings, reporter } = createReporter();
+    const preflightFetch = vi.fn();
+
+    await runCredentialPreflightForInputs(
+      makeInputs({ credentialPreflight: 'off', postmanAccessToken: 'seam-token-off' }),
+      { source: 'pmak/me', teamId: '13347347' },
+      reporter,
+      preflightFetch as unknown as typeof fetch
+    );
+    expect(preflightFetch).not.toHaveBeenCalled();
+    expect(infos).toHaveLength(0);
+    expect(warnings).toHaveLength(0);
+  });
+
+  it('parsePreflightMode defaults to warn, normalizes case, and rejects unknown values', () => {
+    expect(parsePreflightMode(undefined)).toBe('warn');
+    expect(parsePreflightMode('')).toBe('warn');
+    expect(parsePreflightMode(' ENFORCE ')).toBe('enforce');
+    expect(parsePreflightMode('off')).toBe('off');
+    expect(() => parsePreflightMode('strict')).toThrow(/Unsupported credential-preflight/);
   });
 });

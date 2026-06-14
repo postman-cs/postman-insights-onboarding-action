@@ -1,8 +1,16 @@
+import { getMemoizedSessionIdentity } from './credential-identity.js';
+import { adviseFromBifrostBody, adviseFromHttpError, type ErrorAdviceContext } from './error-advice.js';
 import { HttpError } from './http-error.js';
 import { retry } from './retry.js';
-import type { SecretMasker } from './secrets.js';
+import { createSecretMasker } from './secrets.js';
+import { POSTMAN_ENDPOINT_PROFILES } from './postman/base-urls.js';
 
-const BIFROST_BASE = 'https://bifrost-premium-https-v4.gw.postman.com/ws/proxy';
+const DEFAULT_BIFROST_BASE_URL = POSTMAN_ENDPOINT_PROFILES.prod.bifrostBaseUrl;
+const BIFROST_PROXY_PATH = '/ws/proxy';
+const DEFAULT_OBSERVABILITY_BASE_URL = POSTMAN_ENDPOINT_PROFILES.prod.observabilityBaseUrl;
+const DEFAULT_OBSERVABILITY_ENV = POSTMAN_ENDPOINT_PROFILES.prod.observabilityEnv;
+const MAX_DISCOVERED_SERVICE_PAGES = 100;
+const MAX_PROVIDER_SERVICE_PAGES = 100;
 
 export interface DiscoveredService {
   id: number;
@@ -37,7 +45,17 @@ export interface BifrostClientOptions {
   teamId: string;
   apiKey: string;
   fetchFn?: typeof globalThis.fetch;
-  maskSecret?: SecretMasker;
+  /**
+   * Base URL for the Bifrost gateway (override for beta/staging stacks).
+   * Defaults to the prod host; `/ws/proxy` is appended automatically.
+   */
+  bifrostBaseUrl?: string;
+  /**
+   * Base URL for the Observability API (override for beta/staging stacks).
+   * Defaults to https://api.observability.postman.com.
+   */
+  observabilityBaseUrl?: string;
+  observabilityEnv?: string;
 }
 
 export class BifrostCatalogClient {
@@ -46,6 +64,9 @@ export class BifrostCatalogClient {
   private apiKey: string;
   private readonly fetchFn: typeof globalThis.fetch;
   private readonly secretValues: string[];
+  private readonly bifrostProxyUrl: string;
+  private readonly observabilityBaseUrl: string;
+  private readonly observabilityEnv: string;
 
   constructor(options: BifrostClientOptions) {
     this.accessToken = options.accessToken;
@@ -53,6 +74,10 @@ export class BifrostCatalogClient {
     this.apiKey = options.apiKey;
     this.fetchFn = options.fetchFn ?? globalThis.fetch;
     this.secretValues = [options.accessToken, options.apiKey].filter(Boolean);
+    const base = (options.bifrostBaseUrl || DEFAULT_BIFROST_BASE_URL).replace(/\/+$/, '');
+    this.bifrostProxyUrl = `${base}${BIFROST_PROXY_PATH}`;
+    this.observabilityBaseUrl = (options.observabilityBaseUrl || DEFAULT_OBSERVABILITY_BASE_URL).replace(/\/+$/, '');
+    this.observabilityEnv = options.observabilityEnv || DEFAULT_OBSERVABILITY_ENV;
   }
 
   setApiKey(apiKey: string): void {
@@ -78,12 +103,30 @@ export class BifrostCatalogClient {
     return h;
   }
 
+  /**
+   * Reactive error-advice context. The session identity comes from the credential
+   * preflight's in-process memo when it ran; the advice degrades gracefully without it.
+   */
+  private adviceContext(operation: string): ErrorAdviceContext {
+    const session = getMemoizedSessionIdentity();
+    return {
+      operation,
+      hasAccessToken: Boolean(this.accessToken),
+      sessionTeamId: session?.teamId,
+      sessionRoles: session?.roles,
+      sessionConsumerType: session?.consumerType,
+      explicitTeamId: this.teamId || undefined,
+      mask: createSecretMasker(this.secretValues)
+    };
+  }
+
   private async proxyRequest<T>(
     method: string,
     path: string,
-    body: unknown = {}
+    body: unknown = {},
+    operation = 'api-catalog request'
   ): Promise<T> {
-    const response = await this.fetchFn(BIFROST_BASE, {
+    const response = await this.fetchFn(this.bifrostProxyUrl, {
       method: 'POST',
       headers: this.headers(),
       body: JSON.stringify({
@@ -95,17 +138,24 @@ export class BifrostCatalogClient {
     });
 
     if (!response.ok) {
-      throw await HttpError.fromResponse(response, {
+      const httpErr = await HttpError.fromResponse(response, {
         method: 'POST',
         url: `bifrost:api-catalog:${method} ${path}`,
         secretValues: this.secretValues
       });
+      const advised = adviseFromHttpError(httpErr, this.adviceContext(operation));
+      throw advised ?? httpErr;
     }
 
     const data = (await response.json()) as T & { error?: { message?: string; code?: string } };
     if (data && typeof data === 'object' && 'error' in data && (data as Record<string, unknown>).error) {
       const errObj = (data as Record<string, { message?: string; code?: string }>).error;
-      throw new Error(`api-catalog error: ${errObj?.message || errObj?.code || 'unknown'}`);
+      const advised = adviseFromBifrostBody(
+        response.status,
+        JSON.stringify({ error: errObj }),
+        this.adviceContext(operation)
+      );
+      throw advised ?? new Error(`api-catalog error: ${errObj?.message || errObj?.code || 'unknown'}`);
     }
 
     return data;
@@ -114,9 +164,10 @@ export class BifrostCatalogClient {
   private async akitaProxyRequest<T>(
     method: string,
     path: string,
-    body: unknown = {}
+    body: unknown = {},
+    operation = 'Insights request'
   ): Promise<{ ok: boolean; status: number; data: T | null; errorText: string }> {
-    const response = await this.fetchFn(BIFROST_BASE, {
+    const response = await this.fetchFn(this.bifrostProxyUrl, {
       method: 'POST',
       headers: this.headers(),
       body: JSON.stringify({
@@ -128,7 +179,9 @@ export class BifrostCatalogClient {
     });
     if (!response.ok) {
       const text = await response.text().catch(() => '');
-      return { ok: false, status: response.status, data: null, errorText: text };
+      const advised = adviseFromBifrostBody(response.status, text, this.adviceContext(operation));
+      const errorText = advised ? (text ? `${text}\n${advised.message}` : advised.message) : text;
+      return { ok: false, status: response.status, data: null, errorText };
     }
     const data = (await response.json()) as T;
     return { ok: true, status: response.status, data, errorText: '' };
@@ -139,16 +192,25 @@ export class BifrostCatalogClient {
       async () => {
         const allItems: DiscoveredService[] = [];
         let cursor: string | null = null;
-        let hasMore = true;
-        while (hasMore) {
+        const seenCursors = new Set<string>();
+        for (let page = 0; page < MAX_DISCOVERED_SERVICE_PAGES; page += 1) {
           const cursorParam: string = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
           const data: DiscoveredServicesResponse = await this.proxyRequest<DiscoveredServicesResponse>(
             'GET',
-            `/api/v1/onboarding/discovered-services?status=discovered${cursorParam}`
+            `/api/v1/onboarding/discovered-services?status=discovered${cursorParam}`,
+            {},
+            'discovered-services listing'
           );
           allItems.push(...(data.items || []));
-          cursor = data.nextCursor || null;
-          hasMore = cursor !== null;
+          if (data.total && allItems.length >= data.total) {
+            break;
+          }
+          const nextCursor = data.nextCursor || null;
+          if (!nextCursor || seenCursors.has(nextCursor)) {
+            break;
+          }
+          seenCursors.add(nextCursor);
+          cursor = nextCursor;
         }
         return allItems;
       },
@@ -162,7 +224,8 @@ export class BifrostCatalogClient {
         const data = await this.proxyRequest<{ id: string }>(
           'POST',
           '/api/v1/onboarding/prepare-collection',
-          { service_id: String(serviceId), workspace_id: workspaceId }
+          { service_id: String(serviceId), workspace_id: workspaceId },
+          'collection preparation'
         );
         return data.id;
       },
@@ -187,7 +250,8 @@ export class BifrostCatalogClient {
         await this.proxyRequest<{ message?: string }>(
           'POST',
           '/api/v1/onboarding/git',
-          body
+          body,
+          'git onboarding'
         );
       },
       { maxAttempts: 2, delayMs: 3000 }
@@ -201,17 +265,23 @@ export class BifrostCatalogClient {
     const allServices: Array<{ id: string; name: string }> = [];
     let page = 1;
     const pageSize = 100;
-    let hasMore = true;
 
-    while (hasMore) {
-      const result = await this.akitaProxyRequest<{ services?: Array<{ id: string; name: string }> }>(
+    for (let pageCount = 0; pageCount < MAX_PROVIDER_SERVICE_PAGES; pageCount += 1) {
+      const result = await this.akitaProxyRequest<{ services?: Array<{ id: string; name: string }>; total?: number }>(
         'GET',
-        `/v2/api-catalog/services?status=discovered&populate_endpoints=false&populate_discovery_metadata=true&page=${page}&page_size=${pageSize}`
+        `/v2/api-catalog/services?status=discovered&populate_endpoints=false&populate_discovery_metadata=true&page=${page}&page_size=${pageSize}`,
+        {},
+        'provider service resolution'
       );
       if (!result.ok || !result.data) return null;
       const services = result.data.services || [];
       allServices.push(...services);
-      hasMore = services.length >= pageSize;
+      if (result.data.total && allServices.length >= result.data.total) {
+        break;
+      }
+      if (services.length < pageSize) {
+        break;
+      }
       page++;
     }
 
@@ -246,7 +316,8 @@ export class BifrostCatalogClient {
           workspace_id: workspaceId,
           system_env: systemEnvironmentId
         }]
-      }
+      },
+      'Insights onboarding acknowledgment'
     );
     if (!result.ok) {
       throw new Error(`Insights acknowledge failed: ${result.status} ${result.errorText}`);
@@ -256,7 +327,9 @@ export class BifrostCatalogClient {
   async acknowledgeWorkspace(workspaceId: string): Promise<void> {
     const result = await this.akitaProxyRequest<unknown>(
       'POST',
-      `/v2/workspaces/${workspaceId}/onboarding/acknowledge`
+      `/v2/workspaces/${workspaceId}/onboarding/acknowledge`,
+      {},
+      'workspace onboarding acknowledgment'
     );
     if (!result.ok) {
       throw new Error(`Workspace acknowledge failed: ${result.status} ${result.errorText}`);
@@ -268,23 +341,25 @@ export class BifrostCatalogClient {
     systemEnv: string,
   ): Promise<{ application_id: string; service_id: string }> {
     const response = await this.fetchFn(
-      `https://api.observability.postman.com/v2/agent/api-catalog/workspaces/${workspaceId}/applications`,
+      `${this.observabilityBaseUrl}/v2/agent/api-catalog/workspaces/${workspaceId}/applications`,
       {
         method: 'POST',
         headers: {
           'x-api-key': this.apiKey,
-          'x-postman-env': 'production',
+          'x-postman-env': this.observabilityEnv,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ system_env: systemEnv }),
       },
     );
     if (!response.ok) {
-      throw await HttpError.fromResponse(response, {
+      const httpErr = await HttpError.fromResponse(response, {
         method: 'POST',
         url: `observability:createApplication(${workspaceId})`,
         secretValues: this.secretValues,
       });
+      const advised = adviseFromHttpError(httpErr, this.adviceContext('application binding'));
+      throw advised ?? httpErr;
     }
     return response.json() as Promise<{ application_id: string; service_id: string }>;
   }
@@ -292,14 +367,16 @@ export class BifrostCatalogClient {
   async getTeamVerificationToken(workspaceId: string): Promise<string | null> {
     const result = await this.akitaProxyRequest<{ team_verification_token?: string }>(
       'GET',
-      `/v2/workspaces/${workspaceId}/team-verification-token`
+      `/v2/workspaces/${workspaceId}/team-verification-token`,
+      {},
+      'team verification token retrieval'
     );
     if (!result.ok || !result.data) return null;
     return result.data.team_verification_token || null;
   }
 
   async createApiKey(name: string): Promise<string> {
-    const response = await this.fetchFn(BIFROST_BASE, {
+    const response = await this.fetchFn(this.bifrostProxyUrl, {
       method: 'POST',
       headers: this.headers(),
       body: JSON.stringify({
@@ -311,11 +388,13 @@ export class BifrostCatalogClient {
     });
 
     if (!response.ok) {
-      throw await HttpError.fromResponse(response, {
+      const httpErr = await HttpError.fromResponse(response, {
         method: 'POST',
         url: 'bifrost:identity:POST /api/keys',
         secretValues: this.secretValues,
       });
+      const advised = adviseFromHttpError(httpErr, this.adviceContext('API key creation'));
+      throw advised ?? httpErr;
     }
 
     const data = await response.json() as Record<string, unknown>;

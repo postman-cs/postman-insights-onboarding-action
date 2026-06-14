@@ -129,7 +129,7 @@ describe('BifrostCatalogClient', () => {
     expect(callBody.body.via_integrations).toBe(false);
   });
 
-  it('throws HttpError on non-ok response after retries', async () => {
+  it('throws an advised 403 error on non-ok response after retries', async () => {
     const fetchFn = mockFetch([
       { ok: false, status: 403, body: { error: 'forbidden' } },
       { ok: false, status: 403, body: { error: 'forbidden' } },
@@ -146,8 +146,42 @@ describe('BifrostCatalogClient', () => {
       environmentId: 'env-x',
       gitRepositoryUrl: 'https://github.com/org/repo',
       gitApiKey: 'ghp_test',
-    })).rejects.toThrow(/failed.*403/);
+    })).rejects.toThrow(/refused git onboarding with 403/);
   }, 15_000);
+
+  it('enriches akita acknowledge failures with token-expiry advice', async () => {
+    const fetchFn = mockFetch([{
+      ok: false,
+      status: 401,
+      body: { error: { code: 'UNAUTHENTICATED' } },
+    }]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: 'PMAK-test',
+      fetchFn,
+    });
+    await expect(client.acknowledgeOnboarding('svc_1', 'ws-1', 'sys-1')).rejects.toThrow(
+      /Insights acknowledge failed: 401[\s\S]*Re-mint a fresh token/
+    );
+  });
+
+  it('rewrites createApiKey UNAUTHENTICATED failures with token-expiry advice', async () => {
+    const fetchFn = mockFetch([{
+      ok: false,
+      status: 401,
+      body: { error: { code: 'UNAUTHENTICATED' } },
+    }]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: '',
+      fetchFn,
+    });
+    await expect(client.createApiKey('expired-key')).rejects.toThrow(
+      /Bifrost rejected the access token \(UNAUTHENTICATED\)/
+    );
+  });
 
   it('creates application binding via observability API', async () => {
     const fetchFn = mockFetch([{
@@ -319,6 +353,45 @@ describe('BifrostCatalogClient', () => {
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
+  it('defaults bifrost base URL to prod host', async () => {
+    const fetchFn = mockFetch([{
+      ok: true,
+      status: 200,
+      body: { total: 0, nextCursor: null, items: [] },
+    }]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: 'PMAK-test',
+      fetchFn,
+    });
+    await client.listDiscoveredServices();
+
+    const url = (fetchFn as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(url).toBe('https://bifrost-premium-https-v4.gw.postman.com/ws/proxy');
+  });
+
+  it('routes bifrost calls through a custom base URL when provided', async () => {
+    const fetchFn = mockFetch([
+      { ok: true, status: 200, body: { total: 0, nextCursor: null, items: [] } },
+      { ok: true, status: 200, body: { apikey: { key: 'PMAK-new' } } },
+    ]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: 'PMAK-test',
+      fetchFn,
+      bifrostBaseUrl: 'https://bifrost-beta.gw.postman-beta.com/',
+    });
+    await client.listDiscoveredServices();
+    await client.createApiKey('beta-key');
+
+    const urls = (fetchFn as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]);
+    // Trailing slash is normalized away; /ws/proxy appended for both api-catalog and identity services.
+    expect(urls[0]).toBe('https://bifrost-beta.gw.postman-beta.com/ws/proxy');
+    expect(urls[1]).toBe('https://bifrost-beta.gw.postman-beta.com/ws/proxy');
+  });
+
   it('setApiKey updates the key used for observability calls', async () => {
     const fetchFn = mockFetch([{
       ok: true,
@@ -337,6 +410,110 @@ describe('BifrostCatalogClient', () => {
     const callOpts = (fetchFn as ReturnType<typeof vi.fn>).mock.calls[0][1];
     const headers = callOpts.headers as Record<string, string>;
     expect(headers['x-api-key']).toBe('PMAK-new');
+  });
+
+  it('defaults observability base URL to prod host', async () => {
+    const fetchFn = mockFetch([{
+      ok: true,
+      status: 200,
+      body: { application_id: 'app-123', service_id: 'svc-456' },
+    }]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: 'PMAK-test',
+      fetchFn,
+    });
+    await client.createApplication('ws-abc', 'env-xyz');
+
+    const url = (fetchFn as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(url).toBe('https://api.observability.postman.com/v2/agent/api-catalog/workspaces/ws-abc/applications');
+  });
+
+  it('routes observability calls through a custom base URL when provided', async () => {
+    const fetchFn = mockFetch([{
+      ok: true,
+      status: 200,
+      body: { application_id: 'app-beta', service_id: 'svc-beta' },
+    }]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: 'PMAK-test',
+      fetchFn,
+      observabilityBaseUrl: 'https://api.observability.postman-beta.com/',
+    });
+    await client.createApplication('ws-beta', 'env-beta');
+
+    const url = (fetchFn as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    // Trailing slash is normalized away
+    expect(url).toBe('https://api.observability.postman-beta.com/v2/agent/api-catalog/workspaces/ws-beta/applications');
+  });
+
+  it('uses beta x-postman-env for beta observability profile', async () => {
+    const fetchFn = mockFetch([{
+      ok: true,
+      status: 200,
+      body: { application_id: 'app-beta', service_id: 'svc-beta' },
+    }]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: 'PMAK-test',
+      fetchFn,
+      observabilityBaseUrl: 'https://api.observability.postman-beta.com/',
+      observabilityEnv: 'beta',
+    });
+    await client.createApplication('ws-beta', 'env-beta');
+
+    const opts = (fetchFn as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(opts.headers['x-postman-env']).toBe('beta');
+  });
+
+  it('stops discovered-service pagination on repeated cursors', async () => {
+    const fetchFn = mockFetch([
+      {
+        ok: true,
+        status: 200,
+        body: { total: 10, nextCursor: 'cursor-loop', items: [sampleServices[0]] },
+      },
+      {
+        ok: true,
+        status: 200,
+        body: { total: 10, nextCursor: 'cursor-loop', items: [sampleServices[1]] },
+      },
+    ]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: 'PMAK-test',
+      fetchFn,
+    });
+
+    await expect(client.listDiscoveredServices()).resolves.toHaveLength(2);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops provider service pagination when total count is reached', async () => {
+    const fetchFn = mockFetch([
+      {
+        ok: true,
+        status: 200,
+        body: {
+          total: 1,
+          services: [{ id: 'svc-1', name: 'cluster-a/service-a' }],
+        },
+      },
+    ]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: 'PMAK-test',
+      fetchFn,
+    });
+
+    await expect(client.resolveProviderServiceId('service-a', 'cluster-a')).resolves.toBe('svc-1');
+    expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
   it('resolves provider service id from a bracketed Jira key in the final segment', async () => {
@@ -411,6 +588,16 @@ describe('findDiscoveredService', () => {
     expect(match?.id).toBe(24751);
   });
 
+  it('does NOT fall back to suffix match when cluster is provided but no exact match', () => {
+    const match = findDiscoveredService(sampleServices, 'af-cards-activation', 'wrong-cluster');
+    expect(match).toBeUndefined();
+  });
+
+  it('returns undefined when no match', () => {
+    const match = findDiscoveredService(sampleServices, 'nonexistent', 'se-catalog-demo');
+    expect(match).toBeUndefined();
+  });
+
   it('matches a bracketed Jira key in the final segment', () => {
     const xrayServices: DiscoveredService[] = [
       {
@@ -431,16 +618,6 @@ describe('findDiscoveredService', () => {
 
   it('does not match a partial final segment when cluster is omitted', () => {
     const match = findDiscoveredService(sampleServices, 'af-cards');
-    expect(match).toBeUndefined();
-  });
-
-  it('does NOT fall back to suffix match when cluster is provided but no exact match', () => {
-    const match = findDiscoveredService(sampleServices, 'af-cards-activation', 'wrong-cluster');
-    expect(match).toBeUndefined();
-  });
-
-  it('returns undefined when no match', () => {
-    const match = findDiscoveredService(sampleServices, 'nonexistent', 'se-catalog-demo');
     expect(match).toBeUndefined();
   });
 });

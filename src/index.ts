@@ -1,5 +1,15 @@
 import * as core from '@actions/core';
 import { BifrostCatalogClient, findDiscoveredService } from './lib/bifrost-client.js';
+import {
+  runCredentialPreflight,
+  type CredentialIdentity,
+  type PreflightMode
+} from './lib/credential-identity.js';
+import {
+  parsePostmanStack,
+  resolvePostmanEndpointProfile,
+  type PostmanStack
+} from './lib/postman/base-urls.js';
 import { sleep } from './lib/retry.js';
 import { createSecretMasker } from './lib/secrets.js';
 
@@ -10,23 +20,31 @@ const POLL_INTERVAL_MIN = 2;
 const POLL_INTERVAL_MAX = 60;
 const POLL_INTERVAL_DEFAULT = 10;
 
-export async function deriveTeamId(apiKey: string): Promise<string | undefined> {
-  try {
-    const res = await fetch('https://api.getpostman.com/me', {
-      method: 'GET',
-      headers: { 'x-api-key': apiKey },
-    });
-    if (!res.ok) return undefined;
-    const data = (await res.json()) as { user?: { teamId?: number | string } };
-    if (data?.user?.teamId) return String(data.user.teamId);
-  } catch {
-    // derivation is best-effort
+const PROD_ENDPOINTS = resolvePostmanEndpointProfile('prod');
+export const DEFAULT_POSTMAN_API_BASE = PROD_ENDPOINTS.apiBaseUrl;
+export const DEFAULT_POSTMAN_BIFROST_BASE = PROD_ENDPOINTS.bifrostBaseUrl;
+export const DEFAULT_POSTMAN_IAPUB_BASE = PROD_ENDPOINTS.iapubBaseUrl;
+export const DEFAULT_POSTMAN_OBSERVABILITY_BASE = PROD_ENDPOINTS.observabilityBaseUrl;
+
+export function parsePreflightMode(value: string | undefined): PreflightMode {
+  const normalized = String(value || 'warn').trim().toLowerCase();
+  if (normalized === 'enforce' || normalized === 'warn' || normalized === 'off') {
+    return normalized;
   }
-  return undefined;
+  throw new Error(
+    `Unsupported credential-preflight "${value}". Supported values: enforce, warn, off`
+  );
 }
 
-export async function validateApiKey(apiKey: string): Promise<{ valid: boolean; teamId?: string }> {
-  const res = await fetch('https://api.getpostman.com/me', {
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, '');
+}
+
+export async function validateApiKey(
+  apiKey: string,
+  apiBase: string = DEFAULT_POSTMAN_API_BASE
+): Promise<{ valid: boolean; teamId?: string }> {
+  const res = await fetch(`${trimTrailingSlash(apiBase)}/me`, {
     method: 'GET',
     headers: { 'x-api-key': apiKey },
   });
@@ -41,26 +59,12 @@ export async function validateApiKey(apiKey: string): Promise<{ valid: boolean; 
   return { valid: true, teamId };
 }
 
-export async function deriveTeamIdFromSession(accessToken: string): Promise<string | undefined> {
+export async function getTeams(
+  apiKey: string,
+  apiBase: string = DEFAULT_POSTMAN_API_BASE
+): Promise<Array<{ id: number; name: string; organizationId?: number }>> {
   try {
-    const res = await fetch('https://iapub.postman.co/api/sessions/current', {
-      method: 'GET',
-      headers: { 'x-access-token': accessToken },
-    });
-    if (!res.ok) return undefined;
-    const data = (await res.json()) as {
-      session?: { identity?: { team?: number | string } };
-    };
-    if (data?.session?.identity?.team) return String(data.session.identity.team);
-  } catch {
-    // fallback is best-effort
-  }
-  return undefined;
-}
-
-export async function getTeams(apiKey: string): Promise<Array<{ id: number; name: string; organizationId?: number }>> {
-  try {
-    const res = await fetch('https://api.getpostman.com/teams', {
+    const res = await fetch(`${trimTrailingSlash(apiBase)}/teams`, {
       method: 'GET',
       headers: { 'x-api-key': apiKey },
     });
@@ -89,8 +93,15 @@ export interface ActionInputs {
   postmanApiKey: string;
   postmanTeamId: string;
   githubToken: string;
+  credentialPreflight: PreflightMode;
   pollTimeoutSeconds: number;
   pollIntervalSeconds: number;
+  postmanStack: PostmanStack;
+  postmanApiBase: string;
+  postmanBifrostBase: string;
+  postmanIapubBase: string;
+  postmanObservabilityBase: string;
+  postmanObservabilityEnv: string;
 }
 
 export interface OnboardingResult {
@@ -143,14 +154,6 @@ export function resolveInputs(
     );
   }
 
-  const repoSlug =
-    env.GITHUB_REPOSITORY ||
-    env.CI_PROJECT_PATH ||
-    (env.BITBUCKET_WORKSPACE && env.BITBUCKET_REPO_SLUG
-      ? `${env.BITBUCKET_WORKSPACE}/${env.BITBUCKET_REPO_SLUG}`
-      : '') ||
-    env.BUILD_REPOSITORY_NAME ||
-    '';
   // Derive repo URL from CI environment (provider-agnostic)
   const detectedRepoUrl =
     (env.GITHUB_SERVER_URL && env.GITHUB_REPOSITORY
@@ -164,6 +167,8 @@ export function resolveInputs(
 
   const rawTimeout = parseInt(get('poll-timeout-seconds', String(POLL_TIMEOUT_DEFAULT)), 10);
   const rawInterval = parseInt(get('poll-interval-seconds', String(POLL_INTERVAL_DEFAULT)), 10);
+  const postmanStack = parsePostmanStack(get('postman-stack'));
+  const endpointProfile = resolvePostmanEndpointProfile(postmanStack);
 
   return {
     projectName,
@@ -176,8 +181,15 @@ export function resolveInputs(
     postmanApiKey,
     postmanTeamId,
     githubToken: get('github-token', env.GITHUB_TOKEN || ''),
+    credentialPreflight: parsePreflightMode(get('credential-preflight', 'warn')),
     pollTimeoutSeconds: clamp(rawTimeout, POLL_TIMEOUT_MIN, POLL_TIMEOUT_MAX, POLL_TIMEOUT_DEFAULT),
     pollIntervalSeconds: clamp(rawInterval, POLL_INTERVAL_MIN, POLL_INTERVAL_MAX, POLL_INTERVAL_DEFAULT),
+    postmanStack,
+    postmanApiBase: endpointProfile.apiBaseUrl,
+    postmanBifrostBase: endpointProfile.bifrostBaseUrl,
+    postmanIapubBase: endpointProfile.iapubBaseUrl,
+    postmanObservabilityBase: endpointProfile.observabilityBaseUrl,
+    postmanObservabilityEnv: endpointProfile.observabilityEnv,
   };
 }
 
@@ -304,21 +316,22 @@ export async function resolveApiKeyAndTeamId(
   inputs: ActionInputs,
   client: BifrostCatalogClient,
   reporter: Reporter = core
-): Promise<{ apiKey: string; teamId: string }> {
+): Promise<{ apiKey: string; teamId: string; pmakIdentity?: CredentialIdentity }> {
   let apiKey = inputs.postmanApiKey;
   const teamId = inputs.postmanTeamId;
   let keyValid = false;
+  let pmakIdentity: CredentialIdentity | undefined;
+
+  const apiBase = inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE;
 
   if (apiKey) {
-    try {
-      const result = await validateApiKey(apiKey);
-      keyValid = result.valid;
-      if (!keyValid) {
-        reporter.warning('Provided postman-api-key is invalid or expired.');
-      }
-    } catch (error: unknown) {
-      // Network errors or unexpected status codes: rethrow instead of treating as invalid key
-      throw error;
+    const result = await validateApiKey(apiKey, apiBase);
+    keyValid = result.valid;
+    if (keyValid) {
+      // Reused by the credential preflight so it never issues a second /me probe.
+      pmakIdentity = { source: 'pmak/me', teamId: result.teamId };
+    } else {
+      reporter.warning('Provided postman-api-key is invalid or expired.');
     }
   }
 
@@ -335,7 +348,7 @@ export async function resolveApiKeyAndTeamId(
   let resolvedTeamId = teamId;
   if (!resolvedTeamId && apiKey) {
     try {
-      const teams = await getTeams(apiKey);
+      const teams = await getTeams(apiKey, apiBase);
       if (teams.length > 1 && teams.every(t => t.organizationId == null)) {
         reporter.warning(
           'GET /teams returned multiple teams but none include organizationId. ' +
@@ -343,12 +356,23 @@ export async function resolveApiKeyAndTeamId(
           'Set postman-team-id explicitly if Bifrost calls fail.'
         );
       }
-      const orgIds = new Set(teams.filter(t => t.organizationId != null).map(t => t.organizationId));
-      const meResult = await validateApiKey(apiKey);
-      const meTeamId = meResult.teamId ? parseInt(meResult.teamId, 10) : NaN;
-      if (teams.length > 1 && orgIds.size === 1 && !Number.isNaN(meTeamId) && orgIds.has(meTeamId)) {
-        resolvedTeamId = String(meTeamId);
-        reporter.info(`Org-mode auto-detected (${teams.length} sub-teams). Using team ID ${resolvedTeamId} for Bifrost headers.`);
+      const isOrgMode = teams.some(t => t.organizationId != null);
+      if (isOrgMode) {
+        if (teams.length === 1) {
+          resolvedTeamId = String(teams[0].id);
+          reporter.info(
+            `Org-mode account detected. Using sub-team ${teams[0].id} (${teams[0].name ?? 'unknown'}) for Bifrost calls.`
+          );
+        } else {
+          const meResult = await validateApiKey(apiKey, apiBase);
+          const meTeamId = meResult.teamId ? parseInt(meResult.teamId, 10) : NaN;
+          if (!Number.isNaN(meTeamId) && teams.some(t => t.id === meTeamId)) {
+            resolvedTeamId = String(meTeamId);
+            reporter.info(
+              `Org-mode account detected. Using sub-team ${meTeamId} (from /me) for Bifrost calls.`
+            );
+          }
+        }
       }
     } catch {
       // Non-fatal: if detection fails, teamId stays empty (header omitted) which is safe
@@ -361,21 +385,42 @@ export async function resolveApiKeyAndTeamId(
     reporter.info('No postman-team-id resolved; omitting x-entity-team-id so Bifrost resolves team from the access token.');
   }
 
-  return { apiKey, teamId: resolvedTeamId };
+  return { apiKey, teamId: resolvedTeamId, pmakIdentity };
 }
 
-async function runAction(): Promise<void> {
+/**
+ * Proactive credential preflight seam shared by the action and CLI entrypoints.
+ *
+ * The PMAK identity is reused from validateApiKey's /me result (via resolveApiKeyAndTeamId),
+ * so the preflight itself never issues a /me probe. A rejected or absent postman-api-key
+ * yields no PMAK identity, which downgrades the cross-check to a note; it can never FAIL
+ * the run, even under credential-preflight: enforce.
+ */
+export async function runCredentialPreflightForInputs(
+  inputs: ActionInputs,
+  pmak: CredentialIdentity | undefined,
+  reporter: Reporter,
+  fetchImpl?: typeof fetch
+): Promise<void> {
+  await runCredentialPreflight({
+    apiBaseUrl: inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE,
+    iapubBaseUrl: inputs.postmanIapubBase || DEFAULT_POSTMAN_IAPUB_BASE,
+    pmak,
+    postmanAccessToken: inputs.postmanAccessToken,
+    explicitTeamId: inputs.postmanTeamId || undefined,
+    mode: inputs.credentialPreflight,
+    mask: createSecretMasker([inputs.postmanApiKey, inputs.postmanAccessToken]),
+    log: reporter,
+    fetchImpl
+  });
+}
+
+export async function runAction(): Promise<void> {
   const inputs = resolveInputs();
   const planned = createPlannedOutputs(inputs);
   for (const [key, value] of Object.entries(planned)) {
     core.setOutput(key, value);
   }
-
-  const maskSecret = createSecretMasker([
-    inputs.postmanAccessToken,
-    inputs.postmanApiKey,
-    inputs.githubToken,
-  ].filter(Boolean));
 
   core.setSecret(inputs.postmanAccessToken);
   if (inputs.postmanApiKey) core.setSecret(inputs.postmanApiKey);
@@ -385,16 +430,22 @@ async function runAction(): Promise<void> {
     accessToken: inputs.postmanAccessToken,
     teamId: inputs.postmanTeamId,
     apiKey: inputs.postmanApiKey,
-    maskSecret,
+    bifrostBaseUrl: inputs.postmanBifrostBase,
+    observabilityBaseUrl: inputs.postmanObservabilityBase,
+    observabilityEnv: inputs.postmanObservabilityEnv,
   });
 
-  const { apiKey, teamId } = await resolveApiKeyAndTeamId(inputs, preliminaryClient, core);
+  const { apiKey, teamId, pmakIdentity } = await resolveApiKeyAndTeamId(inputs, preliminaryClient, core);
+
+  await runCredentialPreflightForInputs(inputs, pmakIdentity, core);
 
   const client = new BifrostCatalogClient({
     accessToken: inputs.postmanAccessToken,
     teamId,
     apiKey,
-    maskSecret,
+    bifrostBaseUrl: inputs.postmanBifrostBase,
+    observabilityBaseUrl: inputs.postmanObservabilityBase,
+    observabilityEnv: inputs.postmanObservabilityEnv,
   });
 
   let result: import('./index.js').OnboardingResult;
@@ -420,10 +471,3 @@ async function runAction(): Promise<void> {
     core.info(`Insights onboarding succeeded: ${result.discoveredServiceName} -> workspace ${inputs.workspaceId}`);
   }
 }
-
-runAction().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  core.setOutput('status', 'error');
-  core.setFailed(message);
-  process.exitCode = 1;
-});

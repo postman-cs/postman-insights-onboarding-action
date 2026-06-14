@@ -2,22 +2,23 @@ export interface ActionInputContract {
   description: string;
   required: boolean;
   default?: string;
+  allowedValues?: string[];
 }
 
 export interface ActionOutputContract {
   description: string;
 }
 
-export interface AlphaActionContract {
+export interface CustomerPreviewActionContract {
   name: string;
   description: string;
   inputs: Record<string, ActionInputContract>;
   outputs: Record<string, ActionOutputContract>;
 }
 
-export const alphaActionContract: AlphaActionContract = {
-  name: 'postman-insights-onboarding-action',
-  description: 'Links Postman Insights discovered services to API Catalog workspaces and git repos.',
+export const customerPreviewActionContract: CustomerPreviewActionContract = {
+  name: 'Postman Onboarding: Insights Linking',
+  description: 'Link Postman Insights discovered services to workspaces and git repos. Part of the Postman API Onboarding suite.',
   inputs: {
     'project-name': {
       description: 'Service name or spec ID to match against discovered service names.',
@@ -59,6 +60,13 @@ export const alphaActionContract: AlphaActionContract = {
       description: 'Postman API key (PMAK-*) for the application binding call. Auto-created from postman-access-token when omitted or invalid after a clear 401/403 validation failure.',
       required: false,
     },
+    'credential-preflight': {
+      description:
+        'Credential identity preflight policy. warn (default) logs a note and continues when postman-api-key and postman-access-token resolve to different parent orgs; enforce fails the run on that condition before any onboarding write; off skips the identity probes entirely (the reactive error guidance still applies). A rejected or auto-created postman-api-key is never failed on.',
+      required: false,
+      default: 'warn',
+      allowedValues: ['enforce', 'warn', 'off'],
+    },
     'poll-timeout-seconds': {
       description: 'Maximum seconds to wait for the service to appear in the discovered list.',
       required: false,
@@ -68,6 +76,12 @@ export const alphaActionContract: AlphaActionContract = {
       description: 'Seconds between discovery polling attempts.',
       required: false,
       default: '10',
+    },
+    'postman-stack': {
+      description: 'Postman stack profile.',
+      required: false,
+      default: 'prod',
+      allowedValues: ['prod', 'beta'],
     },
   },
   outputs: {
@@ -92,5 +106,5 @@ export const alphaActionContract: AlphaActionContract = {
   },
 };
 
-export const contractInputNames = Object.keys(alphaActionContract.inputs);
-export const contractOutputNames = Object.keys(alphaActionContract.outputs);
+export const contractInputNames = Object.keys(customerPreviewActionContract.inputs);
+export const contractOutputNames = Object.keys(customerPreviewActionContract.outputs);

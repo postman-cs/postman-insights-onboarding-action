@@ -1,5 +1,9 @@
-name: 'postman-insights-onboarding-action'
-description: 'Link Postman Insights discovered services to API Catalog workspaces and git repos'
+name: 'Postman Onboarding: Insights Linking'
+description: Link Postman Insights discovered services to workspaces and git repos. Part of the Postman API Onboarding suite.
+author: Postman
+branding:
+  icon: link
+  color: orange
 inputs:
   project-name:
     description: 'Service name or Jira/Xray project key to match against the final discovered-service segment'
@@ -31,6 +35,10 @@ inputs:
   postman-api-key:
     description: 'Postman API key (PMAK-*) for the application binding call. Auto-created from postman-access-token when omitted or invalid after a clear 401/403 validation failure.'
     required: false
+  credential-preflight:
+    description: 'Credential identity preflight policy. warn (default) logs a note and continues when postman-api-key and postman-access-token resolve to different parent orgs; enforce fails the run on that condition before any onboarding write; off skips the identity probes entirely (the reactive error guidance still applies). A rejected or auto-created postman-api-key is never failed on.'
+    required: false
+    default: 'warn'
   poll-timeout-seconds:
     description: 'Maximum seconds to wait for the service to appear in the discovered list'
     required: false
@@ -39,6 +47,10 @@ inputs:
     description: 'Seconds between discovery polling attempts'
     required: false
     default: '10'
+  postman-stack:
+    description: 'Postman stack profile.'
+    required: false
+    default: 'prod'
 outputs:
   discovered-service-id:
     description: 'Numeric ID from the API Catalog discovered-services list'
@@ -53,5 +65,5 @@ outputs:
   status:
     description: 'Onboarding result: success, not-found, or error'
 runs:
-  using: 'node20'
-  main: 'dist/index.cjs'
+  using: 'node24'
+  main: 'dist/action.cjs'
