@@ -298,7 +298,7 @@ describe('marketplace readiness docs', () => {
     expect(regionIndex).toBeGreaterThan(-1);
     expect(regionIndex).toBeLessThan(firstExampleIndex);
     expect(readme).toContain(
-      'https://gist.githubusercontent.com/jaredboynton/a839de57db2c3c90b8f75906c56b00ee/raw/openapi.yaml'
+      'https://raw.githubusercontent.com/postman-cs/postman-insights-onboarding-action/main/examples/core-payments-openapi.yaml'
     );
   });
 
