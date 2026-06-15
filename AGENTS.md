@@ -37,5 +37,5 @@ npm run check:dist   # build + git diff --exit-code (CI integrity)
 
 ## Gotchas
 
-- Build emits three bundles: `index.cjs`, `action.cjs`, and `cli.cjs`. Pre-link logic must be wired into the shared path all entries call, not into a single bundle.
+- Build emits three bundles: `index.cjs`, `action.cjs`, and `cli.cjs`. Wire pre-link logic into the shared code path all three entries call, so every bundle picks it up.
 - If Bifrost linking fails, verify the proxy service/path and auth headers with curl before changing code.
