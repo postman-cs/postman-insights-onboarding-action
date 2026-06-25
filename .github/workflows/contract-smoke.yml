@@ -62,7 +62,7 @@ jobs:
     needs: preflight
     if: ${{ needs.preflight.outputs.run_smoke == 'true' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - id: postman-token
         uses: postman-cs/postman-resolve-service-token-action@v1
         with:
