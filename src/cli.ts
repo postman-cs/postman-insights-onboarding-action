@@ -2,14 +2,17 @@ import { realpathSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { AccessTokenProvider } from './lib/postman/token-provider.js';
 import {
+  createInsightsBifrostClient,
+  createInsightsTokenProvider,
+  DEFAULT_POSTMAN_API_BASE,
   resolveApiKeyAndTeamId,
   resolveInputs,
   runCredentialPreflightForInputs,
   runOnboarding,
   type Reporter
 } from './index.js';
-import { BifrostCatalogClient } from './lib/bifrost-client.js';
 import { sleep } from './lib/retry.js';
 import { getMemoizedSessionIdentity } from './lib/credential-identity.js';
 import { createTelemetryContext } from '@postman-cse/automation-telemetry-core';
@@ -156,20 +159,29 @@ export async function runCli(
     reporter.setSecret(inputs.githubToken);
   }
 
-  const preliminaryClient = new BifrostCatalogClient({
-    accessToken: inputs.postmanAccessToken,
-    teamId: inputs.postmanTeamId,
-    apiKey: inputs.postmanApiKey,
-    bifrostBaseUrl: inputs.postmanBifrostBase,
-    observabilityBaseUrl: inputs.postmanObservabilityBase,
-    observabilityEnv: inputs.postmanObservabilityEnv
-  });
+  const tokenProvider = createInsightsTokenProvider(inputs, reporter);
+  const preliminaryClient = createInsightsBifrostClient(
+    inputs,
+    tokenProvider,
+    inputs.postmanTeamId,
+    inputs.postmanApiKey
+  );
 
   const { apiKey, teamId, pmakIdentity } = await resolveApiKeyAndTeamId(
     inputs,
     preliminaryClient,
     reporter
   );
+
+  const activeTokenProvider =
+    apiKey !== inputs.postmanApiKey
+      ? new AccessTokenProvider({
+          accessToken: tokenProvider.current(),
+          apiKey,
+          apiBaseUrl: inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE,
+          onToken: (token) => reporter.setSecret(token)
+        })
+      : tokenProvider;
 
   const telemetry = createTelemetryContext({ action: 'postman-insights-onboarding-action', logger: reporter });
   telemetry.setTeamId(inputs.postmanTeamId || pmakIdentity?.teamId);
@@ -181,16 +193,15 @@ export async function runCli(
   try {
     // Credential preflight can throw under enforce; keep it inside the try so a
     // known-team credential failure still routes through emitCompletion('failure').
-    await runCredentialPreflightForInputs(inputs, pmakIdentity, reporter);
+    await runCredentialPreflightForInputs(
+      inputs,
+      pmakIdentity,
+      reporter,
+      undefined,
+      activeTokenProvider.current()
+    );
 
-    const client = new BifrostCatalogClient({
-      accessToken: inputs.postmanAccessToken,
-      teamId,
-      apiKey,
-      bifrostBaseUrl: inputs.postmanBifrostBase,
-      observabilityBaseUrl: inputs.postmanObservabilityBase,
-      observabilityEnv: inputs.postmanObservabilityEnv
-    });
+    const client = createInsightsBifrostClient(inputs, activeTokenProvider, teamId, apiKey);
 
     result = await (runtime.executeOnboarding ?? runOnboarding)(
       inputs,

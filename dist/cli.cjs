@@ -12167,7 +12167,7 @@ var require_response = __commonJS({
     var assert = require("node:assert");
     var { types } = require("node:util");
     var textEncoder = new TextEncoder("utf-8");
-    var Response = class _Response {
+    var Response2 = class _Response {
       // Creates network error Response.
       static error() {
         const responseObject = fromInnerResponse(makeNetworkError(), "immutable");
@@ -12310,8 +12310,8 @@ var require_response = __commonJS({
         return `Response ${nodeUtil.formatWithOptions(options, properties)}`;
       }
     };
-    mixinBody(Response);
-    Object.defineProperties(Response.prototype, {
+    mixinBody(Response2);
+    Object.defineProperties(Response2.prototype, {
       type: kEnumerableProperty,
       url: kEnumerableProperty,
       status: kEnumerableProperty,
@@ -12327,7 +12327,7 @@ var require_response = __commonJS({
         configurable: true
       }
     });
-    Object.defineProperties(Response, {
+    Object.defineProperties(Response2, {
       json: kEnumerableProperty,
       redirect: kEnumerableProperty,
       error: kEnumerableProperty
@@ -12460,7 +12460,7 @@ var require_response = __commonJS({
       }
     }
     function fromInnerResponse(innerResponse, guard) {
-      const response = new Response(kConstruct);
+      const response = new Response2(kConstruct);
       response[kState] = innerResponse;
       response[kHeaders] = new Headers3(kConstruct);
       setHeadersList(response[kHeaders], innerResponse.headersList);
@@ -12528,7 +12528,7 @@ var require_response = __commonJS({
       makeResponse,
       makeAppropriateNetworkError,
       filterResponse,
-      Response,
+      Response: Response2,
       cloneResponse,
       fromInnerResponse
     };
@@ -15200,7 +15200,7 @@ var require_cache = __commonJS({
     var { urlEquals, getFieldValues } = require_util5();
     var { kEnumerableProperty, isDisturbed } = require_util();
     var { webidl } = require_webidl();
-    var { Response, cloneResponse, fromInnerResponse } = require_response();
+    var { Response: Response2, cloneResponse, fromInnerResponse } = require_response();
     var { Request, fromInnerRequest } = require_request2();
     var { kState } = require_symbols2();
     var { fetching } = require_fetch();
@@ -15727,7 +15727,7 @@ var require_cache = __commonJS({
         converter: webidl.converters.DOMString
       }
     ]);
-    webidl.converters.Response = webidl.interfaceConverter(Response);
+    webidl.converters.Response = webidl.interfaceConverter(Response2);
     webidl.converters["sequence<RequestInfo>"] = webidl.sequenceConverter(
       webidl.converters.RequestInfo
     );
@@ -18689,6 +18689,209 @@ var import_node_fs = require("node:fs");
 var import_promises = require("node:fs/promises");
 var import_node_path = __toESM(require("node:path"), 1);
 
+// src/lib/retry.ts
+function sleep(delayMs) {
+  return new Promise((resolve2) => {
+    setTimeout(resolve2, delayMs);
+  });
+}
+function normalizeRetryOptions(options) {
+  return {
+    maxAttempts: Math.max(1, options.maxAttempts ?? 3),
+    delayMs: Math.max(0, options.delayMs ?? 2e3),
+    backoffMultiplier: Math.max(1, options.backoffMultiplier ?? 1),
+    maxDelayMs: options.maxDelayMs === void 0 ? Number.POSITIVE_INFINITY : Math.max(0, options.maxDelayMs),
+    onRetry: options.onRetry ?? (async () => void 0),
+    shouldRetry: options.shouldRetry ?? (() => true),
+    sleep: options.sleep ?? sleep
+  };
+}
+async function retry(operation, options = {}) {
+  const normalized = normalizeRetryOptions(options);
+  let nextDelayMs = normalized.delayMs;
+  for (let attempt = 1; attempt <= normalized.maxAttempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error2) {
+      const shouldRetry = attempt < normalized.maxAttempts && normalized.shouldRetry(error2, {
+        attempt,
+        maxAttempts: normalized.maxAttempts
+      });
+      if (!shouldRetry) {
+        throw error2;
+      }
+      await normalized.onRetry({
+        attempt,
+        maxAttempts: normalized.maxAttempts,
+        delayMs: nextDelayMs,
+        error: error2
+      });
+      await normalized.sleep(nextDelayMs);
+      nextDelayMs = Math.min(
+        normalized.maxDelayMs,
+        Math.round(nextDelayMs * normalized.backoffMultiplier)
+      );
+    }
+  }
+  throw new Error("Retry exhausted without returning or throwing");
+}
+
+// src/lib/postman/base-urls.ts
+var POSTMAN_ENDPOINT_PROFILES = {
+  prod: {
+    apiBaseUrl: "https://api.getpostman.com",
+    bifrostBaseUrl: "https://bifrost-premium-https-v4.gw.postman.com",
+    iapubBaseUrl: "https://iapub.postman.co",
+    observabilityBaseUrl: "https://api.observability.postman.com",
+    observabilityEnv: "production"
+  },
+  beta: {
+    apiBaseUrl: "https://api.getpostman-beta.com",
+    bifrostBaseUrl: "https://bifrost-https-v4.gw.postman-beta.com",
+    iapubBaseUrl: "https://iapub.postman.co",
+    observabilityBaseUrl: "https://api.observability.postman-beta.com",
+    observabilityEnv: "beta"
+  }
+};
+function parsePostmanRegion(value) {
+  const normalized = String(value || "us").trim().toLowerCase();
+  if (normalized === "us" || normalized === "eu") {
+    return normalized;
+  }
+  throw new Error(`Unsupported postman-region "${value}". Supported values: us, eu`);
+}
+function parsePostmanStack(value) {
+  const normalized = String(value || "prod").trim().toLowerCase();
+  if (normalized === "prod" || normalized === "beta") {
+    return normalized;
+  }
+  throw new Error(`Unsupported postman-stack "${value}". Supported values: prod, beta`);
+}
+function resolvePostmanEndpointProfile(stack, region = "us") {
+  if (stack === "beta" && region !== "us") {
+    throw new Error("postman-region=eu is only supported with postman-stack=prod");
+  }
+  const profile = POSTMAN_ENDPOINT_PROFILES[stack];
+  if (region === "eu") {
+    return {
+      ...profile,
+      apiBaseUrl: "https://api.eu.postman.com"
+    };
+  }
+  return profile;
+}
+
+// src/lib/postman/token-provider.ts
+var MintError = class extends Error {
+  permanent;
+  constructor(message, permanent) {
+    super(message);
+    this.name = "MintError";
+    this.permanent = permanent;
+  }
+};
+function extractAccessToken(payload) {
+  if (!payload || typeof payload !== "object") return void 0;
+  const record = payload;
+  const direct = record.access_token;
+  if (typeof direct === "string" && direct.trim()) return direct.trim();
+  const session = record.session;
+  if (session && typeof session === "object") {
+    const token = session.token;
+    if (typeof token === "string" && token.trim()) return token.trim();
+  }
+  return void 0;
+}
+var AccessTokenProvider = class {
+  token;
+  apiKey;
+  apiBaseUrl;
+  fetchImpl;
+  maxAttempts;
+  onToken;
+  sleep;
+  inflight;
+  constructor(options) {
+    this.token = String(options.accessToken || "").trim();
+    this.apiKey = String(options.apiKey || "").trim();
+    this.apiBaseUrl = String(
+      options.apiBaseUrl || POSTMAN_ENDPOINT_PROFILES.prod.apiBaseUrl
+    ).replace(/\/+$/, "");
+    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.maxAttempts = Math.max(1, options.maxAttempts ?? 2);
+    this.onToken = options.onToken;
+    this.sleep = options.sleep;
+  }
+  current() {
+    return this.token;
+  }
+  /** True when a PMAK is present, so an expired token can be re-minted. */
+  canRefresh() {
+    return Boolean(this.apiKey);
+  }
+  refresh() {
+    this.inflight ??= this.mintWithRetry().finally(() => {
+      this.inflight = void 0;
+    });
+    return this.inflight;
+  }
+  async mintWithRetry() {
+    if (!this.apiKey) {
+      throw new Error(
+        "postman: the access token expired and cannot be refreshed because no postman-api-key is present. Service-account access tokens expire after about 1 to 1.5 hours. Re-mint a fresh token (postman-resolve-service-token-action) and re-run."
+      );
+    }
+    const token = await retry(() => this.mintOnce(), {
+      maxAttempts: this.maxAttempts,
+      delayMs: 1e3,
+      backoffMultiplier: 2,
+      ...this.sleep ? { sleep: this.sleep } : {},
+      shouldRetry: (error2) => !(error2 instanceof MintError && error2.permanent)
+    });
+    this.token = token;
+    this.onToken?.(token);
+    return token;
+  }
+  async mintOnce() {
+    const response = await this.fetchImpl(`${this.apiBaseUrl}/service-account-tokens`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": this.apiKey
+      },
+      body: JSON.stringify({ apiKey: this.apiKey })
+    });
+    const body = await response.text().catch(() => "");
+    if (!response.ok) {
+      const status = response.status;
+      if (status === 401 || status === 403) {
+        throw new MintError(
+          `postman: re-mint failed because the postman-api-key was rejected (PMAK rejected, HTTP ${status}); confirm it is a valid, enabled service-account PMAK for the intended team.`,
+          true
+        );
+      }
+      if (status === 400 && body.toLowerCase().includes("service accounts not enabled")) {
+        throw new MintError(
+          "postman: re-mint failed because service accounts are not enabled for this team; enable them in Team Settings or use a team where they are.",
+          true
+        );
+      }
+      throw new MintError(`postman: re-mint failed (service-account-tokens HTTP ${status}).`, false);
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      parsed = void 0;
+    }
+    const token = extractAccessToken(parsed);
+    if (!token) {
+      throw new MintError("postman: re-mint succeeded but no access token was returned.", false);
+    }
+    return token;
+  }
+};
+
 // node_modules/@actions/core/lib/core.js
 var core_exports = {};
 __export(core_exports, {
@@ -21404,98 +21607,6 @@ var HttpError = class _HttpError extends Error {
   }
 };
 
-// src/lib/retry.ts
-function sleep(delayMs) {
-  return new Promise((resolve2) => {
-    setTimeout(resolve2, delayMs);
-  });
-}
-function normalizeRetryOptions(options) {
-  return {
-    maxAttempts: Math.max(1, options.maxAttempts ?? 3),
-    delayMs: Math.max(0, options.delayMs ?? 2e3),
-    backoffMultiplier: Math.max(1, options.backoffMultiplier ?? 1),
-    maxDelayMs: options.maxDelayMs === void 0 ? Number.POSITIVE_INFINITY : Math.max(0, options.maxDelayMs),
-    onRetry: options.onRetry ?? (async () => void 0),
-    shouldRetry: options.shouldRetry ?? (() => true),
-    sleep: options.sleep ?? sleep
-  };
-}
-async function retry(operation, options = {}) {
-  const normalized = normalizeRetryOptions(options);
-  let nextDelayMs = normalized.delayMs;
-  for (let attempt = 1; attempt <= normalized.maxAttempts; attempt += 1) {
-    try {
-      return await operation();
-    } catch (error2) {
-      const shouldRetry = attempt < normalized.maxAttempts && normalized.shouldRetry(error2, {
-        attempt,
-        maxAttempts: normalized.maxAttempts
-      });
-      if (!shouldRetry) {
-        throw error2;
-      }
-      await normalized.onRetry({
-        attempt,
-        maxAttempts: normalized.maxAttempts,
-        delayMs: nextDelayMs,
-        error: error2
-      });
-      await normalized.sleep(nextDelayMs);
-      nextDelayMs = Math.min(
-        normalized.maxDelayMs,
-        Math.round(nextDelayMs * normalized.backoffMultiplier)
-      );
-    }
-  }
-  throw new Error("Retry exhausted without returning or throwing");
-}
-
-// src/lib/postman/base-urls.ts
-var POSTMAN_ENDPOINT_PROFILES = {
-  prod: {
-    apiBaseUrl: "https://api.getpostman.com",
-    bifrostBaseUrl: "https://bifrost-premium-https-v4.gw.postman.com",
-    iapubBaseUrl: "https://iapub.postman.co",
-    observabilityBaseUrl: "https://api.observability.postman.com",
-    observabilityEnv: "production"
-  },
-  beta: {
-    apiBaseUrl: "https://api.getpostman-beta.com",
-    bifrostBaseUrl: "https://bifrost-https-v4.gw.postman-beta.com",
-    iapubBaseUrl: "https://iapub.postman.co",
-    observabilityBaseUrl: "https://api.observability.postman-beta.com",
-    observabilityEnv: "beta"
-  }
-};
-function parsePostmanRegion(value) {
-  const normalized = String(value || "us").trim().toLowerCase();
-  if (normalized === "us" || normalized === "eu") {
-    return normalized;
-  }
-  throw new Error(`Unsupported postman-region "${value}". Supported values: us, eu`);
-}
-function parsePostmanStack(value) {
-  const normalized = String(value || "prod").trim().toLowerCase();
-  if (normalized === "prod" || normalized === "beta") {
-    return normalized;
-  }
-  throw new Error(`Unsupported postman-stack "${value}". Supported values: prod, beta`);
-}
-function resolvePostmanEndpointProfile(stack, region = "us") {
-  if (stack === "beta" && region !== "us") {
-    throw new Error("postman-region=eu is only supported with postman-stack=prod");
-  }
-  const profile = POSTMAN_ENDPOINT_PROFILES[stack];
-  if (region === "eu") {
-    return {
-      ...profile,
-      apiBaseUrl: "https://api.eu.postman.com"
-    };
-  }
-  return profile;
-}
-
 // src/lib/bifrost-client.ts
 var DEFAULT_BIFROST_BASE_URL = POSTMAN_ENDPOINT_PROFILES.prod.bifrostBaseUrl;
 var BIFROST_PROXY_PATH = "/ws/proxy";
@@ -21503,8 +21614,11 @@ var DEFAULT_OBSERVABILITY_BASE_URL = POSTMAN_ENDPOINT_PROFILES.prod.observabilit
 var DEFAULT_OBSERVABILITY_ENV = POSTMAN_ENDPOINT_PROFILES.prod.observabilityEnv;
 var MAX_DISCOVERED_SERVICE_PAGES = 100;
 var MAX_PROVIDER_SERVICE_PAGES = 100;
+function isExpiredAuthError(status, body) {
+  return status === 401 || body.includes("UNAUTHENTICATED") || body.includes("authenticationError");
+}
 var BifrostCatalogClient = class {
-  accessToken;
+  tokenProvider;
   teamId;
   apiKey;
   fetchFn;
@@ -21513,11 +21627,14 @@ var BifrostCatalogClient = class {
   observabilityBaseUrl;
   observabilityEnv;
   constructor(options) {
-    this.accessToken = options.accessToken;
+    this.tokenProvider = options.tokenProvider ?? new AccessTokenProvider({
+      accessToken: options.accessToken,
+      apiKey: options.apiKey
+    });
     this.teamId = options.teamId;
     this.apiKey = options.apiKey;
     this.fetchFn = options.fetchFn ?? globalThis.fetch;
-    this.secretValues = [options.accessToken, options.apiKey].filter(Boolean);
+    this.secretValues = [this.tokenProvider.current(), options.apiKey].filter(Boolean);
     const base = (options.bifrostBaseUrl || DEFAULT_BIFROST_BASE_URL).replace(/\/+$/, "");
     this.bifrostProxyUrl = `${base}${BIFROST_PROXY_PATH}`;
     this.observabilityBaseUrl = (options.observabilityBaseUrl || DEFAULT_OBSERVABILITY_BASE_URL).replace(/\/+$/, "");
@@ -21529,6 +21646,11 @@ var BifrostCatalogClient = class {
       this.secretValues.push(apiKey);
     }
   }
+  registerAccessToken(token) {
+    if (token && !this.secretValues.includes(token)) {
+      this.secretValues.push(token);
+    }
+  }
   /**
    * Build Bifrost proxy headers.
    * x-entity-team-id is ONLY included when teamId is present (org-mode tokens).
@@ -21536,7 +21658,7 @@ var BifrostCatalogClient = class {
    */
   headers() {
     const h = {
-      "x-access-token": this.accessToken,
+      "x-access-token": this.tokenProvider.current(),
       "Content-Type": "application/json"
     };
     if (this.teamId) {
@@ -21552,7 +21674,7 @@ var BifrostCatalogClient = class {
     const session = getMemoizedSessionIdentity();
     return {
       operation,
-      hasAccessToken: Boolean(this.accessToken),
+      hasAccessToken: Boolean(this.tokenProvider.current()),
       sessionTeamId: session?.teamId,
       sessionRoles: session?.roles,
       sessionConsumerType: session?.consumerType,
@@ -21561,7 +21683,7 @@ var BifrostCatalogClient = class {
     };
   }
   async proxyRequest(method, path7, body = {}, operation = "api-catalog request") {
-    const response = await this.fetchFn(this.bifrostProxyUrl, {
+    const send2 = async () => this.fetchFn(this.bifrostProxyUrl, {
       method: "POST",
       headers: this.headers(),
       body: JSON.stringify({
@@ -21571,6 +21693,39 @@ var BifrostCatalogClient = class {
         body
       })
     });
+    let response = await send2();
+    if (!response.ok) {
+      const bodyText = await response.text().catch(() => "");
+      if (isExpiredAuthError(response.status, bodyText) && this.tokenProvider.canRefresh()) {
+        try {
+          const refreshed = await this.tokenProvider.refresh();
+          this.registerAccessToken(refreshed);
+          response = await send2();
+        } catch {
+          const httpErr = await HttpError.fromResponse(
+            new Response(bodyText, { status: response.status, headers: response.headers }),
+            {
+              method: "POST",
+              url: `bifrost:api-catalog:${method} ${path7}`,
+              secretValues: this.secretValues
+            }
+          );
+          const advised = adviseFromHttpError(httpErr, this.adviceContext(operation));
+          throw advised ?? httpErr;
+        }
+      } else {
+        const httpErr = await HttpError.fromResponse(
+          new Response(bodyText, { status: response.status, headers: response.headers }),
+          {
+            method: "POST",
+            url: `bifrost:api-catalog:${method} ${path7}`,
+            secretValues: this.secretValues
+          }
+        );
+        const advised = adviseFromHttpError(httpErr, this.adviceContext(operation));
+        throw advised ?? httpErr;
+      }
+    }
     if (!response.ok) {
       const httpErr = await HttpError.fromResponse(response, {
         method: "POST",
@@ -21593,7 +21748,7 @@ var BifrostCatalogClient = class {
     return data;
   }
   async akitaProxyRequest(method, path7, body = {}, operation = "Insights request") {
-    const response = await this.fetchFn(this.bifrostProxyUrl, {
+    const send2 = async () => this.fetchFn(this.bifrostProxyUrl, {
       method: "POST",
       headers: this.headers(),
       body: JSON.stringify({
@@ -21603,8 +21758,30 @@ var BifrostCatalogClient = class {
         body
       })
     });
+    let response = await send2();
     if (!response.ok) {
       const text = await response.text().catch(() => "");
+      if (isExpiredAuthError(response.status, text) && this.tokenProvider.canRefresh()) {
+        try {
+          const refreshed = await this.tokenProvider.refresh();
+          this.registerAccessToken(refreshed);
+          response = await send2();
+          if (response.ok) {
+            const data2 = await response.json();
+            return { ok: true, status: response.status, data: data2, errorText: "" };
+          }
+          const retryText = await response.text().catch(() => "");
+          const advised2 = adviseFromBifrostBody(response.status, retryText, this.adviceContext(operation));
+          const errorText2 = advised2 ? retryText ? `${retryText}
+${advised2.message}` : advised2.message : retryText;
+          return { ok: false, status: response.status, data: null, errorText: errorText2 };
+        } catch {
+          const advised2 = adviseFromBifrostBody(response.status, text, this.adviceContext(operation));
+          const errorText2 = advised2 ? text ? `${text}
+${advised2.message}` : advised2.message : text;
+          return { ok: false, status: response.status, data: null, errorText: errorText2 };
+        }
+      }
       const advised = adviseFromBifrostBody(response.status, text, this.adviceContext(operation));
       const errorText = advised ? text ? `${text}
 ${advised.message}` : advised.message : text;
@@ -22466,17 +22643,37 @@ async function resolveApiKeyAndTeamId(inputs, client, reporter = core_exports) {
   }
   return { apiKey, teamId: resolvedTeamId, pmakIdentity };
 }
-async function runCredentialPreflightForInputs(inputs, pmak, reporter, fetchImpl) {
+async function runCredentialPreflightForInputs(inputs, pmak, reporter, fetchImpl, liveAccessToken) {
+  const accessToken = liveAccessToken ?? inputs.postmanAccessToken;
   await runCredentialPreflight({
     apiBaseUrl: inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE,
     iapubBaseUrl: inputs.postmanIapubBase || DEFAULT_POSTMAN_IAPUB_BASE,
     pmak,
-    postmanAccessToken: inputs.postmanAccessToken,
+    postmanAccessToken: accessToken,
     explicitTeamId: inputs.postmanTeamId || void 0,
     mode: inputs.credentialPreflight,
-    mask: createSecretMasker([inputs.postmanApiKey, inputs.postmanAccessToken]),
+    mask: createSecretMasker([inputs.postmanApiKey, accessToken]),
     log: reporter,
     fetchImpl
+  });
+}
+function createInsightsTokenProvider(inputs, reporter, apiKey = inputs.postmanApiKey) {
+  return new AccessTokenProvider({
+    accessToken: inputs.postmanAccessToken,
+    apiKey,
+    apiBaseUrl: inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE,
+    onToken: (token) => reporter.setSecret(token)
+  });
+}
+function createInsightsBifrostClient(inputs, tokenProvider, teamId, apiKey) {
+  return new BifrostCatalogClient({
+    tokenProvider,
+    accessToken: tokenProvider.current(),
+    teamId,
+    apiKey,
+    bifrostBaseUrl: inputs.postmanBifrostBase,
+    observabilityBaseUrl: inputs.postmanObservabilityBase,
+    observabilityEnv: inputs.postmanObservabilityEnv
   });
 }
 
@@ -22590,19 +22787,24 @@ async function runCli(argv = process.argv.slice(2), runtime = {}) {
   if (inputs.githubToken) {
     reporter.setSecret(inputs.githubToken);
   }
-  const preliminaryClient = new BifrostCatalogClient({
-    accessToken: inputs.postmanAccessToken,
-    teamId: inputs.postmanTeamId,
-    apiKey: inputs.postmanApiKey,
-    bifrostBaseUrl: inputs.postmanBifrostBase,
-    observabilityBaseUrl: inputs.postmanObservabilityBase,
-    observabilityEnv: inputs.postmanObservabilityEnv
-  });
+  const tokenProvider = createInsightsTokenProvider(inputs, reporter);
+  const preliminaryClient = createInsightsBifrostClient(
+    inputs,
+    tokenProvider,
+    inputs.postmanTeamId,
+    inputs.postmanApiKey
+  );
   const { apiKey, teamId, pmakIdentity } = await resolveApiKeyAndTeamId(
     inputs,
     preliminaryClient,
     reporter
   );
+  const activeTokenProvider = apiKey !== inputs.postmanApiKey ? new AccessTokenProvider({
+    accessToken: tokenProvider.current(),
+    apiKey,
+    apiBaseUrl: inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE,
+    onToken: (token) => reporter.setSecret(token)
+  }) : tokenProvider;
   const telemetry = createTelemetryContext({ action: "postman-insights-onboarding-action", logger: reporter });
   telemetry.setTeamId(inputs.postmanTeamId || pmakIdentity?.teamId);
   if (apiKey) {
@@ -22610,15 +22812,14 @@ async function runCli(argv = process.argv.slice(2), runtime = {}) {
   }
   let result;
   try {
-    await runCredentialPreflightForInputs(inputs, pmakIdentity, reporter);
-    const client = new BifrostCatalogClient({
-      accessToken: inputs.postmanAccessToken,
-      teamId,
-      apiKey,
-      bifrostBaseUrl: inputs.postmanBifrostBase,
-      observabilityBaseUrl: inputs.postmanObservabilityBase,
-      observabilityEnv: inputs.postmanObservabilityEnv
-    });
+    await runCredentialPreflightForInputs(
+      inputs,
+      pmakIdentity,
+      reporter,
+      void 0,
+      activeTokenProvider.current()
+    );
+    const client = createInsightsBifrostClient(inputs, activeTokenProvider, teamId, apiKey);
     result = await (runtime.executeOnboarding ?? runOnboarding)(
       inputs,
       client,

@@ -15,6 +15,7 @@ import {
 } from './lib/postman/base-urls.js';
 import { sleep } from './lib/retry.js';
 import { createSecretMasker } from './lib/secrets.js';
+import { AccessTokenProvider } from './lib/postman/token-provider.js';
 import { createTelemetryContext } from '@postman-cse/automation-telemetry-core';
 
 const POLL_TIMEOUT_MIN = 10;
@@ -407,18 +408,50 @@ export async function runCredentialPreflightForInputs(
   inputs: ActionInputs,
   pmak: CredentialIdentity | undefined,
   reporter: Reporter,
-  fetchImpl?: typeof fetch
+  fetchImpl?: typeof fetch,
+  liveAccessToken?: string
 ): Promise<void> {
+  const accessToken = liveAccessToken ?? inputs.postmanAccessToken;
   await runCredentialPreflight({
     apiBaseUrl: inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE,
     iapubBaseUrl: inputs.postmanIapubBase || DEFAULT_POSTMAN_IAPUB_BASE,
     pmak,
-    postmanAccessToken: inputs.postmanAccessToken,
+    postmanAccessToken: accessToken,
     explicitTeamId: inputs.postmanTeamId || undefined,
     mode: inputs.credentialPreflight,
-    mask: createSecretMasker([inputs.postmanApiKey, inputs.postmanAccessToken]),
+    mask: createSecretMasker([inputs.postmanApiKey, accessToken]),
     log: reporter,
     fetchImpl
+  });
+}
+
+export function createInsightsTokenProvider(
+  inputs: ActionInputs,
+  reporter: Reporter,
+  apiKey = inputs.postmanApiKey
+): AccessTokenProvider {
+  return new AccessTokenProvider({
+    accessToken: inputs.postmanAccessToken,
+    apiKey,
+    apiBaseUrl: inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE,
+    onToken: (token) => reporter.setSecret(token)
+  });
+}
+
+export function createInsightsBifrostClient(
+  inputs: ActionInputs,
+  tokenProvider: AccessTokenProvider,
+  teamId: string,
+  apiKey: string
+): BifrostCatalogClient {
+  return new BifrostCatalogClient({
+    tokenProvider,
+    accessToken: tokenProvider.current(),
+    teamId,
+    apiKey,
+    bifrostBaseUrl: inputs.postmanBifrostBase,
+    observabilityBaseUrl: inputs.postmanObservabilityBase,
+    observabilityEnv: inputs.postmanObservabilityEnv
   });
 }
 
@@ -433,16 +466,25 @@ export async function runAction(): Promise<void> {
   if (inputs.postmanApiKey) core.setSecret(inputs.postmanApiKey);
   if (inputs.githubToken) core.setSecret(inputs.githubToken);
 
-  const preliminaryClient = new BifrostCatalogClient({
-    accessToken: inputs.postmanAccessToken,
-    teamId: inputs.postmanTeamId,
-    apiKey: inputs.postmanApiKey,
-    bifrostBaseUrl: inputs.postmanBifrostBase,
-    observabilityBaseUrl: inputs.postmanObservabilityBase,
-    observabilityEnv: inputs.postmanObservabilityEnv,
-  });
+  const tokenProvider = createInsightsTokenProvider(inputs, core);
+  const preliminaryClient = createInsightsBifrostClient(
+    inputs,
+    tokenProvider,
+    inputs.postmanTeamId,
+    inputs.postmanApiKey
+  );
 
   const { apiKey, teamId, pmakIdentity } = await resolveApiKeyAndTeamId(inputs, preliminaryClient, core);
+
+  const activeTokenProvider =
+    apiKey !== inputs.postmanApiKey
+      ? new AccessTokenProvider({
+          accessToken: tokenProvider.current(),
+          apiKey,
+          apiBaseUrl: inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE,
+          onToken: (token) => core.setSecret(token)
+        })
+      : tokenProvider;
 
   const telemetry = createTelemetryContext({ action: 'postman-insights-onboarding-action', logger: core });
   telemetry.setTeamId(inputs.postmanTeamId || pmakIdentity?.teamId);
@@ -451,16 +493,15 @@ export async function runAction(): Promise<void> {
   try {
     // Credential preflight can throw under enforce; keep it inside the try so a
     // known-team credential failure still routes through emitCompletion('failure').
-    await runCredentialPreflightForInputs(inputs, pmakIdentity, core);
+    await runCredentialPreflightForInputs(
+      inputs,
+      pmakIdentity,
+      core,
+      undefined,
+      activeTokenProvider.current()
+    );
 
-    const client = new BifrostCatalogClient({
-      accessToken: inputs.postmanAccessToken,
-      teamId,
-      apiKey,
-      bifrostBaseUrl: inputs.postmanBifrostBase,
-      observabilityBaseUrl: inputs.postmanObservabilityBase,
-      observabilityEnv: inputs.postmanObservabilityEnv,
-    });
+    const client = createInsightsBifrostClient(inputs, activeTokenProvider, teamId, apiKey);
 
     result = await runOnboarding(inputs, client, sleep, core);
   } catch (error: unknown) {

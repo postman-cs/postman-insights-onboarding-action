@@ -4,6 +4,7 @@ import { HttpError } from './http-error.js';
 import { retry } from './retry.js';
 import { createSecretMasker } from './secrets.js';
 import { POSTMAN_ENDPOINT_PROFILES } from './postman/base-urls.js';
+import { AccessTokenProvider } from './postman/token-provider.js';
 
 const DEFAULT_BIFROST_BASE_URL = POSTMAN_ENDPOINT_PROFILES.prod.bifrostBaseUrl;
 const BIFROST_PROXY_PATH = '/ws/proxy';
@@ -41,6 +42,8 @@ export interface OnboardGitParams {
 }
 
 export interface BifrostClientOptions {
+  /** Live access token holder; preferred over a static accessToken string. */
+  tokenProvider?: AccessTokenProvider;
   accessToken: string;
   teamId: string;
   apiKey: string;
@@ -58,8 +61,16 @@ export interface BifrostClientOptions {
   observabilityEnv?: string;
 }
 
+function isExpiredAuthError(status: number, body: string): boolean {
+  return (
+    status === 401 ||
+    body.includes('UNAUTHENTICATED') ||
+    body.includes('authenticationError')
+  );
+}
+
 export class BifrostCatalogClient {
-  private readonly accessToken: string;
+  private readonly tokenProvider: AccessTokenProvider;
   private readonly teamId: string;
   private apiKey: string;
   private readonly fetchFn: typeof globalThis.fetch;
@@ -69,11 +80,16 @@ export class BifrostCatalogClient {
   private readonly observabilityEnv: string;
 
   constructor(options: BifrostClientOptions) {
-    this.accessToken = options.accessToken;
+    this.tokenProvider =
+      options.tokenProvider ??
+      new AccessTokenProvider({
+        accessToken: options.accessToken,
+        apiKey: options.apiKey
+      });
     this.teamId = options.teamId;
     this.apiKey = options.apiKey;
     this.fetchFn = options.fetchFn ?? globalThis.fetch;
-    this.secretValues = [options.accessToken, options.apiKey].filter(Boolean);
+    this.secretValues = [this.tokenProvider.current(), options.apiKey].filter(Boolean);
     const base = (options.bifrostBaseUrl || DEFAULT_BIFROST_BASE_URL).replace(/\/+$/, '');
     this.bifrostProxyUrl = `${base}${BIFROST_PROXY_PATH}`;
     this.observabilityBaseUrl = (options.observabilityBaseUrl || DEFAULT_OBSERVABILITY_BASE_URL).replace(/\/+$/, '');
@@ -87,6 +103,12 @@ export class BifrostCatalogClient {
     }
   }
 
+  private registerAccessToken(token: string): void {
+    if (token && !this.secretValues.includes(token)) {
+      this.secretValues.push(token);
+    }
+  }
+
   /**
    * Build Bifrost proxy headers.
    * x-entity-team-id is ONLY included when teamId is present (org-mode tokens).
@@ -94,7 +116,7 @@ export class BifrostCatalogClient {
    */
   private headers(): Record<string, string> {
     const h: Record<string, string> = {
-      'x-access-token': this.accessToken,
+      'x-access-token': this.tokenProvider.current(),
       'Content-Type': 'application/json',
     };
     if (this.teamId) {
@@ -111,7 +133,7 @@ export class BifrostCatalogClient {
     const session = getMemoizedSessionIdentity();
     return {
       operation,
-      hasAccessToken: Boolean(this.accessToken),
+      hasAccessToken: Boolean(this.tokenProvider.current()),
       sessionTeamId: session?.teamId,
       sessionRoles: session?.roles,
       sessionConsumerType: session?.consumerType,
@@ -126,16 +148,51 @@ export class BifrostCatalogClient {
     body: unknown = {},
     operation = 'api-catalog request'
   ): Promise<T> {
-    const response = await this.fetchFn(this.bifrostProxyUrl, {
-      method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify({
-        service: 'api-catalog',
-        method,
-        path,
-        body
-      })
-    });
+    const send = async (): Promise<Response> =>
+      this.fetchFn(this.bifrostProxyUrl, {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify({
+          service: 'api-catalog',
+          method,
+          path,
+          body
+        })
+      });
+
+    let response = await send();
+    if (!response.ok) {
+      const bodyText = await response.text().catch(() => '');
+      if (isExpiredAuthError(response.status, bodyText) && this.tokenProvider.canRefresh()) {
+        try {
+          const refreshed = await this.tokenProvider.refresh();
+          this.registerAccessToken(refreshed);
+          response = await send();
+        } catch {
+          const httpErr = await HttpError.fromResponse(
+            new Response(bodyText, { status: response.status, headers: response.headers }),
+            {
+              method: 'POST',
+              url: `bifrost:api-catalog:${method} ${path}`,
+              secretValues: this.secretValues
+            }
+          );
+          const advised = adviseFromHttpError(httpErr, this.adviceContext(operation));
+          throw advised ?? httpErr;
+        }
+      } else {
+        const httpErr = await HttpError.fromResponse(
+          new Response(bodyText, { status: response.status, headers: response.headers }),
+          {
+            method: 'POST',
+            url: `bifrost:api-catalog:${method} ${path}`,
+            secretValues: this.secretValues
+          }
+        );
+        const advised = adviseFromHttpError(httpErr, this.adviceContext(operation));
+        throw advised ?? httpErr;
+      }
+    }
 
     if (!response.ok) {
       const httpErr = await HttpError.fromResponse(response, {
@@ -167,18 +224,40 @@ export class BifrostCatalogClient {
     body: unknown = {},
     operation = 'Insights request'
   ): Promise<{ ok: boolean; status: number; data: T | null; errorText: string }> {
-    const response = await this.fetchFn(this.bifrostProxyUrl, {
-      method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify({
-        service: 'akita',
-        method,
-        path,
-        body
-      })
-    });
+    const send = async (): Promise<Response> =>
+      this.fetchFn(this.bifrostProxyUrl, {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify({
+          service: 'akita',
+          method,
+          path,
+          body
+        })
+      });
+
+    let response = await send();
     if (!response.ok) {
       const text = await response.text().catch(() => '');
+      if (isExpiredAuthError(response.status, text) && this.tokenProvider.canRefresh()) {
+        try {
+          const refreshed = await this.tokenProvider.refresh();
+          this.registerAccessToken(refreshed);
+          response = await send();
+          if (response.ok) {
+            const data = (await response.json()) as T;
+            return { ok: true, status: response.status, data, errorText: '' };
+          }
+          const retryText = await response.text().catch(() => '');
+          const advised = adviseFromBifrostBody(response.status, retryText, this.adviceContext(operation));
+          const errorText = advised ? (retryText ? `${retryText}\n${advised.message}` : advised.message) : retryText;
+          return { ok: false, status: response.status, data: null, errorText };
+        } catch {
+          const advised = adviseFromBifrostBody(response.status, text, this.adviceContext(operation));
+          const errorText = advised ? (text ? `${text}\n${advised.message}` : advised.message) : text;
+          return { ok: false, status: response.status, data: null, errorText };
+        }
+      }
       const advised = adviseFromBifrostBody(response.status, text, this.adviceContext(operation));
       const errorText = advised ? (text ? `${text}\n${advised.message}` : advised.message) : text;
       return { ok: false, status: response.status, data: null, errorText };
