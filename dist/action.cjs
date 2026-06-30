@@ -21730,6 +21730,14 @@ ${advised.message}` : advised.message : text;
       throw new Error(`Workspace acknowledge failed: ${result.status} ${result.errorText}`);
     }
   }
+  // PMAK-only by proven exception. A live probe against the observability
+  // application-binding endpoint (POST /v2/agent/api-catalog/workspaces/:id/
+  // applications) showed x-access-token is rejected identically to the x-api-key
+  // control: both return 401 {"message":"Postman User not found"} for a
+  // service-account credential, because the observability service has no
+  // "Postman User" for a service account. The access token offers no improvement
+  // over the API key here, so this route is not migrated to access-token-primary
+  // (the suite-wide migration explicitly leaves probe-failed routes on PMAK).
   async createApplication(workspaceId, systemEnv) {
     const response = await this.fetchFn(
       `${this.observabilityBaseUrl}/v2/agent/api-catalog/workspaces/${workspaceId}/applications`,
