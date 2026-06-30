@@ -16,6 +16,8 @@ Part of the [Postman API Onboarding suite](https://github.com/postman-cs/postman
 
 This action does **not** deploy the Insights agent, create workspaces, create environments, upload OpenAPI specs, or sync repo artifacts. It only links a service that Insights has already discovered.
 
+> **Credential requirement for the Insights linking steps.** The service discovery and git-link calls run on Postman's `api-catalog` service and accept a service-account access token. The Insights acknowledgment and application-binding steps run on the `akita` (Insights) service, which authenticates against a **Postman user identity** and answers `401 "Postman User not found"` for a service-account token. To complete the full link, supply a credential pair that carries a Postman user identity (a user's access token and user PMAK). A service-account-only pair from `postman-resolve-service-token-action` is sufficient for discovery and git linking but cannot finish the Insights acknowledgment.
+
 ## Which action should I use?
 
 | Need | Action |
@@ -207,7 +209,7 @@ See [CLI Usage](docs/cli.md) for provider auto-detection, output formats, and Gi
 | `system-environment-id` | Postman system environment UUID for service-level Insights acknowledgment | No |  |
 | `cluster-name` | Insights cluster name. When set, matches {cluster-name}/{project-name} exactly in discovered services | No |  |
 | `repo-url` | Repository URL for Git onboarding. Auto-detected from CI context when omitted. | No |  |
-| `postman-access-token` | Service-account Postman access token for integration API calls. Prefer minting it with postman-resolve-service-token-action. | Yes |  |
+| `postman-access-token` | Postman access token (x-access-token) for the Bifrost linking calls. The api-catalog discovery and git-link steps accept a service-account token (mint it with postman-resolve-service-token-action); the Insights (akita) acknowledgment and application-binding steps require a token carrying a Postman user identity — a service-account token answers 401 "Postman User not found" there. | Yes |  |
 | `postman-team-id` | Explicit Postman team ID for org-mode integration request headers. When omitted, x-entity-team-id is not sent. | No |  |
 | `github-token` | Optional GitHub token passed as git_api_key when repository auth is required by onboarding/git | No |  |
 | `postman-api-key` | Service-account Postman API key (PMAK-*) for the application binding call. Auto-created from postman-access-token when omitted or invalid after a clear 401/403 validation failure. | No |  |

@@ -33,7 +33,7 @@ npm run check:dist   # build + git diff --exit-code (CI integrity)
 
 - **Service linking**: Resolves Insights-discovered services and associates each with an API Catalog workspace and the originating git repository via Bifrost.
 - **Team scope**: Derived from session identity (`credential-identity.ts`); `POSTMAN_TEAM_ID` is an explicit org-mode override for `x-entity-team-id`, otherwise Bifrost infers team context.
-- **Governance credential**: Uses the access token for Bifrost calls (it can expire); the API key handles standard Postman API operations.
+- **Governance credential**: Uses the access token for Bifrost calls (it can expire). `BifrostCatalogClient` takes an `AccessTokenProvider` and re-mints the token once on a 401/UNAUTHENTICATED for the `api-catalog` path. The `akita` (Insights) path is a platform wall for service-account identities: it answers `401 "Postman User not found"` on every route (api-catalog returns 200 with the same token), and `createApplication` 401s on both `x-access-token` and `x-api-key` for a service account — completing the Insights acknowledgment requires a token with a Postman *user* identity. Proof: `scripts/probe-insights-akita.ts`.
 
 ## Gotchas
 
