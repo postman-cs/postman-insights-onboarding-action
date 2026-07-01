@@ -42,12 +42,12 @@ jobs:
       # ... deploy your service to Kubernetes ...
 
       - id: postman_token
-        uses: postman-cs/postman-resolve-service-token-action@v1
+        uses: postman-cs/postman-resolve-service-token-action@v2
         with:
           postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
           postman-region: us
 
-      - uses: postman-cs/postman-insights-onboarding-action@v1
+      - uses: postman-cs/postman-insights-onboarding-action@v2
         with:
           project-name: core-payments
           workspace-id: ${{ vars.POSTMAN_WORKSPACE_ID }}
@@ -72,12 +72,12 @@ jobs:
       # ... deploy your service to Kubernetes ...
 
       - id: postman_token
-        uses: postman-cs/postman-resolve-service-token-action@v1
+        uses: postman-cs/postman-resolve-service-token-action@v2
         with:
           postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
           postman-region: us
 
-      - uses: postman-cs/postman-insights-onboarding-action@v1
+      - uses: postman-cs/postman-insights-onboarding-action@v2
         with:
           project-name: core-payments
           workspace-id: ${{ vars.POSTMAN_WORKSPACE_ID }}
@@ -101,12 +101,12 @@ jobs:
       - uses: actions/checkout@v5
 
       - id: postman_token
-        uses: postman-cs/postman-resolve-service-token-action@v1
+        uses: postman-cs/postman-resolve-service-token-action@v2
         with:
           postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
           postman-region: us
 
-      - uses: postman-cs/postman-bootstrap-action@v1
+      - uses: postman-cs/postman-bootstrap-action@v2
         id: bootstrap
         with:
           project-name: core-payments
@@ -117,7 +117,7 @@ jobs:
 
       # ... deploy service to Kubernetes ...
 
-      - uses: postman-cs/postman-repo-sync-action@v1
+      - uses: postman-cs/postman-repo-sync-action@v2
         id: sync
         with:
           project-name: core-payments
@@ -131,7 +131,7 @@ jobs:
           postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
           postman-access-token: ${{ steps.postman_token.outputs.token }}
 
-      - uses: postman-cs/postman-insights-onboarding-action@v1
+      - uses: postman-cs/postman-insights-onboarding-action@v2
         with:
           project-name: core-payments
           workspace-id: ${{ steps.bootstrap.outputs.workspace-id }}
@@ -149,7 +149,7 @@ jobs:
 The Insights agent takes time to discover services after pods start. The action polls the [API Catalog](https://learning.postman.com/docs/api-catalog/connect/insights/) discovered-services list until the service appears or the timeout is reached. For services that take longer to appear (cold cluster, large pod startup time), raise the timeout:
 
 ```yaml
-      - uses: postman-cs/postman-insights-onboarding-action@v1
+      - uses: postman-cs/postman-insights-onboarding-action@v2
         with:
           project-name: core-payments
           workspace-id: ${{ vars.POSTMAN_WORKSPACE_ID }}
@@ -167,7 +167,7 @@ The Insights agent takes time to discover services after pods start. The action 
 Before any onboarding write, the action can verify that `postman-api-key` and `postman-access-token` resolve to the same parent organization. The default `warn` mode logs a note and continues. Set `credential-preflight` to `enforce` to fail fast on mismatched credentials:
 
 ```yaml
-      - uses: postman-cs/postman-insights-onboarding-action@v1
+      - uses: postman-cs/postman-insights-onboarding-action@v2
         with:
           project-name: core-payments
           workspace-id: ${{ vars.POSTMAN_WORKSPACE_ID }}

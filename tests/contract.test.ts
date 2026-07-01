@@ -286,8 +286,8 @@ describe('marketplace readiness docs', () => {
   it('keeps prerequisites, action boundaries, service-token auth, and region visible before examples', () => {
     const firstExampleIndex = readme.indexOf('## Examples');
     const firstExampleIntro = readme.slice(0, firstExampleIndex);
-    const serviceTokenIndex = readme.indexOf('postman-resolve-service-token-action@v1');
-    const insightsIndex = readme.indexOf('postman-insights-onboarding-action@v1');
+    const serviceTokenIndex = readme.indexOf('postman-resolve-service-token-action@v2');
+    const insightsIndex = readme.indexOf('postman-insights-onboarding-action@v2');
     const regionIndex = readme.indexOf('postman-region: us');
 
     expect(firstExampleIntro).toContain('does **not** deploy the Insights agent');
