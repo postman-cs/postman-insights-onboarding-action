@@ -16,6 +16,7 @@ import {
 import { sleep } from './lib/retry.js';
 import { getMemoizedSessionIdentity } from './lib/credential-identity.js';
 import { createTelemetryContext } from '@postman-cse/automation-telemetry-core';
+import { resolveActionVersion } from './action-version.js';
 
 interface CliConfig {
   inputEnv: NodeJS.ProcessEnv;
@@ -183,7 +184,7 @@ export async function runCli(
         })
       : tokenProvider;
 
-  const telemetry = createTelemetryContext({ action: 'postman-insights-onboarding-action', logger: reporter });
+  const telemetry = createTelemetryContext({ action: 'postman-insights-onboarding-action', actionVersion: resolveActionVersion(), logger: reporter });
   telemetry.setTeamId(inputs.postmanTeamId || pmakIdentity?.teamId);
   if (apiKey) {
     reporter.setSecret(apiKey);

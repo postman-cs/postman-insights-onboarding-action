@@ -22376,7 +22376,7 @@ function resolveActionVersion(explicit) {
   if (explicit) {
     return explicit;
   }
-  return "2.0.0" ? "2.0.0" : "unknown";
+  return typeof __ACTION_VERSION__ !== "undefined" && __ACTION_VERSION__ ? __ACTION_VERSION__ : "unknown";
 }
 function telemetryDisabled(env) {
   const flag = String(env.POSTMAN_ACTIONS_TELEMETRY ?? "").trim().toLowerCase();
@@ -22496,6 +22496,18 @@ function createTelemetryContext(options) {
       }
     }
   };
+}
+
+// src/action-version.ts
+var import_node_fs = require("node:fs");
+var import_node_path = require("node:path");
+function resolveActionVersion2() {
+  try {
+    const raw = (0, import_node_fs.readFileSync)((0, import_node_path.join)(__dirname, "..", "package.json"), "utf8");
+    return JSON.parse(raw).version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
 }
 
 // src/index.ts
@@ -22821,7 +22833,7 @@ async function runAction() {
     apiBaseUrl: inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE,
     onToken: (token) => setSecret(token)
   }) : tokenProvider;
-  const telemetry = createTelemetryContext({ action: "postman-insights-onboarding-action", logger: core_exports });
+  const telemetry = createTelemetryContext({ action: "postman-insights-onboarding-action", actionVersion: resolveActionVersion2(), logger: core_exports });
   telemetry.setTeamId(inputs.postmanTeamId || pmakIdentity?.teamId);
   let result;
   try {

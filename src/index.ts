@@ -17,6 +17,7 @@ import { sleep } from './lib/retry.js';
 import { createSecretMasker } from './lib/secrets.js';
 import { AccessTokenProvider } from './lib/postman/token-provider.js';
 import { createTelemetryContext } from '@postman-cse/automation-telemetry-core';
+import { resolveActionVersion } from './action-version.js';
 
 const POLL_TIMEOUT_MIN = 10;
 const POLL_TIMEOUT_MAX = 600;
@@ -486,7 +487,7 @@ export async function runAction(): Promise<void> {
         })
       : tokenProvider;
 
-  const telemetry = createTelemetryContext({ action: 'postman-insights-onboarding-action', logger: core });
+  const telemetry = createTelemetryContext({ action: 'postman-insights-onboarding-action', actionVersion: resolveActionVersion(), logger: core });
   telemetry.setTeamId(inputs.postmanTeamId || pmakIdentity?.teamId);
 
   let result: import('./index.js').OnboardingResult;

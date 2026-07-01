@@ -18685,9 +18685,9 @@ __export(cli_exports, {
   toDotenv: () => toDotenv
 });
 module.exports = __toCommonJS(cli_exports);
-var import_node_fs = require("node:fs");
+var import_node_fs2 = require("node:fs");
 var import_promises = require("node:fs/promises");
-var import_node_path = __toESM(require("node:path"), 1);
+var import_node_path2 = __toESM(require("node:path"), 1);
 
 // src/lib/retry.ts
 function sleep(delayMs) {
@@ -22369,7 +22369,7 @@ function resolveActionVersion(explicit) {
   if (explicit) {
     return explicit;
   }
-  return "2.0.0" ? "2.0.0" : "unknown";
+  return typeof __ACTION_VERSION__ !== "undefined" && __ACTION_VERSION__ ? __ACTION_VERSION__ : "unknown";
 }
 function telemetryDisabled(env) {
   const flag = String(env.POSTMAN_ACTIONS_TELEMETRY ?? "").trim().toLowerCase();
@@ -22489,6 +22489,18 @@ function createTelemetryContext(options) {
       }
     }
   };
+}
+
+// src/action-version.ts
+var import_node_fs = require("node:fs");
+var import_node_path = require("node:path");
+function resolveActionVersion2() {
+  try {
+    const raw = (0, import_node_fs.readFileSync)((0, import_node_path.join)(__dirname, "..", "package.json"), "utf8");
+    return JSON.parse(raw).version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
 }
 
 // src/index.ts
@@ -22861,13 +22873,13 @@ async function writeOptionalFile(filePath, content) {
   if (!filePath) {
     return;
   }
-  const workspaceRoot = import_node_path.default.resolve(process.cwd());
-  const resolved = import_node_path.default.resolve(workspaceRoot, filePath);
-  const relative2 = import_node_path.default.relative(workspaceRoot, resolved);
-  if (relative2.startsWith("..") || import_node_path.default.isAbsolute(relative2)) {
+  const workspaceRoot = import_node_path2.default.resolve(process.cwd());
+  const resolved = import_node_path2.default.resolve(workspaceRoot, filePath);
+  const relative2 = import_node_path2.default.relative(workspaceRoot, resolved);
+  if (relative2.startsWith("..") || import_node_path2.default.isAbsolute(relative2)) {
     throw new Error(`Output path must stay within workspace: ${filePath}`);
   }
-  await (0, import_promises.mkdir)(import_node_path.default.dirname(resolved), { recursive: true });
+  await (0, import_promises.mkdir)(import_node_path2.default.dirname(resolved), { recursive: true });
   await (0, import_promises.writeFile)(resolved, content, "utf8");
 }
 function toOutputs(result) {
@@ -22910,7 +22922,7 @@ async function runCli(argv = process.argv.slice(2), runtime = {}) {
     apiBaseUrl: inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE,
     onToken: (token) => reporter.setSecret(token)
   }) : tokenProvider;
-  const telemetry = createTelemetryContext({ action: "postman-insights-onboarding-action", logger: reporter });
+  const telemetry = createTelemetryContext({ action: "postman-insights-onboarding-action", actionVersion: resolveActionVersion2(), logger: reporter });
   telemetry.setTeamId(inputs.postmanTeamId || pmakIdentity?.teamId);
   if (apiKey) {
     reporter.setSecret(apiKey);
@@ -22955,9 +22967,9 @@ function isEntrypoint(currentPath, entrypointPath) {
     return false;
   }
   try {
-    return (0, import_node_fs.realpathSync)(currentPath) === (0, import_node_fs.realpathSync)(entrypointPath);
+    return (0, import_node_fs2.realpathSync)(currentPath) === (0, import_node_fs2.realpathSync)(entrypointPath);
   } catch {
-    return import_node_path.default.resolve(currentPath) === import_node_path.default.resolve(entrypointPath);
+    return import_node_path2.default.resolve(currentPath) === import_node_path2.default.resolve(entrypointPath);
   }
 }
 if (isEntrypoint(currentModulePath, entrypoint)) {
