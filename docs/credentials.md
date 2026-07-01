@@ -76,4 +76,4 @@ When the access-token session reports a `consumerType` other than `service_accou
 
 ## Team scope (`postman-team-id`)
 
-Supply `postman-team-id` for org-mode tokens that require an explicit team header. When set, it is sent as `x-entity-team-id` on integration requests. For non-org tokens, leave it unset so Postman can infer team context from the access token. The `POSTMAN_TEAM_ID` environment variable is honored when the input is empty. Postman's [roles and permissions](https://learning.postman.com/docs/administration/roles-and-permissions/) docs cover the team and workspace role model.
+Supply `postman-team-id` for org-mode tokens that require an explicit team header. When set, it is sent as `x-entity-team-id` on integration requests. For non-org tokens, leave it unset so team context can be inferred from the access token. The `POSTMAN_TEAM_ID` environment variable is honored when the input is empty. The [roles and permissions](https://learning.postman.com/docs/administration/roles-and-permissions/) docs cover the team and workspace role model.
