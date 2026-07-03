@@ -238,6 +238,14 @@ Failures set `status=error` before the action exits.
 
 ## How it works
 
+```mermaid
+flowchart LR
+    D["Discovery poll<br/>discovered-services list"] --> P["Catalog prep<br/>prepare-collection"]
+    P --> G["Git link<br/>service to repository"]
+    G --> A["Acknowledgment<br/>onboard + workspace ack"]
+    A --> B["Binding<br/>application binding +<br/>team verification token"]
+```
+
 **Discovery poll.** The action polls the API Catalog discovered-services list at the configured interval until a service matching `{cluster-name}/{project-name}` appears (suffix matching when `cluster-name` is omitted) or the timeout is reached.
 
 **Catalog prep.** It then calls `POST /api/v1/onboarding/prepare-collection` to create the API Catalog collection entry for the discovered service in your workspace.
@@ -283,9 +291,13 @@ For local builds, contract smoke monitoring, and release channels, see [Developm
 
 This action sends a single non-identifying usage event when a run completes, so the
 Postman team can measure adoption across CI systems. The event contains the
-action name and version, your Postman team ID, the detected CI provider and
-runner kind, the run outcome, the CI run identifier, an event timestamp, and a one-way SHA-256 hash of the repository
-identifier. Each event also carries a schema version and a constant event marker (always `completion`). The Postman team ID is sent in the clear on a legitimate-interest
+action name and version, your Postman team ID, the run outcome, an event
+timestamp, the detected CI provider, runner kind, and runner OS, the CI run
+identifier and event trigger, a one-way SHA-256 hash of the repository
+identifier, the detected git provider (github, gitlab, bitbucket, or
+azure-devops), a one-way SHA-256 hash of the VCS organization name, a coarse
+account type (service or user), and a coarse ref kind (default-branch, branch,
+or tag). Each event also carries a schema version and a constant event marker (always `completion`). The Postman team ID is sent in the clear on a legitimate-interest
 basis to measure product adoption.
 
 The `events.pm-cse.dev` endpoint is operated by the Postman Customer Success
