@@ -291,7 +291,7 @@ describe('marketplace readiness docs', () => {
     const regionIndex = readme.indexOf('postman-region: us');
 
     expect(firstExampleIntro).toContain('does **not** deploy the Insights agent');
-    expect(firstExampleIntro).toContain('Which action should I use?');
+    expect(firstExampleIntro).toContain('action-picker table');
     expect(serviceTokenIndex).toBeGreaterThan(-1);
     expect(insightsIndex).toBeGreaterThan(-1);
     expect(serviceTokenIndex).toBeLessThan(insightsIndex);

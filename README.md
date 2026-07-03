@@ -4,7 +4,13 @@
 
 Links [Postman Insights](https://learning.postman.com/docs/insights/overview/) discovered services to [API Catalog](https://learning.postman.com/docs/api-catalog/overview/) workspaces and git repositories after deployment, so every service the Insights agent finds lands in your catalog with a collection, a repo link, and live telemetry.
 
-Part of the [Postman API Onboarding suite](https://github.com/postman-cs/postman-api-onboarding-action).
+Part of the [Postman API Onboarding suite](https://github.com/postman-cs/postman-api-onboarding-action); the composite action's README has the full [action-picker table](https://github.com/postman-cs/postman-api-onboarding-action#which-action-should-i-use).
+
+- [Prerequisites](#prerequisites)
+- [Usage](#usage)
+- [Examples](#examples)
+- [Inputs](#inputs) / [Outputs](#outputs)
+- [How it works](#how-it-works)
 
 ## Prerequisites
 
@@ -17,18 +23,6 @@ Part of the [Postman API Onboarding suite](https://github.com/postman-cs/postman
 This action does **not** deploy the Insights agent, create workspaces, create environments, upload OpenAPI specs, or sync repo artifacts. It only links a service that Insights has already discovered.
 
 > **Credential requirement for the Insights linking steps.** The service discovery and git-link calls run on the `api-catalog` service and accept a service-account access token. The Insights acknowledgment and application-binding steps run on the `akita` (Insights) service, which authenticates against a **Postman user identity** and answers `401 "Postman User not found"` for a service-account token. To complete the full link, supply a credential pair that carries a Postman user identity (a user's access token and user PMAK). A service-account-only pair from `postman-resolve-service-token-action` is sufficient for discovery and git linking but cannot finish the Insights acknowledgment.
-
-## Which action should I use?
-
-| Need | Action |
-| --- | --- |
-| Mint a service-account access token and team ID | [Postman Onboarding: Service Token](https://github.com/postman-cs/postman-resolve-service-token-action) |
-| Run the full workspace, collection, repo sync, and optional Insights pipeline | [Postman API Onboarding](https://github.com/postman-cs/postman-api-onboarding-action) |
-| Create a workspace, upload an OpenAPI spec, and generate collections | [Postman Onboarding: Workspace Bootstrap](https://github.com/postman-cs/postman-bootstrap-action) |
-| Sync Postman artifacts, mocks, monitors, and CI files back to the repo | [Postman Onboarding: Repo Sync](https://github.com/postman-cs/postman-repo-sync-action) |
-| Link an already discovered Insights service to an existing workspace | [Postman Onboarding: Insights Linking](https://github.com/postman-cs/postman-insights-onboarding-action) |
-| Discover OpenAPI specs from AWS services | [Postman Onboarding: AWS Spec Discovery](https://github.com/postman-cs/postman-aws-spec-discovery-action) |
-| Apply a curated smoke flow to an existing Smoke collection | [Postman Onboarding: Smoke Flow](https://github.com/postman-cs/postman-smoke-flow-action) |
 
 ## Usage
 
@@ -260,75 +254,14 @@ For local builds, contract smoke monitoring, and release channels, see [Developm
 
 ## Resources
 
-### The suite
-
-| Action | Role |
-| --- | --- |
-| [Postman API Onboarding](https://github.com/postman-cs/postman-api-onboarding-action) | Entry point: chains workspace bootstrap, repo sync, and optional Insights linking |
-| [Postman Onboarding: Service Token](https://github.com/postman-cs/postman-resolve-service-token-action) | Mints the service-account access token and team ID |
-| [Postman Onboarding: AWS Spec Discovery](https://github.com/postman-cs/postman-aws-spec-discovery-action) | Discovers and exports API specs from AWS services |
-| [Postman Onboarding: Workspace Bootstrap](https://github.com/postman-cs/postman-bootstrap-action) | Creates the workspace, uploads the spec, generates collections |
-| [Postman Onboarding: Smoke Flow](https://github.com/postman-cs/postman-smoke-flow-action) | Applies a curated flow.yaml to the Smoke collection |
-| [Postman Onboarding: Repo Sync](https://github.com/postman-cs/postman-repo-sync-action) | Exports artifacts into the repo and wires CI, mocks, and monitors |
-| [Postman Onboarding: Insights Linking](https://github.com/postman-cs/postman-insights-onboarding-action) | Links Insights discovered services to the workspace |
-
-- [postman-resolve-service-token-action](https://github.com/postman-cs/postman-resolve-service-token-action): mints a service-account access token and team ID.
-- [postman-api-onboarding-action](https://github.com/postman-cs/postman-api-onboarding-action): composite action that orchestrates the onboarding pipeline.
-- [postman-bootstrap-action](https://github.com/postman-cs/postman-bootstrap-action): workspace provisioning, spec upload, and collection generation.
-- [postman-smoke-flow-action](https://github.com/postman-cs/postman-smoke-flow-action): applies a curated flow.yaml to the canonical Smoke collection.
-- [postman-repo-sync-action](https://github.com/postman-cs/postman-repo-sync-action): artifact sync, environments, mocks, monitors, and CI templates.
-- [postman-aws-spec-discovery-action](https://github.com/postman-cs/postman-aws-spec-discovery-action): discovers API specs from AWS.
 - npm package: [@postman-cse/onboarding-insights](https://www.npmjs.com/package/@postman-cse/onboarding-insights)
+- Docs in this repo: [Credentials and Identity](docs/credentials.md), [Development and Operations](docs/development.md), [CLI usage](docs/cli.md)
+- Marketplace docs: [Support](SUPPORT.md), [Security Policy](SECURITY.md), [Release Policy](RELEASE_POLICY.md)
 - Postman Learning Center: [Insights overview](https://learning.postman.com/docs/insights/overview/), [connect Insights](https://learning.postman.com/docs/api-catalog/connect/insights/), [Insights API Catalog agent reference](https://learning.postman.com/docs/insights/reference/agent/api-catalog/), [API Catalog overview](https://learning.postman.com/docs/api-catalog/overview/), [connect code](https://learning.postman.com/docs/api-catalog/connect/code/)
-- [Credentials and Identity](docs/credentials.md)
-- [Development and Operations](docs/development.md)
-- [Support](SUPPORT.md)
-- [Security Policy](SECURITY.md)
-- [Release Policy](RELEASE_POLICY.md)
-
 
 ## Telemetry
 
-This action sends a single non-identifying usage event when a run completes, so the
-Postman team can measure adoption across CI systems. The event contains the
-action name and version, your Postman team ID, the run outcome, an event
-timestamp, the detected CI provider, runner kind, and runner OS, the CI run
-identifier and event trigger, a one-way SHA-256 hash of the repository
-identifier, the detected git provider (github, gitlab, bitbucket, or
-azure-devops), a one-way SHA-256 hash of the VCS organization name, a coarse
-account type (service or user), and a coarse ref kind (default-branch, branch,
-or tag). Each event also carries a schema version and a constant event marker (always `completion`). The Postman team ID is sent in the clear on a legitimate-interest
-basis to measure product adoption.
-
-The `events.pm-cse.dev` endpoint is operated by the Postman Customer Success
-Engineering team. Postman, Inc. processes these events only to measure
-onboarding adoption in aggregate, retains them only as aggregated counts for
-product-adoption trend analysis, and includes no payload field that identifies
-an individual person.
-
-It never sends API keys, access tokens, spec content, workspace or repository
-names, or any personal data. It is fire-and-forget with a hard
-timeout and can never block or fail your pipeline. Corporate HTTP and HTTPS
-proxies are honored through the standard `HTTPS_PROXY`, `HTTP_PROXY`, and
-`NO_PROXY` environment variables.
-
-Disable it by setting either environment variable in your CI:
-
-```sh
-POSTMAN_ACTIONS_TELEMETRY=off
-# or the cross-tool standard
-DO_NOT_TRACK=1
-```
-
-Telemetry is also skipped automatically when no Postman team ID can be resolved.
-
-A run that ends in the `not-found` state (no matching Insights project) is
-recorded with a `failure` outcome.
-
-Events are sent over HTTPS to `https://events.pm-cse.dev/v1/events`. To
-allowlist this destination on a restricted network, or to route events to a
-collector you operate, set the `POSTMAN_ACTIONS_TELEMETRY_ENDPOINT` environment
-variable to your own URL.
+The action sends one anonymous usage event per run (action name/version, outcome, coarse CI metadata; never secrets, spec content, or repo names). A run ending in the `not-found` state is recorded with a `failure` outcome. Disable with `POSTMAN_ACTIONS_TELEMETRY=off` or `DO_NOT_TRACK=1`; route events to your own collector with `POSTMAN_ACTIONS_TELEMETRY_ENDPOINT`.
 
 ## License
 
