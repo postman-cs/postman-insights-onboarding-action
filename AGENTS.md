@@ -39,3 +39,12 @@ npm run verify:dist  # CI/hook gate: rebuild + git diff (dev runs build)
 
 - Build emits three bundles: `index.cjs`, `action.cjs`, and `cli.cjs`. Wire pre-link logic into the shared code path all three entries call, so every bundle picks it up.
 - If Bifrost linking fails, verify the proxy service/path and auth headers with curl before changing code.
+
+## CI
+
+`.github/workflows/ci.yml` runs a single `gate` job that fans out lint, typecheck, test, dist, commitlint, and actionlint
+as backgrounded shell processes on one runner: wall-clock is `max(gate)`, not
+`sum`, setup runs once, and every gate prints its result under a `::group::`
+block even when another fails.
+
+See the workspace `docs/CI.md` for the shared rationale.
