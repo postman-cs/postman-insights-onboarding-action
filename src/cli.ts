@@ -2,7 +2,7 @@ import { realpathSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { AccessTokenProvider } from './lib/postman/token-provider.js';
+import { AccessTokenProvider, mintAccessTokenIfNeeded } from './lib/postman/token-provider.js';
 import {
   createInsightsBifrostClient,
   createInsightsTokenProvider,
@@ -152,7 +152,18 @@ export async function runCli(
   const inputs = resolveInputs(config.inputEnv);
 
   const reporter = new ConsoleReporter();
-  reporter.setSecret(inputs.postmanAccessToken);
+
+  // PMAK-only runs: mint the access token up front (mirrors runAction) so
+  // dist/cli.cjs behaves exactly like dist/index.cjs.
+  const mintHolder = {
+    postmanAccessToken: inputs.postmanAccessToken,
+    postmanApiKey: inputs.postmanApiKey,
+    postmanApiBase: inputs.postmanApiBase
+  };
+  await mintAccessTokenIfNeeded(mintHolder, reporter, (secret) => reporter.setSecret(secret));
+  inputs.postmanAccessToken = mintHolder.postmanAccessToken;
+
+  if (inputs.postmanAccessToken) reporter.setSecret(inputs.postmanAccessToken);
   if (inputs.postmanApiKey) {
     reporter.setSecret(inputs.postmanApiKey);
   }

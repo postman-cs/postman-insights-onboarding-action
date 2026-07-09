@@ -21696,6 +21696,53 @@ var AccessTokenProvider = class {
     return token;
   }
 };
+async function describeMintFailure(mintError, apiKey, apiBaseUrl, fetchImpl) {
+  const raw = mintError instanceof Error ? mintError.message : String(mintError);
+  const rejected = /HTTP 40[13]|PMAK rejected/.test(raw);
+  if (!rejected) {
+    return raw;
+  }
+  try {
+    const me = await fetchImpl(`${apiBaseUrl}/me`, { headers: { "x-api-key": apiKey } });
+    if (me.ok) {
+      const body = await me.json().catch(() => void 0);
+      const user = body?.user;
+      const looksPersonal = Boolean(user && (user.username || user.email));
+      if (looksPersonal) {
+        return "Personal API key detected, cannot mint a service-account access token. POST /service-account-tokens only accepts a SERVICE-ACCOUNT API key; this postman-api-key belongs to a user account" + (user?.teamId ? ` (team ${user.teamId})` : "") + ". Create a service account in Team Settings and use its PMAK, or mint the token elsewhere and pass postman-access-token.";
+      }
+      return "The postman-api-key authenticates (GET /me OK) but was rejected by POST /service-account-tokens" + (user?.teamId ? ` (team ${user.teamId})` : "") + ". The service account likely lacks permission to mint access tokens, or service accounts are restricted for this team. Check the service account role in Team Settings, or pass a pre-minted postman-access-token.";
+    }
+    return "The postman-api-key is invalid, disabled, or expired (rejected by both POST /service-account-tokens and GET /me). Generate a fresh service-account PMAK in Team Settings and update the secret.";
+  } catch {
+    return raw;
+  }
+}
+async function mintAccessTokenIfNeeded(inputs, log, setSecret2, fetchImpl = fetch) {
+  if (inputs.postmanAccessToken || !inputs.postmanApiKey) {
+    return;
+  }
+  const apiBaseUrl = String(
+    inputs.postmanApiBase || POSTMAN_ENDPOINT_PROFILES.prod.apiBaseUrl
+  ).replace(/\/+$/, "");
+  const provider = new AccessTokenProvider({
+    apiKey: inputs.postmanApiKey,
+    apiBaseUrl,
+    fetchImpl,
+    onToken: (token) => setSecret2?.(token)
+  });
+  try {
+    inputs.postmanAccessToken = await provider.refresh();
+    log.info(
+      "postman: no postman-access-token configured - minted a short-lived service-account access token from the postman-api-key."
+    );
+  } catch (error2) {
+    const diagnosis = await describeMintFailure(error2, inputs.postmanApiKey, apiBaseUrl, fetchImpl);
+    log.warning(
+      "postman: could not mint an access token from the postman-api-key. " + diagnosis + " Continuing without an access token - access-token-only functionality will be unavailable unless postman-access-token is provided."
+    );
+  }
+}
 
 // src/lib/bifrost-client.ts
 var DEFAULT_BIFROST_BASE_URL = POSTMAN_ENDPOINT_PROFILES.prod.bifrostBaseUrl;
@@ -22553,8 +22600,12 @@ function resolveInputs(env = process.env) {
   const projectName = get("project-name");
   if (!projectName) throw new Error("project-name is required");
   const postmanAccessToken = get("postman-access-token");
-  if (!postmanAccessToken) throw new Error("postman-access-token is required");
   const postmanApiKey = get("postman-api-key");
+  if (!postmanAccessToken && !postmanApiKey) {
+    throw new Error(
+      "postman-access-token is required (or provide a service-account postman-api-key so the action can mint one)."
+    );
+  }
   const postmanTeamId = get("postman-team-id") || env.POSTMAN_TEAM_ID?.trim() || "";
   const workspaceId = get("workspace-id") || env.POSTMAN_WORKSPACE_ID?.trim() || "";
   if (!workspaceId) {
@@ -22794,7 +22845,14 @@ async function runAction() {
   for (const [key, value] of Object.entries(planned)) {
     setOutput(key, value);
   }
-  setSecret(inputs.postmanAccessToken);
+  const mintHolder = {
+    postmanAccessToken: inputs.postmanAccessToken,
+    postmanApiKey: inputs.postmanApiKey,
+    postmanApiBase: inputs.postmanApiBase
+  };
+  await mintAccessTokenIfNeeded(mintHolder, core_exports, (secret) => setSecret(secret));
+  inputs.postmanAccessToken = mintHolder.postmanAccessToken;
+  if (inputs.postmanAccessToken) setSecret(inputs.postmanAccessToken);
   if (inputs.postmanApiKey) setSecret(inputs.postmanApiKey);
   if (inputs.githubToken) setSecret(inputs.githubToken);
   const tokenProvider = createInsightsTokenProvider(inputs, core_exports);

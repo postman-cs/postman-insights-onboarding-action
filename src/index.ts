@@ -15,7 +15,7 @@ import {
 } from './lib/postman/base-urls.js';
 import { sleep } from './lib/retry.js';
 import { createSecretMasker } from './lib/secrets.js';
-import { AccessTokenProvider } from './lib/postman/token-provider.js';
+import { AccessTokenProvider, mintAccessTokenIfNeeded } from './lib/postman/token-provider.js';
 import { createTelemetryContext } from '@postman-cse/automation-telemetry-core';
 import { resolveActionVersion } from './action-version.js';
 
@@ -141,9 +141,12 @@ export function resolveInputs(
   if (!projectName) throw new Error('project-name is required');
 
   const postmanAccessToken = get('postman-access-token');
-  if (!postmanAccessToken) throw new Error('postman-access-token is required');
-
   const postmanApiKey = get('postman-api-key');
+  if (!postmanAccessToken && !postmanApiKey) {
+    throw new Error(
+      'postman-access-token is required (or provide a service-account postman-api-key so the action can mint one).'
+    );
+  }
   // Read postman-team-id from action input, falling back to POSTMAN_TEAM_ID env
   const postmanTeamId = get('postman-team-id') || env.POSTMAN_TEAM_ID?.trim() || '';
 
@@ -463,7 +466,21 @@ export async function runAction(): Promise<void> {
     core.setOutput(key, value);
   }
 
-  core.setSecret(inputs.postmanAccessToken);
+  // PMAK-only runs: eagerly mint the short-lived access token from the service
+  // -account PMAK so the Bifrost binding surface works exactly as when
+  // postman-access-token is supplied. Mirrors bootstrap's runAction. A failed
+  // mint warns with a live-probed diagnosis (personal key vs permission gap vs
+  // invalid key); the run then fails on the first Bifrost call with that
+  // context already logged.
+  const mintHolder = {
+    postmanAccessToken: inputs.postmanAccessToken,
+    postmanApiKey: inputs.postmanApiKey,
+    postmanApiBase: inputs.postmanApiBase
+  };
+  await mintAccessTokenIfNeeded(mintHolder, core, (secret) => core.setSecret(secret));
+  inputs.postmanAccessToken = mintHolder.postmanAccessToken;
+
+  if (inputs.postmanAccessToken) core.setSecret(inputs.postmanAccessToken);
   if (inputs.postmanApiKey) core.setSecret(inputs.postmanApiKey);
   if (inputs.githubToken) core.setSecret(inputs.githubToken);
 

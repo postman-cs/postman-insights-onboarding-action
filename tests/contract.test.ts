@@ -74,7 +74,7 @@ describe('action contract', () => {
     expect(String((actionManifest.inputs['postman-region'] as { description?: string }).description)).toContain('us or eu');
   });
 
-  it('marks project-name, workspace-id, environment-id, postman-access-token as required', () => {
+  it('marks project-name, workspace-id, environment-id as required (postman-access-token is mintable from postman-api-key)', () => {
     const requiredInputs = Object.entries(insightsActionContract.inputs)
       .filter(([, v]) => v.required)
       .map(([k]) => k);
@@ -82,7 +82,6 @@ describe('action contract', () => {
       'project-name',
       'workspace-id',
       'environment-id',
-      'postman-access-token',
     ]);
   });
 
@@ -135,7 +134,18 @@ describe('action contract', () => {
     expect(() => resolveInputs({})).toThrow('project-name is required');
     expect(() =>
       resolveInputs({ INPUT_PROJECT_NAME: 'svc' })
-    ).toThrow('postman-access-token is required');
+    ).toThrow(
+      'postman-access-token is required (or provide a service-account postman-api-key so the action can mint one).'
+    );
+    // A PMAK alone satisfies the credential guard: the action mints the token.
+    expect(() =>
+      resolveInputs({
+        INPUT_PROJECT_NAME: 'svc',
+        INPUT_WORKSPACE_ID: 'ws-123',
+        INPUT_ENVIRONMENT_ID: 'env-456',
+        INPUT_POSTMAN_API_KEY: 'PMAK-svc',
+      })
+    ).not.toThrow();
   });
 
   it('does not throw when postman-api-key is omitted', () => {

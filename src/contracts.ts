@@ -45,8 +45,8 @@ export const insightsActionContract: ActionContract = {
       required: false,
     },
     'postman-access-token': {
-      description: 'Service-account Postman access token for integration API calls. Prefer minting it with postman-resolve-service-token-action.',
-      required: true,
+      description: 'Service-account Postman access token for integration API calls. Prefer minting it with postman-resolve-service-token-action. When omitted, the action mints one from postman-api-key (service-account PMAK).',
+      required: false,
     },
     'postman-team-id': {
       description: 'Explicit Postman team ID for org-mode integration request headers. When omitted, x-entity-team-id is not sent.',

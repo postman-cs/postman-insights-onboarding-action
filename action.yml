@@ -24,8 +24,8 @@ inputs:
     description: 'Repository URL for Git onboarding. Auto-detected from CI context when omitted.'
     required: false
   postman-access-token:
-    description: 'Postman access token (x-access-token) for the Bifrost linking calls. The api-catalog discovery and git-link steps accept a service-account token (mint it with postman-resolve-service-token-action); the Insights (akita) acknowledgment and application-binding steps require a token carrying a Postman user identity — a service-account token answers 401 "Postman User not found" there.'
-    required: true
+    description: 'Postman access token (x-access-token) for the Bifrost linking calls. When omitted, the action mints a service-account token from postman-api-key. The api-catalog discovery and git-link steps accept a service-account token (mint it with postman-resolve-service-token-action); the Insights (akita) acknowledgment and application-binding steps require a token carrying a Postman user identity — a service-account token answers 401 "Postman User not found" there.'
+    required: false
   postman-team-id:
     description: 'Explicit Postman team ID for org-mode integration request headers. When omitted, x-entity-team-id is not sent.'
     required: false
