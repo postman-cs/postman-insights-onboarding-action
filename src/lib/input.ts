@@ -19,7 +19,7 @@ export function normalizedInputEnvName(name: string): string {
  * - GitHub runner form: INPUT_FOO-BAR (what @actions/core getInput reads)
  * - CLI-normalized form: INPUT_FOO_BAR
  *
- * Matching values are accepted. Conflicting non-empty values fail closed.
+ * Matching values are accepted. Conflicting present values fail closed.
  * When both are present and equal, either form is fine; the normalized form is
  * returned for stable downstream consumption.
  */

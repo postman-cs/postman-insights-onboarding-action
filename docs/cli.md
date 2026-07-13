@@ -31,13 +31,15 @@ postman-insights-onboard \
   --cluster-name my-cluster \
   --repo-url https://gitlab.com/acme/af-cards-activation \
   --poll-timeout-seconds 180 \
-  --result-json /tmp/insights-result.json \
-  --dotenv-path /tmp/insights.env
+  --result-json artifacts/insights-result.json \
+  --dotenv-path artifacts/insights.env
 ```
 
 The CLI auto-detects the CI provider from environment variables and uses that to resolve the repo URL and owner. For non-GitHub repositories, API Catalog git onboarding is skipped because of a backend limitation, but the remaining Insights steps continue normally.
 
-Output is JSON to stdout. `--result-json` is opt-in and writes the same payload only when provided; `--dotenv-path` optionally writes shell-sourceable `KEY=VALUE` pairs with the `POSTMAN_INSIGHTS_` prefix. All logs go to stderr, and stdout is reserved for JSON output. `--help` and `--version` exit without credentials or network access.
+Output is JSON to stdout. `--result-json` is opt-in and writes the same payload only when provided; `--dotenv-path` optionally writes shell-sourceable `KEY=VALUE` pairs with the `POSTMAN_INSIGHTS_` prefix. Output paths must stay inside the current workspace; writes publish atomically. All logs go to stderr, and stdout is reserved for JSON output. `--help` and `--version` exit without credentials, telemetry, network access, or file writes.
+
+CLI flags are canonical and override the corresponding normalized `INPUT_FOO_BAR` value. The shared input reader also accepts GitHub runner-form `INPUT_FOO-BAR`; if both environment forms are present, they must match or the command fails before side effects. `POSTMAN_ACCESS_TOKEN` and `POSTMAN_API_KEY` are not implicit aliases: pass them with `--postman-access-token` and `--postman-api-key` as shown above. `POSTMAN_TEAM_ID` remains the documented fallback for `--postman-team-id`.
 
 ## GitLab CI
 

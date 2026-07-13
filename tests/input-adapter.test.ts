@@ -76,6 +76,32 @@ describe('shared Action/CLI input adapter', () => {
     ).toBe('svc-normalized');
   });
 
+  it('resolves a complete environment using real runner-form keys', () => {
+    const inputs = resolveInputs({
+      'INPUT_PROJECT-NAME': 'svc-runner',
+      'INPUT_WORKSPACE-ID': 'ws-runner',
+      'INPUT_ENVIRONMENT-ID': 'env-runner',
+      'INPUT_POSTMAN-ACCESS-TOKEN': 'tok-runner'
+    });
+
+    expect(inputs.projectName).toBe('svc-runner');
+    expect(inputs.workspaceId).toBe('ws-runner');
+    expect(inputs.environmentId).toBe('env-runner');
+    expect(inputs.postmanAccessToken).toBe('tok-runner');
+  });
+
+  it('does not silently treat bare credential variables as input aliases', () => {
+    expect(() =>
+      resolveInputs({
+        INPUT_PROJECT_NAME: 'svc',
+        INPUT_WORKSPACE_ID: 'ws',
+        INPUT_ENVIRONMENT_ID: 'env',
+        POSTMAN_ACCESS_TOKEN: 'bare-token',
+        POSTMAN_API_KEY: 'bare-key'
+      })
+    ).toThrow(/postman-access-token is required/);
+  });
+
   it('fails resolveInputs when the two alias forms disagree', () => {
     expect(() =>
       resolveInputs({

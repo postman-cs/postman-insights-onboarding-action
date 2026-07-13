@@ -1,5 +1,6 @@
-import { existsSync, rmSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { existsSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdir, readFile, readdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -90,6 +91,9 @@ describe('parseCliArgs', () => {
     );
     expect(() => parseCliArgs(['--project-name'], {})).toThrow(/Missing value for --project-name/);
     expect(() => parseCliArgs(['--project-name', '--workspace-id'], {})).toThrow(
+      /Missing value for --project-name/
+    );
+    expect(() => parseCliArgs(['--project-name='], {})).toThrow(
       /Missing value for --project-name/
     );
     expect(() => parseCliArgs(['positional-arg'], {})).toThrow(
@@ -285,6 +289,60 @@ describe('runCli result-json opt-in', () => {
         { env: { PATH: process.env.PATH }, executeOnboarding, writeStdout: () => {} }
       )
     ).rejects.toThrow(/Output path must stay within workspace/);
+    expect(executeOnboarding).not.toHaveBeenCalled();
+  });
+
+  it('rejects output paths whose parent symlink escapes the workspace', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    stubFetch(10490519, 10490519);
+    const executeOnboarding = fakeOnboarding();
+    const outside = mkdtempSync(path.join(tmpdir(), 'postman-insights-output-'));
+    await mkdir('.vitest-tmp', { recursive: true });
+    symlinkSync(outside, '.vitest-tmp/outside', 'dir');
+
+    try {
+      await expect(
+        runCli(
+          [
+            '--project-name', 'svc',
+            '--workspace-id', 'ws-1',
+            '--environment-id', 'env-1',
+            '--postman-access-token', 'cli-token',
+            '--postman-api-key', 'PMAK-cli',
+            '--postman-team-id', '10490519',
+            '--result-json', '.vitest-tmp/outside/result.json'
+          ],
+          { env: { PATH: process.env.PATH }, executeOnboarding, writeStdout: () => {} }
+        )
+      ).rejects.toThrow(/Output path must stay within workspace/);
+      expect(executeOnboarding).not.toHaveBeenCalled();
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('cleans up the atomic temporary file when publication fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    stubFetch(10490519, 10490519);
+    const executeOnboarding = fakeOnboarding();
+    await mkdir('.vitest-tmp/result-directory', { recursive: true });
+
+    await expect(
+      runCli(
+        [
+          '--project-name', 'svc',
+          '--workspace-id', 'ws-1',
+          '--environment-id', 'env-1',
+          '--postman-access-token', 'cli-token',
+          '--postman-api-key', 'PMAK-cli',
+          '--postman-team-id', '10490519',
+          '--result-json', '.vitest-tmp/result-directory'
+        ],
+        { env: { PATH: process.env.PATH }, executeOnboarding, writeStdout: () => {} }
+      )
+    ).rejects.toThrow();
+
+    expect((await readdir('.vitest-tmp')).filter((name) => name.endsWith('.tmp'))).toEqual([]);
   });
 });
 

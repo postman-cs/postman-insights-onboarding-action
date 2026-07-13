@@ -1,5 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import { realpathSync, readFileSync } from 'node:fs';
-import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { mkdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { AccessTokenProvider, mintAccessTokenIfNeeded } from './lib/postman/token-provider.js';
@@ -169,6 +170,9 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
       value = next;
       index += 1;
     }
+    if (value.length === 0) {
+      throw new Error(`Missing value for --${name}`);
+    }
 
     seen.add(name);
     if (name === 'result-json') {
@@ -200,22 +204,61 @@ export function toDotenv(outputs: Record<string, string>): string {
     .join('\n');
 }
 
-function resolveWorkspacePath(filePath: string): string {
-  const workspaceRoot = path.resolve(process.cwd());
-  const resolved = path.resolve(workspaceRoot, filePath);
+function assertWithinWorkspace(workspaceRoot: string, resolved: string, filePath: string): void {
   const relative = path.relative(workspaceRoot, resolved);
-  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     throw new Error(`Output path must stay within workspace: ${filePath}`);
   }
-  return resolved;
+}
+
+async function findExistingAncestor(candidate: string): Promise<string> {
+  let current = candidate;
+  while (true) {
+    try {
+      return await realpath(current);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
+      }
+      const parent = path.dirname(current);
+      if (parent === current) {
+        throw error;
+      }
+      current = parent;
+    }
+  }
+}
+
+async function validateOutputPath(filePath: string | undefined): Promise<void> {
+  if (!filePath) {
+    return;
+  }
+  const workspaceRoot = await realpath(process.cwd());
+  const resolved = path.resolve(workspaceRoot, filePath);
+  assertWithinWorkspace(workspaceRoot, resolved, filePath);
+  const existingParent = await findExistingAncestor(path.dirname(resolved));
+  assertWithinWorkspace(workspaceRoot, existingParent, filePath);
 }
 
 async function writeAtomicFile(filePath: string, content: string): Promise<void> {
-  const resolved = resolveWorkspacePath(filePath);
+  const workspaceRoot = await realpath(process.cwd());
+  const resolved = path.resolve(workspaceRoot, filePath);
+  assertWithinWorkspace(workspaceRoot, resolved, filePath);
   await mkdir(path.dirname(resolved), { recursive: true });
-  const tempPath = `${resolved}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tempPath, content, 'utf8');
-  await rename(tempPath, resolved);
+  const resolvedParent = await realpath(path.dirname(resolved));
+  assertWithinWorkspace(workspaceRoot, resolvedParent, filePath);
+
+  const safeTarget = path.join(resolvedParent, path.basename(resolved));
+  const tempPath = path.join(
+    resolvedParent,
+    `.${path.basename(resolved)}.${process.pid}.${randomUUID()}.tmp`
+  );
+  try {
+    await writeFile(tempPath, content, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+    await rename(tempPath, safeTarget);
+  } finally {
+    await rm(tempPath, { force: true });
+  }
 }
 
 async function writeOptionalFile(filePath: string | undefined, content: string): Promise<void> {
@@ -254,6 +297,8 @@ export async function runCli(
   }
 
   const config = parsed;
+  await validateOutputPath(config.resultJsonPath);
+  await validateOutputPath(config.dotenvPath);
   const inputs = resolveInputs(config.inputEnv);
 
   const reporter = new ConsoleReporter();

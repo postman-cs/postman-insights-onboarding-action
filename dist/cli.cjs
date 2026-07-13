@@ -18686,6 +18686,7 @@ __export(cli_exports, {
   toDotenv: () => toDotenv
 });
 module.exports = __toCommonJS(cli_exports);
+var import_node_crypto2 = require("node:crypto");
 var import_node_fs2 = require("node:fs");
 var import_promises = require("node:fs/promises");
 var import_node_path2 = __toESM(require("node:path"), 1);
@@ -22988,6 +22989,9 @@ function parseCliArgs(argv, env = process.env) {
       value = next;
       index += 1;
     }
+    if (value.length === 0) {
+      throw new Error(`Missing value for --${name}`);
+    }
     seen.add(name);
     if (name === "result-json") {
       resultJsonPath = value;
@@ -23012,21 +23016,57 @@ function toDotenv(outputs) {
     value
   ]).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join("\n");
 }
-function resolveWorkspacePath(filePath) {
-  const workspaceRoot = import_node_path2.default.resolve(process.cwd());
-  const resolved = import_node_path2.default.resolve(workspaceRoot, filePath);
+function assertWithinWorkspace(workspaceRoot, resolved, filePath) {
   const relative2 = import_node_path2.default.relative(workspaceRoot, resolved);
-  if (relative2.startsWith("..") || import_node_path2.default.isAbsolute(relative2)) {
+  if (relative2 === ".." || relative2.startsWith(`..${import_node_path2.default.sep}`) || import_node_path2.default.isAbsolute(relative2)) {
     throw new Error(`Output path must stay within workspace: ${filePath}`);
   }
-  return resolved;
+}
+async function findExistingAncestor(candidate) {
+  let current = candidate;
+  while (true) {
+    try {
+      return await (0, import_promises.realpath)(current);
+    } catch (error2) {
+      if (error2.code !== "ENOENT") {
+        throw error2;
+      }
+      const parent = import_node_path2.default.dirname(current);
+      if (parent === current) {
+        throw error2;
+      }
+      current = parent;
+    }
+  }
+}
+async function validateOutputPath(filePath) {
+  if (!filePath) {
+    return;
+  }
+  const workspaceRoot = await (0, import_promises.realpath)(process.cwd());
+  const resolved = import_node_path2.default.resolve(workspaceRoot, filePath);
+  assertWithinWorkspace(workspaceRoot, resolved, filePath);
+  const existingParent = await findExistingAncestor(import_node_path2.default.dirname(resolved));
+  assertWithinWorkspace(workspaceRoot, existingParent, filePath);
 }
 async function writeAtomicFile(filePath, content) {
-  const resolved = resolveWorkspacePath(filePath);
+  const workspaceRoot = await (0, import_promises.realpath)(process.cwd());
+  const resolved = import_node_path2.default.resolve(workspaceRoot, filePath);
+  assertWithinWorkspace(workspaceRoot, resolved, filePath);
   await (0, import_promises.mkdir)(import_node_path2.default.dirname(resolved), { recursive: true });
-  const tempPath = `${resolved}.${process.pid}.${Date.now()}.tmp`;
-  await (0, import_promises.writeFile)(tempPath, content, "utf8");
-  await (0, import_promises.rename)(tempPath, resolved);
+  const resolvedParent = await (0, import_promises.realpath)(import_node_path2.default.dirname(resolved));
+  assertWithinWorkspace(workspaceRoot, resolvedParent, filePath);
+  const safeTarget = import_node_path2.default.join(resolvedParent, import_node_path2.default.basename(resolved));
+  const tempPath = import_node_path2.default.join(
+    resolvedParent,
+    `.${import_node_path2.default.basename(resolved)}.${process.pid}.${(0, import_node_crypto2.randomUUID)()}.tmp`
+  );
+  try {
+    await (0, import_promises.writeFile)(tempPath, content, { encoding: "utf8", flag: "wx", mode: 384 });
+    await (0, import_promises.rename)(tempPath, safeTarget);
+  } finally {
+    await (0, import_promises.rm)(tempPath, { force: true });
+  }
 }
 async function writeOptionalFile(filePath, content) {
   if (!filePath) {
@@ -23058,6 +23098,8 @@ async function runCli(argv = process.argv.slice(2), runtime = {}) {
     return;
   }
   const config = parsed;
+  await validateOutputPath(config.resultJsonPath);
+  await validateOutputPath(config.dotenvPath);
   const inputs = resolveInputs(config.inputEnv);
   const reporter = new ConsoleReporter();
   const mintHolder = {
