@@ -22147,6 +22147,35 @@ function getFinalServiceSegment(serviceName) {
   return lastSlash === -1 ? serviceName : serviceName.slice(lastSlash + 1);
 }
 
+// src/lib/input.ts
+function normalizeInputValue(value) {
+  return String(value ?? "").trim();
+}
+function runnerInputEnvName(name) {
+  return `INPUT_${name.replace(/ /g, "_").toUpperCase()}`;
+}
+function normalizedInputEnvName(name) {
+  return `INPUT_${name.replace(/-/g, "_").toUpperCase()}`;
+}
+function getInput2(name, env = process.env) {
+  const normalizedName = normalizedInputEnvName(name);
+  const runnerName = runnerInputEnvName(name);
+  const normalizedRaw = env[normalizedName];
+  const runnerRaw = runnerName === normalizedName ? void 0 : env[runnerName];
+  const hasNormalized = normalizedRaw !== void 0;
+  const hasRunner = runnerRaw !== void 0;
+  if (hasNormalized && hasRunner) {
+    const normalizedValue = normalizeInputValue(normalizedRaw);
+    const runnerValue = normalizeInputValue(runnerRaw);
+    if (normalizedValue !== runnerValue) {
+      throw new Error(
+        `Conflicting values for ${name}: ${normalizedName}=${JSON.stringify(normalizedValue)} vs ${runnerName}=${JSON.stringify(runnerValue)}`
+      );
+    }
+  }
+  return normalizeInputValue(hasNormalized ? normalizedRaw : runnerRaw);
+}
+
 // node_modules/@postman-cse/automation-telemetry-core/dist/ci-context.js
 function norm(value) {
   const trimmed = (value ?? "").trim();
@@ -22596,7 +22625,7 @@ function clamp(value, min, max, fallback) {
   return Math.min(max, Math.max(min, parsed));
 }
 function resolveInputs(env = process.env) {
-  const get = (name, fallback = "") => env[`INPUT_${name.toUpperCase().replace(/-/g, "_")}`]?.trim() || fallback;
+  const get = (name, fallback = "") => getInput2(name, env) || fallback;
   const projectName = get("project-name");
   if (!projectName) throw new Error("project-name is required");
   const postmanAccessToken = get("postman-access-token");

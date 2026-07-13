@@ -37,7 +37,7 @@ postman-insights-onboard \
 
 The CLI auto-detects the CI provider from environment variables and uses that to resolve the repo URL and owner. For non-GitHub repositories, API Catalog git onboarding is skipped because of a backend limitation, but the remaining Insights steps continue normally.
 
-Output is JSON to stdout. Use `--result-json` to write the same payload to a file, or `--dotenv-path` to write shell-sourceable `KEY=VALUE` pairs with the `POSTMAN_INSIGHTS_` prefix. All logs go to stderr, and stdout is reserved for JSON output.
+Output is JSON to stdout. `--result-json` is opt-in and writes the same payload only when provided; `--dotenv-path` optionally writes shell-sourceable `KEY=VALUE` pairs with the `POSTMAN_INSIGHTS_` prefix. All logs go to stderr, and stdout is reserved for JSON output. `--help` and `--version` exit without credentials or network access.
 
 ## GitLab CI
 

@@ -16,8 +16,11 @@ import {
 import { sleep } from './lib/retry.js';
 import { createSecretMasker } from './lib/secrets.js';
 import { AccessTokenProvider, mintAccessTokenIfNeeded } from './lib/postman/token-provider.js';
+import { getInput } from './lib/input.js';
 import { createTelemetryContext } from '@postman-cse/automation-telemetry-core';
 import { resolveActionVersion } from './action-version.js';
+
+export { getInput } from './lib/input.js';
 
 const POLL_TIMEOUT_MIN = 10;
 const POLL_TIMEOUT_MAX = 600;
@@ -134,8 +137,7 @@ function clamp(value: number, min: number, max: number, fallback: number): numbe
 export function resolveInputs(
   env: Record<string, string | undefined> = process.env
 ): ActionInputs {
-  const get = (name: string, fallback = ''): string =>
-    env[`INPUT_${name.toUpperCase().replace(/-/g, '_')}`]?.trim() || fallback;
+  const get = (name: string, fallback = ''): string => getInput(name, env) || fallback;
 
   const projectName = get('project-name');
   if (!projectName) throw new Error('project-name is required');

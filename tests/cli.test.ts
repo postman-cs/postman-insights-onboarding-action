@@ -1,4 +1,7 @@
-import { rmSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -49,6 +52,10 @@ describe('parseCliArgs', () => {
       { PATH: process.env.PATH }
     );
 
+    expect(config.kind).toBe('run');
+    if (config.kind !== 'run') {
+      return;
+    }
     expect(config.inputEnv[normalizeCliFlag('project-name')]).toBe('svc-a');
     expect(config.inputEnv[normalizeCliFlag('workspace-id')]).toBe('ws-123');
     expect(config.inputEnv[normalizeCliFlag('environment-id')]).toBe('env-456');
@@ -67,6 +74,50 @@ describe('parseCliArgs', () => {
     expect(config.resultJsonPath).toBe('out/result.json');
     expect(config.dotenvPath).toBe('out/result.env');
   });
+
+  it('does not invent a default result-json path', () => {
+    const config = parseCliArgs([], { PATH: process.env.PATH });
+    expect(config.kind).toBe('run');
+    if (config.kind !== 'run') {
+      return;
+    }
+    expect(config.resultJsonPath).toBeUndefined();
+  });
+
+  it('rejects unknown flags, missing values, and unexpected positionals', () => {
+    expect(() => parseCliArgs(['--not-a-real-flag', 'x'], {})).toThrow(
+      /Unknown option: --not-a-real-flag/
+    );
+    expect(() => parseCliArgs(['--project-name'], {})).toThrow(/Missing value for --project-name/);
+    expect(() => parseCliArgs(['--project-name', '--workspace-id'], {})).toThrow(
+      /Missing value for --project-name/
+    );
+    expect(() => parseCliArgs(['positional-arg'], {})).toThrow(
+      /Unexpected positional argument: positional-arg/
+    );
+  });
+
+  it('rejects duplicate options', () => {
+    expect(() => parseCliArgs(['--project-name=a', '--project-name', 'b'], {})).toThrow(
+      /Duplicate option: --project-name/
+    );
+  });
+
+  it('detects --help and --version without applying run options', () => {
+    expect(parseCliArgs(['--help'], {}).kind).toBe('help');
+    expect(parseCliArgs(['--version'], {}).kind).toBe('version');
+  });
+
+  it('lets CLI flags override env by writing the normalized INPUT key', () => {
+    const config = parseCliArgs(['--project-name', 'from-cli'], {
+      INPUT_PROJECT_NAME: 'from-env'
+    });
+    expect(config.kind).toBe('run');
+    if (config.kind !== 'run') {
+      return;
+    }
+    expect(config.inputEnv.INPUT_PROJECT_NAME).toBe('from-cli');
+  });
 });
 
 describe('toDotenv', () => {
@@ -78,6 +129,162 @@ describe('toDotenv', () => {
 
     expect(rendered).toContain('POSTMAN_INSIGHTS_STATUS="success"');
     expect(rendered).toContain('POSTMAN_INSIGHTS_COLLECTION_ID="col-123"');
+  });
+});
+
+describe('runCli help and version', () => {
+  it('prints help without credentials, network, or onboarding', async () => {
+    const executeOnboarding = vi.fn();
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    let stdout = '';
+
+    await runCli(['--help', '--project-name', 'ignored'], {
+      env: {},
+      executeOnboarding,
+      writeStdout: (chunk) => {
+        stdout += chunk;
+      }
+    });
+
+    expect(stdout).toMatch(/Usage:\s+postman-insights-onboard/i);
+    expect(executeOnboarding).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it('prints version without credentials, network, or onboarding', async () => {
+    const executeOnboarding = vi.fn();
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    let stdout = '';
+    const packageJson = JSON.parse(
+      await readFile(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8')
+    ) as { version: string };
+
+    await runCli(['--version'], {
+      env: { INPUT_POSTMAN_API_KEY: 'should-not-matter' },
+      executeOnboarding,
+      writeStdout: (chunk) => {
+        stdout += chunk;
+      }
+    });
+
+    expect(stdout.trim()).toBe(packageJson.version);
+    expect(executeOnboarding).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('runCli result-json opt-in', () => {
+  beforeEach(() => {
+    __resetIdentityMemo();
+    telemetrySpies.emitCompletion.mockClear();
+    rmSync('.vitest-tmp', { recursive: true, force: true });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    rmSync('.vitest-tmp', { recursive: true, force: true });
+    rmSync('postman-insights-onboarding-result.json', { force: true });
+  });
+
+  function stubFetch(meTeamId: number, sessionTeamId: number) {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/me')) {
+        return new Response(
+          JSON.stringify({ user: { id: 1, teamId: meTeamId, teamName: 'jared-demo' } }),
+          { status: 200 }
+        );
+      }
+      if (url.includes('/api/sessions/current')) {
+        return new Response(
+          JSON.stringify({ identity: { team: sessionTeamId, domain: 'other-org' } }),
+          { status: 200 }
+        );
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  function fakeOnboarding() {
+    return vi.fn(async () => ({
+      discoveredServiceId: 0,
+      discoveredServiceName: '',
+      collectionId: '',
+      applicationId: '',
+      verificationToken: null,
+      status: 'not-found' as const
+    }));
+  }
+
+  it('does not create a result JSON file unless --result-json is provided', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    stubFetch(10490519, 10490519);
+    const executeOnboarding = fakeOnboarding();
+
+    await runCli(
+      [
+        '--project-name', 'svc',
+        '--workspace-id', 'ws-1',
+        '--environment-id', 'env-1',
+        '--postman-access-token', 'cli-token',
+        '--postman-api-key', 'PMAK-cli',
+        '--postman-team-id', '10490519'
+      ],
+      { env: { PATH: process.env.PATH }, executeOnboarding, writeStdout: () => {} }
+    );
+
+    expect(existsSync('postman-insights-onboarding-result.json')).toBe(false);
+  });
+
+  it('writes --result-json atomically inside the workspace', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    stubFetch(10490519, 10490519);
+    const executeOnboarding = fakeOnboarding();
+    const resultPath = '.vitest-tmp/cli-result.json';
+
+    await runCli(
+      [
+        '--project-name', 'svc',
+        '--workspace-id', 'ws-1',
+        '--environment-id', 'env-1',
+        '--postman-access-token', 'cli-token',
+        '--postman-api-key', 'PMAK-cli',
+        '--postman-team-id', '10490519',
+        '--result-json', resultPath
+      ],
+      { env: { PATH: process.env.PATH }, executeOnboarding, writeStdout: () => {} }
+    );
+
+    const raw = await readFile(resultPath, 'utf8');
+    expect(JSON.parse(raw)).toMatchObject({ status: 'not-found' });
+  });
+
+  it('rejects --result-json paths outside the workspace', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    stubFetch(10490519, 10490519);
+    const executeOnboarding = fakeOnboarding();
+
+    await expect(
+      runCli(
+        [
+          '--project-name', 'svc',
+          '--workspace-id', 'ws-1',
+          '--environment-id', 'env-1',
+          '--postman-access-token', 'cli-token',
+          '--postman-api-key', 'PMAK-cli',
+          '--postman-team-id', '10490519',
+          '--result-json', '../outside-result.json'
+        ],
+        { env: { PATH: process.env.PATH }, executeOnboarding, writeStdout: () => {} }
+      )
+    ).rejects.toThrow(/Output path must stay within workspace/);
   });
 });
 
@@ -123,7 +330,7 @@ describe('runCli credential preflight', () => {
       collectionId: '',
       applicationId: '',
       verificationToken: null,
-      status: 'not-found' as const,
+      status: 'not-found' as const
     }));
   }
 
@@ -141,7 +348,7 @@ describe('runCli credential preflight', () => {
           '--postman-access-token', 'cli-enforce-token',
           '--postman-api-key', 'PMAK-cli-enforce',
           '--postman-team-id', '13347347',
-          '--credential-preflight', 'enforce',
+          '--credential-preflight', 'enforce'
         ],
         { env: { PATH: process.env.PATH }, executeOnboarding, writeStdout: () => {} }
       )
@@ -164,7 +371,7 @@ describe('runCli credential preflight', () => {
         '--postman-access-token', 'cli-warn-token',
         '--postman-api-key', 'PMAK-cli-warn',
         '--postman-team-id', '13347347',
-        '--result-json', '.vitest-tmp/cli-preflight-result.json',
+        '--result-json', '.vitest-tmp/cli-preflight-result.json'
       ],
       { env: { PATH: process.env.PATH }, executeOnboarding, writeStdout: () => {} }
     );
