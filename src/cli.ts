@@ -16,6 +16,7 @@ import {
 } from './index.js';
 import { sleep } from './lib/retry.js';
 import { getMemoizedSessionIdentity } from './lib/credential-identity.js';
+import { normalizedInputEnvName, runnerInputEnvName } from './lib/input.js';
 import { createTelemetryContext } from '@postman-cse/automation-telemetry-core';
 import { resolveActionVersion } from './action-version.js';
 
@@ -84,7 +85,7 @@ export class ConsoleReporter implements Reporter {
 }
 
 export function normalizeCliFlag(name: string): string {
-  return `INPUT_${name.replace(/-/g, '_').toUpperCase()}`;
+  return normalizedInputEnvName(name);
 }
 
 function resolvePackageVersion(): string {
@@ -183,7 +184,10 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
       dotenvPath = value;
       continue;
     }
-    inputEnv[normalizeCliFlag(name)] = value;
+    const normalizedName = normalizedInputEnvName(name);
+    delete inputEnv[runnerInputEnvName(name)];
+    delete inputEnv[normalizedName];
+    inputEnv[normalizedName] = value;
   }
 
   return {

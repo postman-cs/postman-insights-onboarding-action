@@ -39,7 +39,7 @@ The CLI auto-detects the CI provider from environment variables and uses that to
 
 Output is JSON to stdout. `--result-json` is opt-in and writes the same payload only when provided; `--dotenv-path` optionally writes shell-sourceable `KEY=VALUE` pairs with the `POSTMAN_INSIGHTS_` prefix. Output paths must stay inside the current workspace; writes publish atomically. All logs go to stderr, and stdout is reserved for JSON output. `--help` and `--version` exit without credentials, telemetry, network access, or file writes.
 
-CLI flags are canonical and override the corresponding normalized `INPUT_FOO_BAR` value. The shared input reader also accepts GitHub runner-form `INPUT_FOO-BAR`; if both environment forms are present, they must match or the command fails before side effects. `POSTMAN_ACCESS_TOKEN` and `POSTMAN_API_KEY` are not implicit aliases: pass them with `--postman-access-token` and `--postman-api-key` as shown above. `POSTMAN_TEAM_ID` remains the documented fallback for `--postman-team-id`.
+CLI flags are canonical and override both inherited `INPUT_FOO-BAR` and `INPUT_FOO_BAR` forms. Without an explicit flag, the two environment forms must match or the command fails before side effects. `POSTMAN_ACCESS_TOKEN` and `POSTMAN_API_KEY` are not implicit aliases: pass them with `--postman-access-token` and `--postman-api-key` as shown above. `POSTMAN_TEAM_ID` remains the documented fallback for `--postman-team-id`.
 
 ## GitLab CI
 

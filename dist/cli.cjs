@@ -22917,7 +22917,7 @@ var ConsoleReporter = class {
   }
 };
 function normalizeCliFlag(name) {
-  return `INPUT_${name.replace(/-/g, "_").toUpperCase()}`;
+  return normalizedInputEnvName(name);
 }
 function resolvePackageVersion() {
   const candidates = [];
@@ -23001,7 +23001,10 @@ function parseCliArgs(argv, env = process.env) {
       dotenvPath = value;
       continue;
     }
-    inputEnv[normalizeCliFlag(name)] = value;
+    const normalizedName = normalizedInputEnvName(name);
+    delete inputEnv[runnerInputEnvName(name)];
+    delete inputEnv[normalizedName];
+    inputEnv[normalizedName] = value;
   }
   return {
     kind: "run",

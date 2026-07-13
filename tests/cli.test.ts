@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ConsoleReporter, normalizeCliFlag, parseCliArgs, runCli, toDotenv } from '../src/cli.js';
+import { getInput } from '../src/lib/input.js';
 import { __resetIdentityMemo } from '../src/lib/credential-identity.js';
 
 // Spy on the telemetry completion seam so the preflight-throw path can be
@@ -121,6 +122,49 @@ describe('parseCliArgs', () => {
       return;
     }
     expect(config.inputEnv.INPUT_PROJECT_NAME).toBe('from-cli');
+  });
+
+  it('lets a CLI flag override an inherited runner-form alias', () => {
+    const config = parseCliArgs(['--project-name', 'from-cli'], {
+      'INPUT_PROJECT-NAME': 'from-runner'
+    });
+    expect(config.kind).toBe('run');
+    if (config.kind !== 'run') {
+      return;
+    }
+
+    expect(config.inputEnv['INPUT_PROJECT-NAME']).toBeUndefined();
+    expect(getInput('project-name', config.inputEnv)).toBe('from-cli');
+  });
+
+  it('lets a CLI flag override both inherited alias forms', () => {
+    const config = parseCliArgs(['--project-name=from-cli'], {
+      'INPUT_PROJECT-NAME': 'from-runner',
+      INPUT_PROJECT_NAME: 'from-normalized'
+    });
+    expect(config.kind).toBe('run');
+    if (config.kind !== 'run') {
+      return;
+    }
+
+    expect(config.inputEnv['INPUT_PROJECT-NAME']).toBeUndefined();
+    expect(config.inputEnv.INPUT_PROJECT_NAME).toBe('from-cli');
+    expect(getInput('project-name', config.inputEnv)).toBe('from-cli');
+  });
+
+  it('still rejects conflicting aliases when no CLI flag overrides them', () => {
+    const config = parseCliArgs([], {
+      'INPUT_PROJECT-NAME': 'from-runner',
+      INPUT_PROJECT_NAME: 'from-normalized'
+    });
+    expect(config.kind).toBe('run');
+    if (config.kind !== 'run') {
+      return;
+    }
+
+    expect(() => getInput('project-name', config.inputEnv)).toThrow(
+      /Conflicting values for project-name/
+    );
   });
 });
 
