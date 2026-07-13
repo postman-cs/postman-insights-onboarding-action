@@ -11,6 +11,7 @@ src/
   cli.ts                       # CLI adapter for non-GitHub CI
   contracts.ts                 # Input/output type definitions
   lib/
+    input.ts                   # Shared Action/CLI INPUT_* adapter (runner + normalized forms)
     bifrost-client.ts          # Bifrost adapter (Insights service linking, workspace/repo association)
     credential-identity.ts     # Session identity (iapub + access token) for team scope
     postman/

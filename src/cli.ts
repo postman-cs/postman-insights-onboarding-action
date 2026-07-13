@@ -1,5 +1,6 @@
-import { realpathSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { realpathSync, readFileSync } from 'node:fs';
+import { mkdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { AccessTokenProvider, mintAccessTokenIfNeeded } from './lib/postman/token-provider.js';
@@ -15,14 +16,41 @@ import {
 } from './index.js';
 import { sleep } from './lib/retry.js';
 import { getMemoizedSessionIdentity } from './lib/credential-identity.js';
+import { normalizedInputEnvName, runnerInputEnvName } from './lib/input.js';
 import { createTelemetryContext } from '@postman-cse/automation-telemetry-core';
 import { resolveActionVersion } from './action-version.js';
 
-interface CliConfig {
+const INPUT_NAMES = [
+  'project-name',
+  'workspace-id',
+  'environment-id',
+  'system-environment-id',
+  'cluster-name',
+  'repo-url',
+  'postman-access-token',
+  'postman-api-key',
+  'credential-preflight',
+  'postman-team-id',
+  'github-token',
+  'poll-timeout-seconds',
+  'poll-interval-seconds',
+  'postman-region',
+  'postman-stack'
+] as const;
+
+const OUTPUT_OPTION_NAMES = ['result-json', 'dotenv-path'] as const;
+
+interface CliRunConfig {
+  kind: 'run';
   inputEnv: NodeJS.ProcessEnv;
-  resultJsonPath: string;
+  resultJsonPath?: string;
   dotenvPath?: string;
 }
+
+export type ParsedCliArgs =
+  | { kind: 'help' }
+  | { kind: 'version' }
+  | CliRunConfig;
 
 export interface CliRuntime {
   env?: NodeJS.ProcessEnv;
@@ -56,55 +84,117 @@ export class ConsoleReporter implements Reporter {
   }
 }
 
-function readFlag(argv: string[], name: string): string | undefined {
-  const prefix = `--${name}=`;
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === `--${name}`) {
-      return argv[index + 1];
-    }
-    if (arg?.startsWith(prefix)) {
-      return arg.slice(prefix.length);
+export function normalizeCliFlag(name: string): string {
+  return normalizedInputEnvName(name);
+}
+
+function resolvePackageVersion(): string {
+  const candidates: string[] = [];
+  if (typeof __filename === 'string') {
+    // Present in the esbuild CJS bundle (dist/cli.cjs -> ../package.json).
+    candidates.push(path.join(path.dirname(__filename), '..', 'package.json'));
+  }
+  // vitest/ESM and local smoke: package.json at cwd.
+  candidates.push(path.join(process.cwd(), 'package.json'));
+
+  for (const candidate of candidates) {
+    try {
+      const packageJson = JSON.parse(readFileSync(candidate, 'utf8')) as {
+        name?: string;
+        version?: string;
+      };
+      if (packageJson.name === '@postman-cse/onboarding-insights' && packageJson.version) {
+        return String(packageJson.version).trim();
+      }
+    } catch {
+      // try next candidate
     }
   }
-  return undefined;
+  return resolveActionVersion();
 }
 
-export function normalizeCliFlag(name: string): string {
-  return `INPUT_${name.replace(/-/g, '_').toUpperCase()}`;
+function renderHelp(): string {
+  const inputFlags = INPUT_NAMES.map((name) => `  --${name} <value>`).join('\n');
+  return [
+    'Usage: postman-insights-onboard [options]',
+    '',
+    'Options:',
+    inputFlags,
+    '  --result-json <path>   Optional JSON output file (opt-in)',
+    '  --dotenv-path <path>   Optional dotenv output file',
+    '  --help                 Show this help and exit',
+    '  --version              Print version and exit',
+    ''
+  ].join('\n');
 }
 
-export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): CliConfig {
-  const inputNames = [
-    'project-name',
-    'workspace-id',
-    'environment-id',
-    'system-environment-id',
-    'cluster-name',
-    'repo-url',
-    'postman-access-token',
-    'postman-api-key',
-    'credential-preflight',
-    'postman-team-id',
-    'github-token',
-    'poll-timeout-seconds',
-    'poll-interval-seconds',
-    'postman-region',
-    'postman-stack'
-  ];
+export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): ParsedCliArgs {
+  if (argv.includes('--help') || argv.includes('-h')) {
+    return { kind: 'help' };
+  }
+  if (argv.includes('--version') || argv.includes('-V')) {
+    return { kind: 'version' };
+  }
 
+  const allowed = new Set<string>([...INPUT_NAMES, ...OUTPUT_OPTION_NAMES]);
+  const seen = new Set<string>();
   const inputEnv: NodeJS.ProcessEnv = { ...env };
-  for (const name of inputNames) {
-    const value = readFlag(argv, name);
-    if (value !== undefined) {
-      inputEnv[normalizeCliFlag(name)] = value;
+  let resultJsonPath: string | undefined;
+  let dotenvPath: string | undefined;
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (!arg) {
+      continue;
     }
+    if (!arg.startsWith('--')) {
+      throw new Error(`Unexpected positional argument: ${arg}`);
+    }
+
+    const equalsIndex = arg.indexOf('=');
+    const name = equalsIndex >= 0 ? arg.slice(2, equalsIndex) : arg.slice(2);
+    if (!allowed.has(name)) {
+      throw new Error(`Unknown option: --${name}`);
+    }
+    if (seen.has(name)) {
+      throw new Error(`Duplicate option: --${name}`);
+    }
+
+    let value: string | undefined;
+    if (equalsIndex >= 0) {
+      value = arg.slice(equalsIndex + 1);
+    } else {
+      const next = argv[index + 1];
+      if (next === undefined || next.startsWith('--')) {
+        throw new Error(`Missing value for --${name}`);
+      }
+      value = next;
+      index += 1;
+    }
+    if (value.length === 0) {
+      throw new Error(`Missing value for --${name}`);
+    }
+
+    seen.add(name);
+    if (name === 'result-json') {
+      resultJsonPath = value;
+      continue;
+    }
+    if (name === 'dotenv-path') {
+      dotenvPath = value;
+      continue;
+    }
+    const normalizedName = normalizedInputEnvName(name);
+    delete inputEnv[runnerInputEnvName(name)];
+    delete inputEnv[normalizedName];
+    inputEnv[normalizedName] = value;
   }
 
   return {
+    kind: 'run',
     inputEnv,
-    resultJsonPath: readFlag(argv, 'result-json') ?? 'postman-insights-onboarding-result.json',
-    dotenvPath: readFlag(argv, 'dotenv-path')
+    resultJsonPath,
+    dotenvPath
   };
 }
 
@@ -118,18 +208,68 @@ export function toDotenv(outputs: Record<string, string>): string {
     .join('\n');
 }
 
+function assertWithinWorkspace(workspaceRoot: string, resolved: string, filePath: string): void {
+  const relative = path.relative(workspaceRoot, resolved);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`Output path must stay within workspace: ${filePath}`);
+  }
+}
+
+async function findExistingAncestor(candidate: string): Promise<string> {
+  let current = candidate;
+  while (true) {
+    try {
+      return await realpath(current);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
+      }
+      const parent = path.dirname(current);
+      if (parent === current) {
+        throw error;
+      }
+      current = parent;
+    }
+  }
+}
+
+async function validateOutputPath(filePath: string | undefined): Promise<void> {
+  if (!filePath) {
+    return;
+  }
+  const workspaceRoot = await realpath(process.cwd());
+  const resolved = path.resolve(workspaceRoot, filePath);
+  assertWithinWorkspace(workspaceRoot, resolved, filePath);
+  const existingParent = await findExistingAncestor(path.dirname(resolved));
+  assertWithinWorkspace(workspaceRoot, existingParent, filePath);
+}
+
+async function writeAtomicFile(filePath: string, content: string): Promise<void> {
+  const workspaceRoot = await realpath(process.cwd());
+  const resolved = path.resolve(workspaceRoot, filePath);
+  assertWithinWorkspace(workspaceRoot, resolved, filePath);
+  await mkdir(path.dirname(resolved), { recursive: true });
+  const resolvedParent = await realpath(path.dirname(resolved));
+  assertWithinWorkspace(workspaceRoot, resolvedParent, filePath);
+
+  const safeTarget = path.join(resolvedParent, path.basename(resolved));
+  const tempPath = path.join(
+    resolvedParent,
+    `.${path.basename(resolved)}.${process.pid}.${randomUUID()}.tmp`
+  );
+  try {
+    await writeFile(tempPath, content, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+    await rename(tempPath, safeTarget);
+  } finally {
+    await rm(tempPath, { force: true });
+  }
+}
+
 async function writeOptionalFile(filePath: string | undefined, content: string): Promise<void> {
   if (!filePath) {
     return;
   }
-  const workspaceRoot = path.resolve(process.cwd());
-  const resolved = path.resolve(workspaceRoot, filePath);
-  const relative = path.relative(workspaceRoot, resolved);
-  if (relative.startsWith('..') || path.isAbsolute(relative)) {
-    throw new Error(`Output path must stay within workspace: ${filePath}`);
-  }
-  await mkdir(path.dirname(resolved), { recursive: true });
-  await writeFile(resolved, content, 'utf8');
+  await writeAtomicFile(filePath, content);
 }
 
 function toOutputs(result: Awaited<ReturnType<typeof runOnboarding>>): Record<string, string> {
@@ -148,7 +288,21 @@ export async function runCli(
   runtime: CliRuntime = {}
 ): Promise<void> {
   const env = runtime.env ?? process.env;
-  const config = parseCliArgs(argv, env);
+  const writeStdout = runtime.writeStdout ?? ((chunk: string) => process.stdout.write(chunk));
+  const parsed = parseCliArgs(argv, env);
+
+  if (parsed.kind === 'help') {
+    writeStdout(renderHelp());
+    return;
+  }
+  if (parsed.kind === 'version') {
+    writeStdout(`${resolvePackageVersion()}\n`);
+    return;
+  }
+
+  const config = parsed;
+  await validateOutputPath(config.resultJsonPath);
+  await validateOutputPath(config.dotenvPath);
   const inputs = resolveInputs(config.inputEnv);
 
   const reporter = new ConsoleReporter();
@@ -236,7 +390,6 @@ export async function runCli(
   await writeOptionalFile(config.resultJsonPath, jsonOutput);
   await writeOptionalFile(config.dotenvPath, toDotenv(outputs));
 
-  const writeStdout = runtime.writeStdout ?? ((chunk: string) => process.stdout.write(chunk));
   writeStdout(`${jsonOutput}\n`);
 }
 

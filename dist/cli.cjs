@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 "use strict";
 var __create = Object.create;
 var __defProp = Object.defineProperty;
@@ -18685,6 +18686,7 @@ __export(cli_exports, {
   toDotenv: () => toDotenv
 });
 module.exports = __toCommonJS(cli_exports);
+var import_node_crypto2 = require("node:crypto");
 var import_node_fs2 = require("node:fs");
 var import_promises = require("node:fs/promises");
 var import_node_path2 = __toESM(require("node:path"), 1);
@@ -22162,6 +22164,35 @@ function getFinalServiceSegment(serviceName) {
   return lastSlash === -1 ? serviceName : serviceName.slice(lastSlash + 1);
 }
 
+// src/lib/input.ts
+function normalizeInputValue(value) {
+  return String(value ?? "").trim();
+}
+function runnerInputEnvName(name) {
+  return `INPUT_${name.replace(/ /g, "_").toUpperCase()}`;
+}
+function normalizedInputEnvName(name) {
+  return `INPUT_${name.replace(/-/g, "_").toUpperCase()}`;
+}
+function getInput2(name, env = process.env) {
+  const normalizedName = normalizedInputEnvName(name);
+  const runnerName = runnerInputEnvName(name);
+  const normalizedRaw = env[normalizedName];
+  const runnerRaw = runnerName === normalizedName ? void 0 : env[runnerName];
+  const hasNormalized = normalizedRaw !== void 0;
+  const hasRunner = runnerRaw !== void 0;
+  if (hasNormalized && hasRunner) {
+    const normalizedValue = normalizeInputValue(normalizedRaw);
+    const runnerValue = normalizeInputValue(runnerRaw);
+    if (normalizedValue !== runnerValue) {
+      throw new Error(
+        `Conflicting values for ${name}: ${normalizedName}=${JSON.stringify(normalizedValue)} vs ${runnerName}=${JSON.stringify(runnerValue)}`
+      );
+    }
+  }
+  return normalizeInputValue(hasNormalized ? normalizedRaw : runnerRaw);
+}
+
 // node_modules/@postman-cse/automation-telemetry-core/dist/ci-context.js
 function norm(value) {
   const trimmed = (value ?? "").trim();
@@ -22611,7 +22642,7 @@ function clamp(value, min, max, fallback) {
   return Math.min(max, Math.max(min, parsed));
 }
 function resolveInputs(env = process.env) {
-  const get = (name, fallback = "") => env[`INPUT_${name.toUpperCase().replace(/-/g, "_")}`]?.trim() || fallback;
+  const get = (name, fallback = "") => getInput2(name, env) || fallback;
   const projectName = get("project-name");
   if (!projectName) throw new Error("project-name is required");
   const postmanAccessToken = get("postman-access-token");
@@ -22846,6 +22877,24 @@ function createInsightsBifrostClient(inputs, tokenProvider, teamId, apiKey) {
 }
 
 // src/cli.ts
+var INPUT_NAMES = [
+  "project-name",
+  "workspace-id",
+  "environment-id",
+  "system-environment-id",
+  "cluster-name",
+  "repo-url",
+  "postman-access-token",
+  "postman-api-key",
+  "credential-preflight",
+  "postman-team-id",
+  "github-token",
+  "poll-timeout-seconds",
+  "poll-interval-seconds",
+  "postman-region",
+  "postman-stack"
+];
+var OUTPUT_OPTION_NAMES = ["result-json", "dotenv-path"];
 var ConsoleReporter = class {
   secretValues = [];
   info(message) {
@@ -22867,51 +22916,101 @@ var ConsoleReporter = class {
     return masked;
   }
 };
-function readFlag(argv, name) {
-  const prefix = `--${name}=`;
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === `--${name}`) {
-      return argv[index + 1];
-    }
-    if (arg?.startsWith(prefix)) {
-      return arg.slice(prefix.length);
+function normalizeCliFlag(name) {
+  return normalizedInputEnvName(name);
+}
+function resolvePackageVersion() {
+  const candidates = [];
+  if (typeof __filename === "string") {
+    candidates.push(import_node_path2.default.join(import_node_path2.default.dirname(__filename), "..", "package.json"));
+  }
+  candidates.push(import_node_path2.default.join(process.cwd(), "package.json"));
+  for (const candidate of candidates) {
+    try {
+      const packageJson = JSON.parse((0, import_node_fs2.readFileSync)(candidate, "utf8"));
+      if (packageJson.name === "@postman-cse/onboarding-insights" && packageJson.version) {
+        return String(packageJson.version).trim();
+      }
+    } catch {
     }
   }
-  return void 0;
+  return resolveActionVersion2();
 }
-function normalizeCliFlag(name) {
-  return `INPUT_${name.replace(/-/g, "_").toUpperCase()}`;
+function renderHelp() {
+  const inputFlags = INPUT_NAMES.map((name) => `  --${name} <value>`).join("\n");
+  return [
+    "Usage: postman-insights-onboard [options]",
+    "",
+    "Options:",
+    inputFlags,
+    "  --result-json <path>   Optional JSON output file (opt-in)",
+    "  --dotenv-path <path>   Optional dotenv output file",
+    "  --help                 Show this help and exit",
+    "  --version              Print version and exit",
+    ""
+  ].join("\n");
 }
 function parseCliArgs(argv, env = process.env) {
-  const inputNames = [
-    "project-name",
-    "workspace-id",
-    "environment-id",
-    "system-environment-id",
-    "cluster-name",
-    "repo-url",
-    "postman-access-token",
-    "postman-api-key",
-    "credential-preflight",
-    "postman-team-id",
-    "github-token",
-    "poll-timeout-seconds",
-    "poll-interval-seconds",
-    "postman-region",
-    "postman-stack"
-  ];
+  if (argv.includes("--help") || argv.includes("-h")) {
+    return { kind: "help" };
+  }
+  if (argv.includes("--version") || argv.includes("-V")) {
+    return { kind: "version" };
+  }
+  const allowed = /* @__PURE__ */ new Set([...INPUT_NAMES, ...OUTPUT_OPTION_NAMES]);
+  const seen = /* @__PURE__ */ new Set();
   const inputEnv = { ...env };
-  for (const name of inputNames) {
-    const value = readFlag(argv, name);
-    if (value !== void 0) {
-      inputEnv[normalizeCliFlag(name)] = value;
+  let resultJsonPath;
+  let dotenvPath;
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (!arg) {
+      continue;
     }
+    if (!arg.startsWith("--")) {
+      throw new Error(`Unexpected positional argument: ${arg}`);
+    }
+    const equalsIndex = arg.indexOf("=");
+    const name = equalsIndex >= 0 ? arg.slice(2, equalsIndex) : arg.slice(2);
+    if (!allowed.has(name)) {
+      throw new Error(`Unknown option: --${name}`);
+    }
+    if (seen.has(name)) {
+      throw new Error(`Duplicate option: --${name}`);
+    }
+    let value;
+    if (equalsIndex >= 0) {
+      value = arg.slice(equalsIndex + 1);
+    } else {
+      const next = argv[index + 1];
+      if (next === void 0 || next.startsWith("--")) {
+        throw new Error(`Missing value for --${name}`);
+      }
+      value = next;
+      index += 1;
+    }
+    if (value.length === 0) {
+      throw new Error(`Missing value for --${name}`);
+    }
+    seen.add(name);
+    if (name === "result-json") {
+      resultJsonPath = value;
+      continue;
+    }
+    if (name === "dotenv-path") {
+      dotenvPath = value;
+      continue;
+    }
+    const normalizedName = normalizedInputEnvName(name);
+    delete inputEnv[runnerInputEnvName(name)];
+    delete inputEnv[normalizedName];
+    inputEnv[normalizedName] = value;
   }
   return {
+    kind: "run",
     inputEnv,
-    resultJsonPath: readFlag(argv, "result-json") ?? "postman-insights-onboarding-result.json",
-    dotenvPath: readFlag(argv, "dotenv-path")
+    resultJsonPath,
+    dotenvPath
   };
 }
 function toDotenv(outputs) {
@@ -22920,18 +23019,63 @@ function toDotenv(outputs) {
     value
   ]).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join("\n");
 }
+function assertWithinWorkspace(workspaceRoot, resolved, filePath) {
+  const relative2 = import_node_path2.default.relative(workspaceRoot, resolved);
+  if (relative2 === ".." || relative2.startsWith(`..${import_node_path2.default.sep}`) || import_node_path2.default.isAbsolute(relative2)) {
+    throw new Error(`Output path must stay within workspace: ${filePath}`);
+  }
+}
+async function findExistingAncestor(candidate) {
+  let current = candidate;
+  while (true) {
+    try {
+      return await (0, import_promises.realpath)(current);
+    } catch (error2) {
+      if (error2.code !== "ENOENT") {
+        throw error2;
+      }
+      const parent = import_node_path2.default.dirname(current);
+      if (parent === current) {
+        throw error2;
+      }
+      current = parent;
+    }
+  }
+}
+async function validateOutputPath(filePath) {
+  if (!filePath) {
+    return;
+  }
+  const workspaceRoot = await (0, import_promises.realpath)(process.cwd());
+  const resolved = import_node_path2.default.resolve(workspaceRoot, filePath);
+  assertWithinWorkspace(workspaceRoot, resolved, filePath);
+  const existingParent = await findExistingAncestor(import_node_path2.default.dirname(resolved));
+  assertWithinWorkspace(workspaceRoot, existingParent, filePath);
+}
+async function writeAtomicFile(filePath, content) {
+  const workspaceRoot = await (0, import_promises.realpath)(process.cwd());
+  const resolved = import_node_path2.default.resolve(workspaceRoot, filePath);
+  assertWithinWorkspace(workspaceRoot, resolved, filePath);
+  await (0, import_promises.mkdir)(import_node_path2.default.dirname(resolved), { recursive: true });
+  const resolvedParent = await (0, import_promises.realpath)(import_node_path2.default.dirname(resolved));
+  assertWithinWorkspace(workspaceRoot, resolvedParent, filePath);
+  const safeTarget = import_node_path2.default.join(resolvedParent, import_node_path2.default.basename(resolved));
+  const tempPath = import_node_path2.default.join(
+    resolvedParent,
+    `.${import_node_path2.default.basename(resolved)}.${process.pid}.${(0, import_node_crypto2.randomUUID)()}.tmp`
+  );
+  try {
+    await (0, import_promises.writeFile)(tempPath, content, { encoding: "utf8", flag: "wx", mode: 384 });
+    await (0, import_promises.rename)(tempPath, safeTarget);
+  } finally {
+    await (0, import_promises.rm)(tempPath, { force: true });
+  }
+}
 async function writeOptionalFile(filePath, content) {
   if (!filePath) {
     return;
   }
-  const workspaceRoot = import_node_path2.default.resolve(process.cwd());
-  const resolved = import_node_path2.default.resolve(workspaceRoot, filePath);
-  const relative2 = import_node_path2.default.relative(workspaceRoot, resolved);
-  if (relative2.startsWith("..") || import_node_path2.default.isAbsolute(relative2)) {
-    throw new Error(`Output path must stay within workspace: ${filePath}`);
-  }
-  await (0, import_promises.mkdir)(import_node_path2.default.dirname(resolved), { recursive: true });
-  await (0, import_promises.writeFile)(resolved, content, "utf8");
+  await writeAtomicFile(filePath, content);
 }
 function toOutputs(result) {
   return {
@@ -22945,7 +23089,20 @@ function toOutputs(result) {
 }
 async function runCli(argv = process.argv.slice(2), runtime = {}) {
   const env = runtime.env ?? process.env;
-  const config = parseCliArgs(argv, env);
+  const writeStdout = runtime.writeStdout ?? ((chunk) => process.stdout.write(chunk));
+  const parsed = parseCliArgs(argv, env);
+  if (parsed.kind === "help") {
+    writeStdout(renderHelp());
+    return;
+  }
+  if (parsed.kind === "version") {
+    writeStdout(`${resolvePackageVersion()}
+`);
+    return;
+  }
+  const config = parsed;
+  await validateOutputPath(config.resultJsonPath);
+  await validateOutputPath(config.dotenvPath);
   const inputs = resolveInputs(config.inputEnv);
   const reporter = new ConsoleReporter();
   const mintHolder = {
@@ -23014,7 +23171,6 @@ async function runCli(argv = process.argv.slice(2), runtime = {}) {
   const jsonOutput = JSON.stringify(outputs, null, 2);
   await writeOptionalFile(config.resultJsonPath, jsonOutput);
   await writeOptionalFile(config.dotenvPath, toDotenv(outputs));
-  const writeStdout = runtime.writeStdout ?? ((chunk) => process.stdout.write(chunk));
   writeStdout(`${jsonOutput}
 `);
 }
