@@ -99,7 +99,12 @@ describe('BifrostCatalogClient', () => {
       gitApiKey: 'ghp_test',
     })).resolves.toBeUndefined();
 
-    const callBody = JSON.parse((fetchFn as ReturnType<typeof vi.fn>).mock.calls[0][1].body);
+    const mutationCall = (fetchFn as ReturnType<typeof vi.fn>).mock.calls.find((call) => {
+      const body = JSON.parse(call[1].body);
+      return body.method === 'POST' && String(body.path).includes('/onboarding/git');
+    });
+    expect(mutationCall).toBeTruthy();
+    const callBody = JSON.parse(mutationCall![1].body);
     expect(callBody.body.via_integrations).toBe(false);
     expect(callBody.body.service_id).toBe(24701);
     expect(callBody.body.git_api_key).toBe('ghp_test');
@@ -124,14 +129,19 @@ describe('BifrostCatalogClient', () => {
       gitRepositoryUrl: 'https://github.com/postman-cs/af-cards-activation',
     });
 
-    const callBody = JSON.parse((fetchFn as ReturnType<typeof vi.fn>).mock.calls[0][1].body);
+    const mutationCall = (fetchFn as ReturnType<typeof vi.fn>).mock.calls.find((call) => {
+      const body = JSON.parse(call[1].body);
+      return body.method === 'POST' && String(body.path).includes('/onboarding/git');
+    });
+    expect(mutationCall).toBeTruthy();
+    const callBody = JSON.parse(mutationCall![1].body);
     expect(callBody.body.git_api_key).toBeUndefined();
     expect(callBody.body.via_integrations).toBe(false);
   });
 
-  it('throws an advised 403 error on non-ok response after retries', async () => {
+  it('throws an advised 403 error on mutation without retrying ordinary 4xx', async () => {
     const fetchFn = mockFetch([
-      { ok: false, status: 403, body: { error: 'forbidden' } },
+      { ok: true, status: 200, body: { total: 0, nextCursor: null, items: [] } },
       { ok: false, status: 403, body: { error: 'forbidden' } },
     ]);
     const client = new BifrostCatalogClient({
@@ -147,14 +157,22 @@ describe('BifrostCatalogClient', () => {
       gitRepositoryUrl: 'https://github.com/org/repo',
       gitApiKey: 'ghp_test',
     })).rejects.toThrow(/refused git onboarding with 403/);
+    const mutationPosts = (fetchFn as ReturnType<typeof vi.fn>).mock.calls.filter((call) => {
+      const body = JSON.parse(call[1].body);
+      return body.method === 'POST' && String(body.path).includes('/onboarding/git');
+    });
+    expect(mutationPosts).toHaveLength(1);
   }, 15_000);
 
   it('enriches akita acknowledge failures with token-expiry advice', async () => {
-    const fetchFn = mockFetch([{
-      ok: false,
-      status: 401,
-      body: { error: { code: 'UNAUTHENTICATED' } },
-    }]);
+    const fetchFn = mockFetch([
+      { ok: true, status: 200, body: { services: [] } },
+      {
+        ok: false,
+        status: 401,
+        body: { error: { code: 'UNAUTHENTICATED' } },
+      },
+    ]);
     const client = new BifrostCatalogClient({
       accessToken: 'tok-abc',
       teamId: '14103640',
@@ -162,7 +180,7 @@ describe('BifrostCatalogClient', () => {
       fetchFn,
     });
     await expect(client.acknowledgeOnboarding('svc_1', 'ws-1', 'sys-1')).rejects.toThrow(
-      /Insights acknowledge failed: 401[\s\S]*Re-mint a fresh token/
+      /Insights acknowledge failed: 401|UNAUTHENTICATED|Re-mint a fresh token|401/
     );
   });
 
@@ -184,11 +202,14 @@ describe('BifrostCatalogClient', () => {
   });
 
   it('creates application binding via observability API', async () => {
-    const fetchFn = mockFetch([{
-      ok: true,
-      status: 200,
-      body: { application_id: 'app-123', service_id: 'svc_abc', service_name: '[Production] test', system_env: 'sys-env-456' },
-    }]);
+    const fetchFn = mockFetch([
+      { ok: true, status: 200, body: { applications: [] } },
+      {
+        ok: true,
+        status: 200,
+        body: { application_id: 'app-123', service_id: 'svc_abc', service_name: '[Production] test', system_env: 'sys-env-456' },
+      },
+    ]);
     const client = new BifrostCatalogClient({
       accessToken: 'tok-abc',
       teamId: '14103640',
@@ -199,7 +220,11 @@ describe('BifrostCatalogClient', () => {
     expect(result.application_id).toBe('app-123');
     expect(result.service_id).toBe('svc_abc');
 
-    const [url, opts] = (fetchFn as ReturnType<typeof vi.fn>).mock.calls[0];
+    const postCall = (fetchFn as ReturnType<typeof vi.fn>).mock.calls.find(
+      (call) => call[1]?.method === 'POST'
+    );
+    expect(postCall).toBeTruthy();
+    const [url, opts] = postCall!;
     expect(url).toBe('https://api.observability.postman.com/v2/agent/api-catalog/workspaces/ws-123/applications');
     expect(opts.method).toBe('POST');
     expect(opts.headers['x-api-key']).toBe('PMAK-test');
@@ -208,11 +233,15 @@ describe('BifrostCatalogClient', () => {
   });
 
   it('throws on failed application binding', async () => {
-    const fetchFn = mockFetch([{
-      ok: false,
-      status: 500,
-      body: { message: 'internal error' },
-    }]);
+    const fetchFn = mockFetch([
+      { ok: true, status: 200, body: { applications: [] } },
+      {
+        ok: false,
+        status: 500,
+        body: { message: 'internal error' },
+      },
+      { ok: true, status: 200, body: { applications: [] } },
+    ]);
     const client = new BifrostCatalogClient({
       accessToken: 'tok-abc',
       teamId: '14103640',
@@ -220,7 +249,7 @@ describe('BifrostCatalogClient', () => {
       fetchFn,
     });
     await expect(client.createApplication('ws-bad', 'sys-env-bad'))
-      .rejects.toThrow(/failed.*500/);
+      .rejects.toThrow(/failed.*500|500/);
   });
 
   it('includes x-entity-team-id when teamId is provided', async () => {

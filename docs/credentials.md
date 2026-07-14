@@ -55,20 +55,22 @@ jq -r '.login._profiles[].accessToken' ~/.postman/postmanrc | gh secret set POST
 
 CLI login tokens are session-scoped and expire. Prefer the service-token action for CI because it mints a service-account token at runtime and avoids long-lived session secrets.
 
-## API key auto-creation
+## API key creation (opt-in)
 
-If `postman-api-key` is omitted or the `/me` validation call returns `401` or `403`, the action creates a new API key via the Postman identity service using `postman-access-token`. Network failures and unexpected validation responses fail the action instead of silently rotating credentials.
+Durable Bifrost API-key creation is **opt-in** and off by default. If `postman-api-key` is omitted or the `/me` validation call returns `401` or `403`, the run fails with a clear error unless `create-api-key=true` is set. Ordinary reruns never mint timestamp-named orphan keys.
 
-Auto-created API keys are not used as evidence for a credential mismatch. The preflight can still warn about unresolved identity, but it does not fail only because the original API key was missing or rejected.
+When `create-api-key=true` is set, the action creates a durable key named `insights-onboarding-<project-name>` via the Bifrost identity service, then validates it before linking. The stable name avoids timestamp-named keys; callers should still persist and reuse the returned credential rather than repeatedly opting into creation. Network failures and unexpected validation responses fail the action instead of silently rotating credentials.
+
+Created keys are not used as evidence for a credential mismatch. The preflight can still warn about unresolved identity, but it does not fail only because the original API key was missing or rejected.
 
 ## Credential preflight (`credential-preflight`)
 
-Before any onboarding write, the action can probe both credentials and compare the parent organization each one resolves to. Mismatched credentials are a common source of duplicate-link errors and workspaces that are visible to one credential but not the other.
+Before any onboarding write, the action probes both credentials and compares the parent organization each one resolves to. Mismatched credentials are a common source of duplicate-link errors and workspaces that are visible to one credential but not the other.
 
-- `warn` (default): logs a note and continues when `postman-api-key` and `postman-access-token` resolve to different parent orgs.
-- `enforce`: fails the run on that condition before any onboarding write.
+- `enforce` (default): fails the run fast before any linking write when `postman-api-key` and `postman-access-token` resolve to different parent orgs.
+- `warn`: an explicit compatibility policy that logs a note and continues.
 
-Those are the only public modes. There is no public opt-out. A rejected or auto-created `postman-api-key` is never failed on.
+Those are the only public modes. There is no public opt-out. A rejected `postman-api-key` fails the run unless `create-api-key=true`; an explicitly created key must also pass validation before linking.
 
 ## Non-service-account warning
 
@@ -76,4 +78,4 @@ When the access-token session reports a `consumerType` other than `service_accou
 
 ## Team scope (`postman-team-id`)
 
-Supply `postman-team-id` for org-mode tokens that require an explicit team header. When set, it is sent as `x-entity-team-id` on integration requests. For non-org tokens, leave it unset so team context can be inferred from the access token. The `POSTMAN_TEAM_ID` environment variable is honored when the input is empty. The [roles and permissions](https://learning.postman.com/docs/administration/roles-and-permissions/) docs cover the team and workspace role model.
+Supply `postman-team-id` for org-mode tokens that require an explicit team header. When set, it is sent as `x-entity-team-id` on integration requests. For non-org tokens, leave it unset so team context can be inferred from the access token. The `POSTMAN_TEAM_ID` environment variable is honored when the input is empty. Team id is **never** inferred from PMAK `/teams` or `/me`; it comes only from the explicit `postman-team-id` input or the `POSTMAN_TEAM_ID` override. The [roles and permissions](https://learning.postman.com/docs/administration/roles-and-permissions/) docs cover the team and workspace role model.

@@ -57,15 +57,30 @@ export const insightsActionContract: ActionContract = {
       required: false,
     },
     'postman-api-key': {
-      description: 'Service-account Postman API key (PMAK-*) for the application binding call. Auto-created from postman-access-token when omitted or invalid after a clear 401/403 validation failure.',
+      description:
+        'Service-account Postman API key (PMAK-*) for the application binding call. Required unless create-api-key=true. Ordinary reruns never auto-create durable keys.',
       required: false,
+    },
+    'create-api-key': {
+      description:
+        'Explicit opt-in to create a durable Bifrost API key when postman-api-key is omitted or invalid. Default false. Supported values: true, false.',
+      required: false,
+      default: 'false',
+      allowedValues: ['true', 'false'],
     },
     'credential-preflight': {
       description:
-        'Credential identity preflight policy. warn (default) logs a note and continues when postman-api-key and postman-access-token resolve to different parent orgs; enforce fails the run on that condition before any onboarding write. Supported values are warn and enforce.',
+        'Credential identity preflight policy. enforce (default) fails before linking writes when postman-api-key and postman-access-token resolve to different parent orgs; warn is an explicit compatibility policy that logs and continues. Supported values are enforce and warn.',
       required: false,
-      default: 'warn',
+      default: 'enforce',
       allowedValues: ['enforce', 'warn'],
+    },
+    'service-not-found-policy': {
+      description:
+        'Behavior when the discovered service is absent after polling. fail (default) aborts full linking; warn returns status=not-found without writes. Supported values: fail, warn.',
+      required: false,
+      default: 'fail',
+      allowedValues: ['fail', 'warn'],
     },
     'poll-timeout-seconds': {
       description: 'Maximum seconds to wait for the service to appear in the discovered list.',

@@ -18687,7 +18687,9 @@ __export(index_exports, {
   createPlannedOutputs: () => createPlannedOutputs,
   getInput: () => getInput2,
   getTeams: () => getTeams,
+  parseCreateApiKey: () => parseCreateApiKey,
   parsePreflightMode: () => parsePreflightMode,
+  parseServiceNotFoundPolicy: () => parseServiceNotFoundPolicy,
   resolveApiKeyAndTeamId: () => resolveApiKeyAndTeamId,
   resolveInputs: () => resolveInputs,
   runAction: () => runAction,
@@ -21563,6 +21565,42 @@ async function retry(operation, options = {}) {
   }
   throw new Error("Retry exhausted without returning or throwing");
 }
+function isTransientHttpStatus(status) {
+  return status === 408 || status === 429 || status >= 500;
+}
+function extractStatus(error2) {
+  if (error2 instanceof HttpError) {
+    return error2.status;
+  }
+  if (error2 && typeof error2 === "object" && "status" in error2) {
+    const status = error2.status;
+    return typeof status === "number" ? status : void 0;
+  }
+  if (error2 && typeof error2 === "object" && "cause" in error2) {
+    return extractStatus(error2.cause);
+  }
+  return void 0;
+}
+function shouldRetryReadError(error2) {
+  const status = extractStatus(error2);
+  if (status === void 0) {
+    return true;
+  }
+  return isTransientHttpStatus(status);
+}
+function isAmbiguousMutationFailure(error2) {
+  const status = extractStatus(error2);
+  if (status === void 0) {
+    return true;
+  }
+  return isTransientHttpStatus(status);
+}
+var SAFE_READ_RETRY = {
+  maxAttempts: 3,
+  delayMs: 2e3,
+  backoffMultiplier: 2,
+  shouldRetry: (error2) => shouldRetryReadError(error2)
+};
 
 // src/lib/postman/base-urls.ts
 var POSTMAN_ENDPOINT_PROFILES = {
@@ -21777,6 +21815,27 @@ var MAX_PROVIDER_SERVICE_PAGES = 100;
 function isExpiredAuthError(status, body) {
   return status === 401 || body.includes("UNAUTHENTICATED") || body.includes("authenticationError");
 }
+function normalizeRepoUrl(url) {
+  return url.trim().replace(/\/+$/, "").toLowerCase();
+}
+async function mutateOnceThenReconcile(options) {
+  const existing = await options.findExisting();
+  if (existing !== null) {
+    return existing;
+  }
+  try {
+    return await options.mutate();
+  } catch (error2) {
+    if (!isAmbiguousMutationFailure(error2)) {
+      throw error2;
+    }
+    const adopted = await options.findExisting();
+    if (adopted !== null) {
+      return adopted;
+    }
+    throw error2;
+  }
+}
 var BifrostCatalogClient = class {
   tokenProvider;
   teamId;
@@ -21813,8 +21872,9 @@ var BifrostCatalogClient = class {
   }
   /**
    * Build Bifrost proxy headers.
-   * x-entity-team-id is ONLY included when teamId is present (org-mode tokens).
-   * Non-org-mode tokens must OMIT it so Bifrost resolves team from the access token.
+   * x-entity-team-id is ONLY included when teamId is present (explicit input /
+   * POSTMAN_TEAM_ID). Non-org-mode tokens must OMIT it so Bifrost resolves team
+   * from the access token. Team is never inferred from PMAK.
    */
   headers() {
     const h = {
@@ -21842,7 +21902,7 @@ var BifrostCatalogClient = class {
       mask: createSecretMasker(this.secretValues)
     };
   }
-  async proxyRequest(method, path6, body = {}, operation = "api-catalog request") {
+  async proxyRequest(method, path6, body = {}, operation = "api-catalog request", allowAuthReplay = false) {
     const send2 = async () => this.fetchFn(this.bifrostProxyUrl, {
       method: "POST",
       headers: this.headers(),
@@ -21856,7 +21916,7 @@ var BifrostCatalogClient = class {
     let response = await send2();
     if (!response.ok) {
       const bodyText = await response.text().catch(() => "");
-      if (isExpiredAuthError(response.status, bodyText) && this.tokenProvider.canRefresh()) {
+      if (allowAuthReplay && isExpiredAuthError(response.status, bodyText) && this.tokenProvider.canRefresh()) {
         try {
           const refreshed = await this.tokenProvider.refresh();
           this.registerAccessToken(refreshed);
@@ -21907,7 +21967,7 @@ var BifrostCatalogClient = class {
     }
     return data;
   }
-  async akitaProxyRequest(method, path6, body = {}, operation = "Insights request") {
+  async akitaProxyRequest(method, path6, body = {}, operation = "Insights request", allowAuthReplay = false) {
     const send2 = async () => this.fetchFn(this.bifrostProxyUrl, {
       method: "POST",
       headers: this.headers(),
@@ -21921,7 +21981,7 @@ var BifrostCatalogClient = class {
     let response = await send2();
     if (!response.ok) {
       const text = await response.text().catch(() => "");
-      if (isExpiredAuthError(response.status, text) && this.tokenProvider.canRefresh()) {
+      if (allowAuthReplay && isExpiredAuthError(response.status, text) && this.tokenProvider.canRefresh()) {
         try {
           const refreshed = await this.tokenProvider.refresh();
           this.registerAccessToken(refreshed);
@@ -21950,6 +22010,17 @@ ${advised.message}` : advised.message : text;
     const data = await response.json();
     return { ok: true, status: response.status, data, errorText: "" };
   }
+  throwAkitaFailure(status, errorText, operation, path6) {
+    const httpErr = new HttpError({
+      method: "POST",
+      url: `bifrost:akita:${path6}`,
+      status,
+      statusText: status >= 500 ? "Error" : "Client Error",
+      responseBody: errorText
+    });
+    const advised = adviseFromHttpError(httpErr, this.adviceContext(operation));
+    throw advised ?? httpErr;
+  }
   async listDiscoveredServices() {
     return retry(
       async () => {
@@ -21977,26 +22048,80 @@ ${advised.message}` : advised.message : text;
         }
         return allItems;
       },
-      { maxAttempts: 3, delayMs: 2e3, backoffMultiplier: 2 }
+      SAFE_READ_RETRY
     );
   }
-  async prepareCollection(serviceId, workspaceId) {
+  /** List discovered + integrated services for exact link reconciliation. */
+  async listServicesForReconcile() {
     return retry(
       async () => {
+        const allItems = [];
+        let cursor = null;
+        const seenCursors = /* @__PURE__ */ new Set();
+        for (let page = 0; page < MAX_DISCOVERED_SERVICE_PAGES; page += 1) {
+          const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+          const data = await this.proxyRequest(
+            "GET",
+            `/api/v1/onboarding/discovered-services${query}`,
+            {},
+            "service link reconciliation"
+          );
+          allItems.push(...data.items || []);
+          if (data.total && allItems.length >= data.total) {
+            break;
+          }
+          const nextCursor = data.nextCursor || null;
+          if (!nextCursor || seenCursors.has(nextCursor)) {
+            break;
+          }
+          seenCursors.add(nextCursor);
+          cursor = nextCursor;
+        }
+        return allItems;
+      },
+      SAFE_READ_RETRY
+    );
+  }
+  async findPreparedCollection(serviceId, workspaceId) {
+    const services = await this.listServicesForReconcile();
+    const match = services.find(
+      (service) => service.id === serviceId && Boolean(service.collectionId) && service.workspaceId === workspaceId
+    );
+    return match?.collectionId ? String(match.collectionId) : null;
+  }
+  async findGitLink(params) {
+    const services = await this.listServicesForReconcile();
+    const match = services.find((service) => {
+      if (service.id !== params.serviceId) return false;
+      if (service.workspaceId !== params.workspaceId) return false;
+      if (service.environmentId !== params.environmentId) return false;
+      if (!service.gitRepositoryUrl) return false;
+      return normalizeRepoUrl(service.gitRepositoryUrl) === normalizeRepoUrl(params.gitRepositoryUrl);
+    });
+    return match ? true : null;
+  }
+  async prepareCollection(serviceId, workspaceId) {
+    return mutateOnceThenReconcile({
+      findExisting: () => this.findPreparedCollection(serviceId, workspaceId),
+      mutate: async () => {
         const data = await this.proxyRequest(
           "POST",
           "/api/v1/onboarding/prepare-collection",
           { service_id: String(serviceId), workspace_id: workspaceId },
-          "collection preparation"
+          "collection preparation",
+          false
         );
+        if (!data?.id) {
+          throw new Error("prepare-collection succeeded without a collection id");
+        }
         return data.id;
-      },
-      { maxAttempts: 3, delayMs: 2e3, backoffMultiplier: 2 }
-    );
+      }
+    });
   }
   async onboardGit(params) {
-    await retry(
-      async () => {
+    await mutateOnceThenReconcile({
+      findExisting: () => this.findGitLink(params),
+      mutate: async () => {
         const body = {
           via_integrations: false,
           git_service_name: "github",
@@ -22012,24 +22137,32 @@ ${advised.message}` : advised.message : text;
           "POST",
           "/api/v1/onboarding/git",
           body,
-          "git onboarding"
+          "git onboarding",
+          false
         );
-      },
-      { maxAttempts: 2, delayMs: 3e3 }
-    );
+        return true;
+      }
+    });
   }
-  async resolveProviderServiceId(projectName, clusterName) {
+  async listProviderServices() {
     const allServices = [];
     let page = 1;
     const pageSize = 100;
     for (let pageCount = 0; pageCount < MAX_PROVIDER_SERVICE_PAGES; pageCount += 1) {
       const result = await this.akitaProxyRequest(
         "GET",
-        `/v2/api-catalog/services?status=discovered&populate_endpoints=false&populate_discovery_metadata=true&page=${page}&page_size=${pageSize}`,
+        `/v2/api-catalog/services?populate_endpoints=false&populate_discovery_metadata=true&page=${page}&page_size=${pageSize}`,
         {},
         "provider service resolution"
       );
-      if (!result.ok || !result.data) return null;
+      if (!result.ok || !result.data) {
+        this.throwAkitaFailure(
+          result.status,
+          result.errorText,
+          "provider service resolution",
+          "GET /v2/api-catalog/services"
+        );
+      }
       const services = result.data.services || [];
       allServices.push(...services);
       if (result.data.total && allServices.length >= result.data.total) {
@@ -22040,47 +22173,157 @@ ${advised.message}` : advised.message : text;
       }
       page++;
     }
+    return allServices;
+  }
+  async resolveProviderServiceId(projectName, clusterName) {
+    const allServices = await retry(
+      async () => this.listProviderServices(),
+      SAFE_READ_RETRY
+    );
     if (clusterName) {
       const fullName = `${clusterName}/${projectName}`;
       const exactMatch = allServices.find((s) => s.name === fullName);
       return exactMatch?.id || null;
     }
-    const finalSegmentMatch = allServices.find(
+    const finalSegmentMatches = allServices.filter(
       (s) => getFinalServiceSegment(s.name) === projectName
     );
-    if (finalSegmentMatch) return finalSegmentMatch.id;
-    const bracketedMatch = allServices.find(
+    if (finalSegmentMatches.length > 1) {
+      throw new Error(
+        `Ambiguous Insights provider service "${projectName}": multiple final-segment matches (${finalSegmentMatches.map((s) => s.name).join(", ")}). Provide cluster-name to select the canonical service identity.`
+      );
+    }
+    if (finalSegmentMatches.length === 1) return finalSegmentMatches[0].id;
+    const bracketedMatches = allServices.filter(
       (s) => getFinalServiceSegment(s.name).includes(`[${projectName}]`)
     );
-    return bracketedMatch?.id || null;
+    if (bracketedMatches.length > 1) {
+      throw new Error(
+        `Ambiguous Insights provider service "${projectName}": multiple bracketed matches. Provide cluster-name to select the canonical service identity.`
+      );
+    }
+    return bracketedMatches[0]?.id || null;
+  }
+  async findAcknowledgedOnboarding(providerServiceId, workspaceId, systemEnvironmentId) {
+    const services = await this.listProviderServices();
+    const match = services.find(
+      (service) => service.id === providerServiceId && service.workspace_id === workspaceId && service.system_env === systemEnvironmentId && (service.status === "onboarded" || service.status === "integrated" || Boolean(service.workspace_id))
+    );
+    return match ? true : null;
   }
   async acknowledgeOnboarding(providerServiceId, workspaceId, systemEnvironmentId) {
-    const result = await this.akitaProxyRequest(
-      "POST",
-      "/v2/api-catalog/services/onboard",
-      {
-        services: [{
-          service_id: providerServiceId,
-          workspace_id: workspaceId,
-          system_env: systemEnvironmentId
-        }]
+    await mutateOnceThenReconcile({
+      findExisting: () => this.findAcknowledgedOnboarding(providerServiceId, workspaceId, systemEnvironmentId),
+      mutate: async () => {
+        const result = await this.akitaProxyRequest(
+          "POST",
+          "/v2/api-catalog/services/onboard",
+          {
+            services: [{
+              service_id: providerServiceId,
+              workspace_id: workspaceId,
+              system_env: systemEnvironmentId
+            }]
+          },
+          "Insights onboarding acknowledgment",
+          false
+        );
+        if (!result.ok) {
+          this.throwAkitaFailure(
+            result.status,
+            result.errorText,
+            "Insights onboarding acknowledgment",
+            "POST /v2/api-catalog/services/onboard"
+          );
+        }
+        return true;
+      }
+    });
+  }
+  async findWorkspaceAcknowledged(workspaceId) {
+    const result = await retry(
+      async () => {
+        const response = await this.akitaProxyRequest(
+          "GET",
+          `/v2/workspaces/${workspaceId}/onboarding/acknowledge`,
+          {},
+          "workspace onboarding acknowledgment status"
+        );
+        if (!response.ok) {
+          this.throwAkitaFailure(
+            response.status,
+            response.errorText,
+            "workspace onboarding acknowledgment status",
+            `GET /v2/workspaces/${workspaceId}/onboarding/acknowledge`
+          );
+        }
+        return response;
       },
-      "Insights onboarding acknowledgment"
+      SAFE_READ_RETRY
     );
-    if (!result.ok) {
-      throw new Error(`Insights acknowledge failed: ${result.status} ${result.errorText}`);
-    }
+    return result.data?.onboarding_acknowledged ? true : null;
   }
   async acknowledgeWorkspace(workspaceId) {
-    const result = await this.akitaProxyRequest(
-      "POST",
-      `/v2/workspaces/${workspaceId}/onboarding/acknowledge`,
-      {},
-      "workspace onboarding acknowledgment"
+    await mutateOnceThenReconcile({
+      findExisting: () => this.findWorkspaceAcknowledged(workspaceId),
+      mutate: async () => {
+        const result = await this.akitaProxyRequest(
+          "POST",
+          `/v2/workspaces/${workspaceId}/onboarding/acknowledge`,
+          {},
+          "workspace onboarding acknowledgment",
+          false
+        );
+        if (!result.ok) {
+          this.throwAkitaFailure(
+            result.status,
+            result.errorText,
+            "workspace onboarding acknowledgment",
+            `POST /v2/workspaces/${workspaceId}/onboarding/acknowledge`
+          );
+        }
+        return true;
+      }
+    });
+  }
+  async findApplication(workspaceId, systemEnv, expectedServiceId) {
+    const response = await this.fetchFn(
+      `${this.observabilityBaseUrl}/v2/agent/api-catalog/workspaces/${workspaceId}/applications`,
+      {
+        method: "GET",
+        headers: {
+          "x-api-key": this.apiKey,
+          "x-postman-env": this.observabilityEnv,
+          "Content-Type": "application/json"
+        }
+      }
     );
-    if (!result.ok) {
-      throw new Error(`Workspace acknowledge failed: ${result.status} ${result.errorText}`);
+    if (!response.ok) {
+      const httpErr = await HttpError.fromResponse(response, {
+        method: "GET",
+        url: `observability:listApplications(${workspaceId})`,
+        secretValues: this.secretValues
+      });
+      const advised = adviseFromHttpError(httpErr, this.adviceContext("application binding lookup"));
+      throw advised ?? httpErr;
     }
+    const data = await response.json();
+    const matches = (data.applications || []).filter(
+      (app) => app.application_id && app.service_id && app.system_env === systemEnv && (!expectedServiceId || app.service_id === expectedServiceId)
+    );
+    if (matches.length > 1) {
+      throw new Error(
+        `Multiple application bindings match workspace ${workspaceId}, system environment ${systemEnv}, and service ${expectedServiceId || "(unspecified)"}`
+      );
+    }
+    const match = matches[0];
+    if (!match?.application_id || !match.service_id) {
+      return null;
+    }
+    return {
+      application_id: String(match.application_id),
+      service_id: String(match.service_id)
+    };
   }
   // PMAK-only by proven exception. A live probe against the observability
   // application-binding endpoint (POST /v2/agent/api-catalog/workspaces/:id/
@@ -22090,36 +22333,65 @@ ${advised.message}` : advised.message : text;
   // "Postman User" for a service account. The access token offers no improvement
   // over the API key here, so this route is not migrated to access-token-primary
   // (the suite-wide migration explicitly leaves probe-failed routes on PMAK).
-  async createApplication(workspaceId, systemEnv) {
-    const response = await this.fetchFn(
-      `${this.observabilityBaseUrl}/v2/agent/api-catalog/workspaces/${workspaceId}/applications`,
-      {
-        method: "POST",
-        headers: {
-          "x-api-key": this.apiKey,
-          "x-postman-env": this.observabilityEnv,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ system_env: systemEnv })
+  async createApplication(workspaceId, systemEnv, expectedServiceId) {
+    return mutateOnceThenReconcile({
+      findExisting: () => retry(
+        () => this.findApplication(workspaceId, systemEnv, expectedServiceId),
+        SAFE_READ_RETRY
+      ),
+      mutate: async () => {
+        const response = await this.fetchFn(
+          `${this.observabilityBaseUrl}/v2/agent/api-catalog/workspaces/${workspaceId}/applications`,
+          {
+            method: "POST",
+            headers: {
+              "x-api-key": this.apiKey,
+              "x-postman-env": this.observabilityEnv,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ system_env: systemEnv })
+          }
+        );
+        if (!response.ok) {
+          const httpErr = await HttpError.fromResponse(response, {
+            method: "POST",
+            url: `observability:createApplication(${workspaceId})`,
+            secretValues: this.secretValues
+          });
+          const advised = adviseFromHttpError(httpErr, this.adviceContext("application binding"));
+          throw advised ?? httpErr;
+        }
+        const created = await response.json();
+        if (expectedServiceId && created.service_id !== expectedServiceId) {
+          throw new Error(
+            `Application binding credential/scope mismatch: expected service ${expectedServiceId}, received ${created.service_id}`
+          );
+        }
+        return created;
       }
-    );
-    if (!response.ok) {
-      const httpErr = await HttpError.fromResponse(response, {
-        method: "POST",
-        url: `observability:createApplication(${workspaceId})`,
-        secretValues: this.secretValues
-      });
-      const advised = adviseFromHttpError(httpErr, this.adviceContext("application binding"));
-      throw advised ?? httpErr;
-    }
-    return response.json();
+    });
   }
   async getTeamVerificationToken(workspaceId) {
-    const result = await this.akitaProxyRequest(
-      "GET",
-      `/v2/workspaces/${workspaceId}/team-verification-token`,
-      {},
-      "team verification token retrieval"
+    const result = await retry(
+      async () => {
+        const page = await this.akitaProxyRequest(
+          "GET",
+          `/v2/workspaces/${workspaceId}/team-verification-token`,
+          {},
+          "team verification token retrieval"
+        );
+        if (!page.ok && (page.status === 408 || page.status === 429 || page.status >= 500)) {
+          throw new HttpError({
+            method: "GET",
+            url: `bifrost:akita:GET /v2/workspaces/${workspaceId}/team-verification-token`,
+            status: page.status,
+            statusText: "Error",
+            responseBody: page.errorText
+          });
+        }
+        return page;
+      },
+      SAFE_READ_RETRY
     );
     if (!result.ok || !result.data) return null;
     return result.data.team_verification_token || null;
@@ -22152,18 +22424,52 @@ ${advised.message}` : advised.message : text;
     return String(apikey.key);
   }
 };
+function buildCanonicalServiceIdentity(service, projectName, clusterName, providerServiceId) {
+  const derivedCluster = clusterName || (service.name.includes("/") ? service.name.slice(0, service.name.lastIndexOf("/")) : null);
+  return {
+    serviceId: service.id,
+    serviceName: service.name,
+    clusterName: derivedCluster,
+    projectName,
+    ...providerServiceId ? { providerServiceId } : {}
+  };
+}
 function findDiscoveredService(services, projectName, clusterName) {
   if (clusterName) {
     const fullName = `${clusterName}/${projectName}`;
-    return services.find((s) => s.name === fullName);
+    const match = services.find((s) => s.name === fullName);
+    if (match) {
+      match.canonicalIdentity = buildCanonicalServiceIdentity(match, projectName, clusterName);
+    }
+    return match;
   }
-  const finalSegmentMatch = services.find(
+  const finalSegmentMatches = services.filter(
     (service) => getFinalServiceSegment(service.name) === projectName
   );
-  if (finalSegmentMatch) return finalSegmentMatch;
-  return services.find(
+  if (finalSegmentMatches.length > 1) {
+    throw new Error(
+      `Ambiguous discovered service "${projectName}": multiple final-segment matches (${finalSegmentMatches.map((s) => s.name).join(", ")}). cluster-name is required to select the canonical service identity.`
+    );
+  }
+  if (finalSegmentMatches.length === 1) {
+    const match = finalSegmentMatches[0];
+    match.canonicalIdentity = buildCanonicalServiceIdentity(match, projectName);
+    return match;
+  }
+  const bracketedMatches = services.filter(
     (service) => getFinalServiceSegment(service.name).includes(`[${projectName}]`)
   );
+  if (bracketedMatches.length > 1) {
+    throw new Error(
+      `Ambiguous discovered service "${projectName}": multiple bracketed matches. cluster-name is required to select the canonical service identity.`
+    );
+  }
+  if (bracketedMatches.length === 1) {
+    const match = bracketedMatches[0];
+    match.canonicalIdentity = buildCanonicalServiceIdentity(match, projectName);
+    return match;
+  }
+  return void 0;
 }
 function getFinalServiceSegment(serviceName) {
   const lastSlash = serviceName.lastIndexOf("/");
@@ -22355,7 +22661,7 @@ function normalize(value) {
   const trimmed = (value ?? "").trim();
   return trimmed.length > 0 ? trimmed : void 0;
 }
-function normalizeRepoUrl(url) {
+function normalizeRepoUrl2(url) {
   const raw = normalize(url);
   if (!raw) {
     return void 0;
@@ -22423,7 +22729,7 @@ function classifyRefKind(env = process.env) {
   return "unknown";
 }
 function detectRepoContext(input, env = process.env) {
-  const repoUrl = normalizeRepoUrl(input.repoUrl) ?? normalizeRepoUrl(env.GITHUB_SERVER_URL && env.GITHUB_REPOSITORY ? `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}` : void 0) ?? normalizeRepoUrl(env.CI_PROJECT_URL) ?? normalizeRepoUrl(env.BITBUCKET_GIT_HTTP_ORIGIN) ?? normalizeRepoUrl(env.BUILD_REPOSITORY_URI);
+  const repoUrl = normalizeRepoUrl2(input.repoUrl) ?? normalizeRepoUrl2(env.GITHUB_SERVER_URL && env.GITHUB_REPOSITORY ? `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}` : void 0) ?? normalizeRepoUrl2(env.CI_PROJECT_URL) ?? normalizeRepoUrl2(env.BITBUCKET_GIT_HTTP_ORIGIN) ?? normalizeRepoUrl2(env.BUILD_REPOSITORY_URI);
   const repoSlug = normalize(input.repoSlug) ?? normalize(env.GITHUB_REPOSITORY) ?? normalize(env.CI_PROJECT_PATH) ?? (env.BITBUCKET_WORKSPACE && env.BITBUCKET_REPO_SLUG ? normalize(`${env.BITBUCKET_WORKSPACE}/${env.BITBUCKET_REPO_SLUG}`) : void 0) ?? normalize(env.BUILD_REPOSITORY_NAME);
   const ref = normalize(input.ref) ?? normalize(env.GITHUB_REF_NAME) ?? normalize(env.CI_COMMIT_REF_NAME) ?? normalize(env.BITBUCKET_BRANCH) ?? normalize(env.BUILD_SOURCEBRANCHNAME);
   const sha = normalize(input.sha) ?? normalize(env.GITHUB_SHA) ?? normalize(env.CI_COMMIT_SHA) ?? normalize(env.BITBUCKET_COMMIT) ?? normalize(env.BUILD_SOURCEVERSION);
@@ -22600,12 +22906,33 @@ var DEFAULT_POSTMAN_BIFROST_BASE = PROD_ENDPOINTS.bifrostBaseUrl;
 var DEFAULT_POSTMAN_IAPUB_BASE = PROD_ENDPOINTS.iapubBaseUrl;
 var DEFAULT_POSTMAN_OBSERVABILITY_BASE = PROD_ENDPOINTS.observabilityBaseUrl;
 function parsePreflightMode(value) {
-  const normalized = String(value || "warn").trim().toLowerCase();
+  const normalized = String(value || "enforce").trim().toLowerCase();
   if (normalized === "enforce" || normalized === "warn") {
     return normalized;
   }
   throw new Error(
     `Unsupported credential-preflight "${value}". Supported values: enforce, warn`
+  );
+}
+function parseServiceNotFoundPolicy(value) {
+  const normalized = String(value || "fail").trim().toLowerCase();
+  if (normalized === "fail" || normalized === "warn") {
+    return normalized;
+  }
+  throw new Error(
+    `Unsupported service-not-found-policy "${value}". Supported values: fail, warn`
+  );
+}
+function parseCreateApiKey(value) {
+  const normalized = String(value || "false").trim().toLowerCase();
+  if (normalized === "true") {
+    return true;
+  }
+  if (normalized === "false" || normalized === "") {
+    return false;
+  }
+  throw new Error(
+    `Unsupported create-api-key "${value}". Supported values: true, false`
   );
 }
 function trimTrailingSlash(value) {
@@ -22689,7 +23016,9 @@ function resolveInputs(env = process.env) {
     postmanApiKey,
     postmanTeamId,
     githubToken: get("github-token", env.GITHUB_TOKEN || ""),
-    credentialPreflight: parsePreflightMode(get("credential-preflight", "warn")),
+    credentialPreflight: parsePreflightMode(get("credential-preflight", "enforce")),
+    createApiKey: parseCreateApiKey(get("create-api-key", "false")),
+    serviceNotFoundPolicy: parseServiceNotFoundPolicy(get("service-not-found-policy", "fail")),
     pollTimeoutSeconds: clamp(rawTimeout, POLL_TIMEOUT_MIN, POLL_TIMEOUT_MAX, POLL_TIMEOUT_DEFAULT),
     pollIntervalSeconds: clamp(rawInterval, POLL_INTERVAL_MIN, POLL_INTERVAL_MAX, POLL_INTERVAL_DEFAULT),
     postmanRegion,
@@ -22715,6 +23044,7 @@ async function runOnboarding(inputs, client, sleepFn = sleep, reporter = core_ex
   const timeoutMs = inputs.pollTimeoutSeconds * 1e3;
   const intervalMs = inputs.pollIntervalSeconds * 1e3;
   const startTime = Date.now();
+  const policy = inputs.serviceNotFoundPolicy ?? "fail";
   reporter.info(`Looking for discovered service matching "${inputs.clusterName ? `${inputs.clusterName}/` : ""}${inputs.projectName}"...`);
   let match = void 0;
   while (Date.now() - startTime < timeoutMs) {
@@ -22729,15 +23059,35 @@ async function runOnboarding(inputs, client, sleepFn = sleep, reporter = core_ex
     await sleepFn(intervalMs);
   }
   if (!match) {
-    reporter.warning(`Service "${inputs.projectName}" not found in discovered services after ${inputs.pollTimeoutSeconds}s`);
-    return {
-      discoveredServiceId: 0,
-      discoveredServiceName: "",
-      collectionId: "",
-      applicationId: "",
-      verificationToken: null,
-      status: "not-found"
-    };
+    const message = `Service "${inputs.projectName}" not found in discovered services after ${inputs.pollTimeoutSeconds}s`;
+    if (policy === "warn") {
+      reporter.warning(message);
+      return {
+        discoveredServiceId: 0,
+        discoveredServiceName: "",
+        collectionId: "",
+        applicationId: "",
+        verificationToken: null,
+        status: "not-found"
+      };
+    }
+    throw new Error(`${message}. Full linking requires a discovered service (service-not-found-policy=fail).`);
+  }
+  const canonicalBase = match.canonicalIdentity ?? buildCanonicalServiceIdentity(match, inputs.projectName, inputs.clusterName || void 0);
+  const providerServiceId = await client.resolveProviderServiceId(
+    inputs.projectName,
+    inputs.clusterName || void 0
+  );
+  if (!providerServiceId) {
+    throw new Error(
+      `Insights provider service "${canonicalBase.serviceName}" was not found. Full linking requires one exact canonical service identity.`
+    );
+  }
+  const sysEnvId = inputs.systemEnvironmentId || match.systemEnvironmentId || "";
+  if (!sysEnvId) {
+    throw new Error(
+      `No system environment id is available for "${canonicalBase.serviceName}"; refusing partial linking writes.`
+    );
   }
   reporter.info(`Preparing collection for service ${match.id} in workspace ${inputs.workspaceId}...`);
   const collectionId = await client.prepareCollection(match.id, inputs.workspaceId);
@@ -22757,27 +23107,12 @@ async function runOnboarding(inputs, client, sleepFn = sleep, reporter = core_ex
   } else {
     reporter.info(`Skipping git onboarding for non-GitHub repo: ${repoUrl}`);
   }
-  const providerServiceId = await client.resolveProviderServiceId(
-    inputs.projectName,
-    inputs.clusterName || void 0
-  );
-  let applicationId = "";
-  if (providerServiceId) {
-    const sysEnvId = inputs.systemEnvironmentId || match.systemEnvironmentId || "";
-    if (sysEnvId) {
-      reporter.info(`Acknowledging Insights onboarding for ${providerServiceId}...`);
-      await client.acknowledgeOnboarding(providerServiceId, inputs.workspaceId, sysEnvId);
-      reporter.info(`Insights acknowledged: ${providerServiceId}`);
-      reporter.info(`Creating application binding for workspace ${inputs.workspaceId} with system_env ${sysEnvId}...`);
-      const appResult = await client.createApplication(inputs.workspaceId, sysEnvId);
-      applicationId = appResult.application_id;
-      reporter.info(`Application binding created: ${appResult.application_id} for service ${appResult.service_id}`);
-    } else {
-      reporter.warning("No systemEnvironmentId available; skipping Insights acknowledgment and application binding");
-    }
-  } else {
-    reporter.warning("Could not resolve Akita provider service ID; skipping acknowledgment and application binding");
-  }
+  reporter.info(`Acknowledging Insights onboarding for ${providerServiceId}...`);
+  await client.acknowledgeOnboarding(providerServiceId, inputs.workspaceId, sysEnvId);
+  reporter.info(`Insights acknowledged: ${providerServiceId}`);
+  reporter.info(`Creating application binding for workspace ${inputs.workspaceId} with system_env ${sysEnvId}...`);
+  const appResult = await client.createApplication(inputs.workspaceId, sysEnvId, providerServiceId);
+  reporter.info(`Application binding created: ${appResult.application_id} for service ${appResult.service_id}`);
   reporter.info(`Acknowledging workspace onboarding for ${inputs.workspaceId}...`);
   await client.acknowledgeWorkspace(inputs.workspaceId);
   reporter.info("Workspace onboarding acknowledged");
@@ -22793,9 +23128,13 @@ async function runOnboarding(inputs, client, sleepFn = sleep, reporter = core_ex
     discoveredServiceId: match.id,
     discoveredServiceName: match.name,
     collectionId,
-    applicationId,
+    applicationId: appResult.application_id,
     verificationToken,
-    status: "success"
+    status: "success",
+    canonicalIdentity: {
+      ...canonicalBase,
+      ...providerServiceId ? { providerServiceId } : {}
+    }
   };
 }
 async function resolveApiKeyAndTeamId(inputs, client, reporter = core_exports) {
@@ -22804,6 +23143,7 @@ async function resolveApiKeyAndTeamId(inputs, client, reporter = core_exports) {
   let keyValid = false;
   let pmakIdentity;
   const apiBase = inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE;
+  const createApiKey = inputs.createApiKey === true;
   if (apiKey) {
     const result = await validateApiKey(apiKey, apiBase);
     keyValid = result.valid;
@@ -22814,49 +23154,36 @@ async function resolveApiKeyAndTeamId(inputs, client, reporter = core_exports) {
     }
   }
   if (!keyValid) {
-    reporter.info("Generating a new Postman API key via Bifrost identity service...");
-    const keyName = `insights-onboarding-action-${Date.now()}`;
+    if (!createApiKey) {
+      if (apiKey) {
+        throw new Error(
+          "postman-api-key is invalid or expired. Provide a valid key, or set create-api-key=true to opt in to durable Bifrost API-key creation."
+        );
+      }
+      throw new Error(
+        "postman-api-key is required for application binding. Provide a valid key, or set create-api-key=true to opt in to durable Bifrost API-key creation."
+      );
+    }
+    reporter.info("create-api-key=true: generating a durable Postman API key via Bifrost identity service...");
+    const keyName = `insights-onboarding-${inputs.projectName}`;
     apiKey = await client.createApiKey(keyName);
     reporter.setSecret(apiKey);
     client.setApiKey(apiKey);
-    reporter.info("New API key created successfully.");
-  }
-  let resolvedTeamId = teamId;
-  if (!resolvedTeamId && apiKey) {
-    try {
-      const teams = await getTeams(apiKey, apiBase);
-      if (teams.length > 1 && teams.every((t) => t.organizationId == null)) {
-        reporter.warning(
-          "GET /teams returned multiple teams but none include organizationId. Org-mode auto-detection may be degraded due to an upstream API change. Set postman-team-id explicitly if Bifrost calls fail."
-        );
-      }
-      const isOrgMode = teams.some((t) => t.organizationId != null);
-      if (isOrgMode) {
-        if (teams.length === 1) {
-          resolvedTeamId = String(teams[0].id);
-          reporter.info(
-            `Org-mode account detected. Using sub-team ${teams[0].id} (${teams[0].name ?? "unknown"}) for Bifrost calls.`
-          );
-        } else {
-          const meResult = await validateApiKey(apiKey, apiBase);
-          const meTeamId = meResult.teamId ? parseInt(meResult.teamId, 10) : NaN;
-          if (!Number.isNaN(meTeamId) && teams.some((t) => t.id === meTeamId)) {
-            resolvedTeamId = String(meTeamId);
-            reporter.info(
-              `Org-mode account detected. Using sub-team ${meTeamId} (from /me) for Bifrost calls.`
-            );
-          }
-        }
-      }
-    } catch {
+    const createdIdentity = await validateApiKey(apiKey, apiBase);
+    if (!createdIdentity.valid) {
+      throw new Error("The explicitly created postman-api-key could not be validated; refusing linking writes.");
     }
+    pmakIdentity = { source: "pmak/me", teamId: createdIdentity.teamId };
+    reporter.info(`New API key created successfully (${keyName}).`);
   }
-  if (resolvedTeamId) {
-    reporter.info(`Using postman-team-id for Bifrost headers: ${resolvedTeamId}`);
+  if (teamId) {
+    reporter.info(`Using explicit postman-team-id for Bifrost headers: ${teamId}`);
   } else {
-    reporter.info("No postman-team-id resolved; omitting x-entity-team-id so Bifrost resolves team from the access token.");
+    reporter.info(
+      "No postman-team-id / POSTMAN_TEAM_ID provided; omitting x-entity-team-id so Bifrost resolves team from the access token."
+    );
   }
-  return { apiKey, teamId: resolvedTeamId, pmakIdentity };
+  return { apiKey, teamId, pmakIdentity };
 }
 async function runCredentialPreflightForInputs(inputs, pmak, reporter, fetchImpl, liveAccessToken) {
   const accessToken = liveAccessToken ?? inputs.postmanAccessToken;
@@ -22914,24 +23241,54 @@ async function runAction() {
     inputs.postmanTeamId,
     inputs.postmanApiKey
   );
-  const { apiKey, teamId, pmakIdentity } = await resolveApiKeyAndTeamId(inputs, preliminaryClient, core_exports);
-  const activeTokenProvider = apiKey !== inputs.postmanApiKey ? new AccessTokenProvider({
-    accessToken: tokenProvider.current(),
-    apiKey,
-    apiBaseUrl: inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE,
-    onToken: (token) => setSecret(token)
-  }) : tokenProvider;
   const telemetry = createTelemetryContext({ action: "postman-insights-onboarding-action", actionVersion: resolveActionVersion2(), logger: core_exports });
-  telemetry.setTeamId(inputs.postmanTeamId || pmakIdentity?.teamId);
+  telemetry.setTeamId(inputs.postmanTeamId);
   let result;
   try {
+    let apiKey = inputs.postmanApiKey;
+    let pmakIdentity;
+    const apiBase = inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE;
+    if (apiKey) {
+      const validated = await validateApiKey(apiKey, apiBase);
+      if (validated.valid) {
+        pmakIdentity = { source: "pmak/me", teamId: validated.teamId };
+      } else if (!inputs.createApiKey) {
+        throw new Error(
+          "postman-api-key is invalid or expired. Provide a valid key, or set create-api-key=true to opt in to durable Bifrost API-key creation."
+        );
+      } else {
+        warning("Provided postman-api-key is invalid or expired.");
+      }
+    } else if (!inputs.createApiKey) {
+      throw new Error(
+        "postman-api-key is required for application binding. Provide a valid key, or set create-api-key=true to opt in to durable Bifrost API-key creation."
+      );
+    }
     await runCredentialPreflightForInputs(
       inputs,
       pmakIdentity,
       core_exports,
       void 0,
-      activeTokenProvider.current()
+      tokenProvider.current()
     );
+    const resolved = await resolveApiKeyAndTeamId(inputs, preliminaryClient, core_exports);
+    apiKey = resolved.apiKey;
+    const teamId = resolved.teamId;
+    if (resolved.pmakIdentity?.teamId !== pmakIdentity?.teamId) {
+      await runCredentialPreflightForInputs(
+        inputs,
+        resolved.pmakIdentity,
+        core_exports,
+        void 0,
+        tokenProvider.current()
+      );
+    }
+    const activeTokenProvider = apiKey !== inputs.postmanApiKey ? new AccessTokenProvider({
+      accessToken: tokenProvider.current(),
+      apiKey,
+      apiBaseUrl: inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE,
+      onToken: (token) => setSecret(token)
+    }) : tokenProvider;
     const client = createInsightsBifrostClient(inputs, activeTokenProvider, teamId, apiKey);
     result = await runOnboarding(inputs, client, sleep, core_exports);
   } catch (error2) {
@@ -22968,7 +23325,9 @@ async function runAction() {
   createPlannedOutputs,
   getInput,
   getTeams,
+  parseCreateApiKey,
   parsePreflightMode,
+  parseServiceNotFoundPolicy,
   resolveApiKeyAndTeamId,
   resolveInputs,
   runAction,
