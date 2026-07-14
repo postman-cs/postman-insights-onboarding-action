@@ -1,3 +1,5 @@
+import { HttpError } from './http-error.js';
+
 export interface RetryDecisionContext {
   attempt: number;
   maxAttempts: number;
@@ -77,3 +79,54 @@ export async function retry<T>(
 
   throw new Error('Retry exhausted without returning or throwing');
 }
+
+/** Transient HTTP statuses safe to retry for read operations. */
+export function isTransientHttpStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+function extractStatus(error: unknown): number | undefined {
+  if (error instanceof HttpError) {
+    return error.status;
+  }
+  if (error && typeof error === 'object' && 'status' in error) {
+    const status = (error as { status?: unknown }).status;
+    return typeof status === 'number' ? status : undefined;
+  }
+  if (error && typeof error === 'object' && 'cause' in error) {
+    return extractStatus((error as { cause?: unknown }).cause);
+  }
+  return undefined;
+}
+
+/**
+ * Safe-read retry gate: retry network failures and transient HTTP statuses.
+ * Ordinary 4xx responses are never retried.
+ */
+export function shouldRetryReadError(error: unknown): boolean {
+  const status = extractStatus(error);
+  if (status === undefined) {
+    // Network / disconnect / abort without an HTTP status.
+    return true;
+  }
+  return isTransientHttpStatus(status);
+}
+
+/**
+ * Mutation POST that may have been accepted upstream but returned an ambiguous
+ * transport/server failure. Ordinary 4xx are never ambiguous.
+ */
+export function isAmbiguousMutationFailure(error: unknown): boolean {
+  const status = extractStatus(error);
+  if (status === undefined) {
+    return true;
+  }
+  return isTransientHttpStatus(status);
+}
+
+export const SAFE_READ_RETRY: RetryOptions = {
+  maxAttempts: 3,
+  delayMs: 2000,
+  backoffMultiplier: 2,
+  shouldRetry: (error) => shouldRetryReadError(error)
+};

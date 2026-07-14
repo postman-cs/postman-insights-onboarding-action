@@ -90,23 +90,23 @@ describe('action contract', () => {
     expect(actionManifest.inputs['postman-api-key'].required).toBe(false);
   });
 
-  it('defaults credential-preflight to warn with enforce/warn allowed', () => {
+  it('defaults credential-preflight to enforce with enforce/warn allowed', () => {
     const contractInput = insightsActionContract.inputs['credential-preflight'];
     expect(contractInput.required).toBe(false);
-    expect(contractInput.default).toBe('warn');
+    expect(contractInput.default).toBe('enforce');
     expect(contractInput.allowedValues).toEqual(['enforce', 'warn']);
     expect(actionManifest.inputs['credential-preflight'].required).toBe(false);
-    expect(actionManifest.inputs['credential-preflight'].default).toBe('warn');
+    expect(actionManifest.inputs['credential-preflight'].default).toBe('enforce');
   });
 
-  it('threads credential-preflight and the iapub base through resolveInputs with a warn default', () => {
+  it('threads credential-preflight and the iapub base through resolveInputs with an enforce default', () => {
     const base = {
       INPUT_PROJECT_NAME: 'svc',
       INPUT_WORKSPACE_ID: 'ws-123',
       INPUT_ENVIRONMENT_ID: 'env-456',
       INPUT_POSTMAN_ACCESS_TOKEN: 'tok-abc',
     };
-    expect(resolveInputs(base).credentialPreflight).toBe('warn');
+    expect(resolveInputs(base).credentialPreflight).toBe('enforce');
     expect(resolveInputs(base).postmanIapubBase).toBe('https://iapub.postman.co');
     expect(
       resolveInputs({ ...base, INPUT_CREDENTIAL_PREFLIGHT: 'enforce' }).credentialPreflight

@@ -12,6 +12,7 @@ import {
   resolveInputs,
   runCredentialPreflightForInputs,
   runOnboarding,
+  validateApiKey,
   type Reporter
 } from './index.js';
 import { sleep } from './lib/retry.js';
@@ -29,7 +30,9 @@ const INPUT_NAMES = [
   'repo-url',
   'postman-access-token',
   'postman-api-key',
+  'create-api-key',
   'credential-preflight',
+  'service-not-found-policy',
   'postman-team-id',
   'github-token',
   'poll-timeout-seconds',
@@ -333,39 +336,60 @@ export async function runCli(
     inputs.postmanApiKey
   );
 
-  const { apiKey, teamId, pmakIdentity } = await resolveApiKeyAndTeamId(
-    inputs,
-    preliminaryClient,
-    reporter
-  );
-
-  const activeTokenProvider =
-    apiKey !== inputs.postmanApiKey
-      ? new AccessTokenProvider({
-          accessToken: tokenProvider.current(),
-          apiKey,
-          apiBaseUrl: inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE,
-          onToken: (token) => reporter.setSecret(token)
-        })
-      : tokenProvider;
-
   const telemetry = createTelemetryContext({ action: 'postman-insights-onboarding-action', actionVersion: resolveActionVersion(), logger: reporter });
-  telemetry.setTeamId(inputs.postmanTeamId || pmakIdentity?.teamId);
-  if (apiKey) {
-    reporter.setSecret(apiKey);
-  }
-
+  telemetry.setTeamId(inputs.postmanTeamId);
   let result: Awaited<ReturnType<typeof runOnboarding>>;
   try {
-    // Credential preflight can throw under enforce; keep it inside the try so a
-    // known-team credential failure still routes through emitCompletion('failure').
+    let preflightPmakIdentity;
+    if (inputs.postmanApiKey) {
+      const validated = await validateApiKey(
+        inputs.postmanApiKey,
+        inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE
+      );
+      if (validated.valid) {
+        preflightPmakIdentity = { source: 'pmak/me' as const, teamId: validated.teamId };
+      } else if (!inputs.createApiKey) {
+        throw new Error(
+          'postman-api-key is invalid or expired. Provide a valid key, or set create-api-key=true to opt in to durable Bifrost API-key creation.'
+        );
+      }
+    } else if (!inputs.createApiKey) {
+      throw new Error(
+        'postman-api-key is required for application binding. Provide a valid key, or set create-api-key=true to opt in to durable Bifrost API-key creation.'
+      );
+    }
+
     await runCredentialPreflightForInputs(
       inputs,
-      pmakIdentity,
+      preflightPmakIdentity,
       reporter,
       undefined,
-      activeTokenProvider.current()
+      tokenProvider.current()
     );
+
+    const { apiKey, teamId, pmakIdentity } = await resolveApiKeyAndTeamId(inputs, preliminaryClient, reporter);
+    telemetry.setTeamId(inputs.postmanTeamId || pmakIdentity?.teamId);
+    reporter.setSecret(apiKey);
+
+    const activeTokenProvider =
+      apiKey !== inputs.postmanApiKey
+        ? new AccessTokenProvider({
+            accessToken: tokenProvider.current(),
+            apiKey,
+            apiBaseUrl: inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE,
+            onToken: (token) => reporter.setSecret(token)
+          })
+        : tokenProvider;
+
+    if (pmakIdentity?.teamId !== preflightPmakIdentity?.teamId) {
+      await runCredentialPreflightForInputs(
+        inputs,
+        pmakIdentity,
+        reporter,
+        undefined,
+        activeTokenProvider.current()
+      );
+    }
 
     const client = createInsightsBifrostClient(inputs, activeTokenProvider, teamId, apiKey);
 
