@@ -27,7 +27,8 @@ tests/
 
 ```bash
 npm ci && npm test && npm run typecheck && npm run build
-npm run verify:dist  # CI/hook gate: rebuild + git diff (dev runs build)
+npm run verify:dist:assert  # read-only: shebang/exec/census/builtins + git diff
+npm run verify:dist         # rebuild + git diff + assert (hooks/release)
 ```
 
 ## Key Behaviors
@@ -45,7 +46,7 @@ npm run verify:dist  # CI/hook gate: rebuild + git diff (dev runs build)
 ## CI
 
 `.github/workflows/ci.yml` runs one build before its single `gate` job fans out
-lint, typecheck, test, read-only dist diff, commitlint, and actionlint on one
+lint, typecheck, test, read-only `verify:dist:assert`, commitlint, and actionlint on one
 runner. Building before fan-out prevents pack tests from racing dist rebuild.
 Every gate prints its result under a `::group::` block even when another fails.
 

@@ -23,7 +23,12 @@ const packageManifest = JSON.parse(
   readFileSync(resolve(repoRoot, 'package.json'), 'utf8')
 ) as {
   main: string;
-  scripts: { build: string };
+  scripts: {
+    build: string;
+    bundle?: string;
+    'verify:dist'?: string;
+    'verify:dist:assert'?: string;
+  };
 };
 const readme = readFileSync(resolve(repoRoot, 'README.md'), 'utf8');
 const credentialsDoc = readFileSync(resolve(repoRoot, 'docs/credentials.md'), 'utf8');
@@ -55,10 +60,16 @@ describe('action contract', () => {
       main: 'dist/action.cjs'
     });
     expect(packageManifest.main).toBe('dist/index.cjs');
-    expect(packageManifest.scripts.build).toContain('src/index.ts --bundle');
-    expect(packageManifest.scripts.build).toContain('--outfile=dist/index.cjs');
-    expect(packageManifest.scripts.build).toContain('src/main.ts --bundle');
-    expect(packageManifest.scripts.build).toContain('--outfile=dist/action.cjs');
+    expect(packageManifest.scripts.bundle).toContain('src/index.ts --bundle');
+    expect(packageManifest.scripts.bundle).toContain('--outfile=dist/index.cjs');
+    expect(packageManifest.scripts.bundle).toContain('src/main.ts --bundle');
+    expect(packageManifest.scripts.bundle).toContain('--outfile=dist/action.cjs');
+    expect(packageManifest.scripts.bundle).toContain("--banner:js='#!/usr/bin/env node'");
+    expect(packageManifest.scripts.bundle).toContain('chmod 755 dist/cli.cjs');
+    expect(packageManifest.scripts.bundle).not.toContain('chmod +x dist/cli.cjs');
+    expect(packageManifest.scripts.build).toMatch(/typecheck.*&&.*bundle|bundle.*typecheck/);
+    expect(packageManifest.scripts['verify:dist:assert']).toContain('scripts/verify-dist-artifact.mjs');
+    expect(packageManifest.scripts['verify:dist']).toMatch(/build.*verify:dist:assert|verify:dist:assert/);
   });
 
   it('keeps postman-stack compatible while documenting postman-region for data residency', () => {

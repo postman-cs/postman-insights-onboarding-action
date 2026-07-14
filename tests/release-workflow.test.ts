@@ -7,14 +7,22 @@ const releaseWorkflow = readFileSync(join(process.cwd(), '.github/workflows/rele
 
 function namedStep(name: string): string {
   const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = releaseWorkflow.match(new RegExp(`      - name: ${escapedName}\\n[\\s\\S]*?(?=\\n      - |\\n?$)`));
+  const match = releaseWorkflow.match(
+    new RegExp(`      - name: ${escapedName}\\n[\\s\\S]*?(?=\\n      - |\\n  [a-zA-Z0-9_-]+:|\\n?$)`)
+  );
   return match?.[0] ?? '';
 }
 
 function npmRegistrySetupStep(): string {
-  return releaseWorkflow
-    .match(/ {6}- uses: actions\/setup-node@v\d+\n(?: {8}[^\n]+\n| {10}[^\n]+\n)*/g)
-    ?.find((step) => step.includes("registry-url: 'https://registry.npmjs.org'") && step.includes("if: steps.release_tag.outputs.npm_publish == 'true'")) ?? '';
+  return (
+    releaseWorkflow
+      .match(/ {6}- uses: actions\/setup-node@v\d+\n(?: {8}[^\n]+\n| {10}[^\n]+\n)*/g)
+      ?.find(
+        (step) =>
+          step.includes("registry-url: 'https://registry.npmjs.org'") &&
+          step.includes("if: steps.release_tag.outputs.npm_publish == 'true'")
+      ) ?? ''
+  );
 }
 
 describe('release workflow publishing contract', () => {
@@ -37,8 +45,22 @@ describe('release workflow publishing contract', () => {
     expect(namedStep('Check npm package version')).toContain('id: npm_package');
     expect(namedStep('Check npm package version')).toContain('npm view "$PKG_NAME@$PKG_VERSION" version');
     expect(namedStep('Check npm package version')).toContain('already_published=true');
-    expect(namedStep('Publish to npm')).toContain("if: steps.release_tag.outputs.npm_publish == 'true' && steps.npm_package.outputs.already_published != 'true'");
+    expect(namedStep('Publish to npm')).toContain(
+      "if: steps.release_tag.outputs.npm_publish == 'true' && steps.npm_package.outputs.already_published != 'true'"
+    );
     expect(namedStep('Attach npm tarball to release')).not.toMatch(/\n\s+if:/);
     expect(namedStep('Upload tarball')).not.toMatch(/\n\s+if:/);
+  });
+
+  it('keeps a single automatic rolling major alias job after publish', () => {
+    expect(releaseWorkflow).toMatch(/^ {2}advance-major-alias:/m);
+    expect(releaseWorkflow).toContain('Force-move rolling major alias tag');
+    expect(releaseWorkflow).toContain('MAJOR="v${VERSION%%.*}"');
+    expect(releaseWorkflow).toContain('if [ "$MAJOR" = "v$VERSION" ]; then');
+    expect(releaseWorkflow).toContain('is already a major alias; nothing to move');
+    expect(releaseWorkflow).toContain('git tag -fa "$MAJOR"');
+    expect(releaseWorkflow).toContain('git push origin "$MAJOR" --force');
+    expect(releaseWorkflow).toContain("if: ${{ needs.release.outputs.npm_publish == 'true' }}");
+    expect(releaseWorkflow.match(/^ {2}advance-major-alias:/gm) ?? []).toHaveLength(1);
   });
 });
