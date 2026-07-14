@@ -1,5 +1,10 @@
 import * as core from '@actions/core';
-import { BifrostCatalogClient, findDiscoveredService } from './lib/bifrost-client.js';
+import {
+  BifrostCatalogClient,
+  buildCanonicalServiceIdentity,
+  findDiscoveredService,
+  type CanonicalServiceIdentity
+} from './lib/bifrost-client.js';
 import {
   getMemoizedSessionIdentity,
   runCredentialPreflight,
@@ -35,13 +40,38 @@ export const DEFAULT_POSTMAN_BIFROST_BASE = PROD_ENDPOINTS.bifrostBaseUrl;
 export const DEFAULT_POSTMAN_IAPUB_BASE = PROD_ENDPOINTS.iapubBaseUrl;
 export const DEFAULT_POSTMAN_OBSERVABILITY_BASE = PROD_ENDPOINTS.observabilityBaseUrl;
 
+export type ServiceNotFoundPolicy = 'fail' | 'warn';
+
 export function parsePreflightMode(value: string | undefined): PreflightMode {
-  const normalized = String(value || 'warn').trim().toLowerCase();
+  const normalized = String(value || 'enforce').trim().toLowerCase();
   if (normalized === 'enforce' || normalized === 'warn') {
     return normalized;
   }
   throw new Error(
     `Unsupported credential-preflight "${value}". Supported values: enforce, warn`
+  );
+}
+
+export function parseServiceNotFoundPolicy(value: string | undefined): ServiceNotFoundPolicy {
+  const normalized = String(value || 'fail').trim().toLowerCase();
+  if (normalized === 'fail' || normalized === 'warn') {
+    return normalized;
+  }
+  throw new Error(
+    `Unsupported service-not-found-policy "${value}". Supported values: fail, warn`
+  );
+}
+
+export function parseCreateApiKey(value: string | undefined): boolean {
+  const normalized = String(value || 'false').trim().toLowerCase();
+  if (normalized === 'true') {
+    return true;
+  }
+  if (normalized === 'false' || normalized === '') {
+    return false;
+  }
+  throw new Error(
+    `Unsupported create-api-key "${value}". Supported values: true, false`
   );
 }
 
@@ -68,6 +98,11 @@ export async function validateApiKey(
   return { valid: true, teamId };
 }
 
+/**
+ * @deprecated Team selection must come from explicit postman-team-id /
+ * POSTMAN_TEAM_ID only. Kept for diagnostic callers; not used to set
+ * x-entity-team-id.
+ */
 export async function getTeams(
   apiKey: string,
   apiBase: string = DEFAULT_POSTMAN_API_BASE
@@ -103,6 +138,10 @@ export interface ActionInputs {
   postmanTeamId: string;
   githubToken: string;
   credentialPreflight: PreflightMode;
+  /** Explicit opt-in for durable Bifrost API-key creation. Default false. */
+  createApiKey: boolean;
+  /** Full linking fails when the service is absent unless set to warn. */
+  serviceNotFoundPolicy: ServiceNotFoundPolicy;
   pollTimeoutSeconds: number;
   pollIntervalSeconds: number;
   postmanRegion: PostmanRegion;
@@ -121,6 +160,7 @@ export interface OnboardingResult {
   applicationId: string;
   verificationToken: string | null;
   status: 'success' | 'not-found' | 'error';
+  canonicalIdentity?: CanonicalServiceIdentity;
 }
 
 export interface Reporter {
@@ -149,7 +189,8 @@ export function resolveInputs(
       'postman-access-token is required (or provide a service-account postman-api-key so the action can mint one).'
     );
   }
-  // Read postman-team-id from action input, falling back to POSTMAN_TEAM_ID env
+  // Read postman-team-id from action input, falling back to POSTMAN_TEAM_ID env.
+  // Never infer team from PMAK /teams or /me.
   const postmanTeamId = get('postman-team-id') || env.POSTMAN_TEAM_ID?.trim() || '';
 
   const workspaceId = get('workspace-id') || env.POSTMAN_WORKSPACE_ID?.trim() || '';
@@ -194,7 +235,9 @@ export function resolveInputs(
     postmanApiKey,
     postmanTeamId,
     githubToken: get('github-token', env.GITHUB_TOKEN || ''),
-    credentialPreflight: parsePreflightMode(get('credential-preflight', 'warn')),
+    credentialPreflight: parsePreflightMode(get('credential-preflight', 'enforce')),
+    createApiKey: parseCreateApiKey(get('create-api-key', 'false')),
+    serviceNotFoundPolicy: parseServiceNotFoundPolicy(get('service-not-found-policy', 'fail')),
     pollTimeoutSeconds: clamp(rawTimeout, POLL_TIMEOUT_MIN, POLL_TIMEOUT_MAX, POLL_TIMEOUT_DEFAULT),
     pollIntervalSeconds: clamp(rawInterval, POLL_INTERVAL_MIN, POLL_INTERVAL_MAX, POLL_INTERVAL_DEFAULT),
     postmanRegion,
@@ -229,6 +272,7 @@ export async function runOnboarding(
   const timeoutMs = inputs.pollTimeoutSeconds * 1000;
   const intervalMs = inputs.pollIntervalSeconds * 1000;
   const startTime = Date.now();
+  const policy = inputs.serviceNotFoundPolicy ?? 'fail';
 
   reporter.info(`Looking for discovered service matching "${inputs.clusterName ? `${inputs.clusterName}/` : ''}${inputs.projectName}"...`);
 
@@ -249,15 +293,41 @@ export async function runOnboarding(
   }
 
   if (!match) {
-    reporter.warning(`Service "${inputs.projectName}" not found in discovered services after ${inputs.pollTimeoutSeconds}s`);
-    return {
-      discoveredServiceId: 0,
-      discoveredServiceName: '',
-      collectionId: '',
-      applicationId: '',
-      verificationToken: null,
-      status: 'not-found',
-    };
+    const message =
+      `Service "${inputs.projectName}" not found in discovered services after ${inputs.pollTimeoutSeconds}s`;
+    if (policy === 'warn') {
+      reporter.warning(message);
+      return {
+        discoveredServiceId: 0,
+        discoveredServiceName: '',
+        collectionId: '',
+        applicationId: '',
+        verificationToken: null,
+        status: 'not-found',
+      };
+    }
+    throw new Error(`${message}. Full linking requires a discovered service (service-not-found-policy=fail).`);
+  }
+
+  const canonicalBase = match.canonicalIdentity
+    ?? buildCanonicalServiceIdentity(match, inputs.projectName, inputs.clusterName || undefined);
+
+  // Resolve the complete canonical identity before the first write. Full linking
+  // cannot safely start when Catalog and Insights do not identify the same service.
+  const providerServiceId = await client.resolveProviderServiceId(
+    inputs.projectName,
+    inputs.clusterName || undefined,
+  );
+  if (!providerServiceId) {
+    throw new Error(
+      `Insights provider service "${canonicalBase.serviceName}" was not found. Full linking requires one exact canonical service identity.`
+    );
+  }
+  const sysEnvId = inputs.systemEnvironmentId || match.systemEnvironmentId || '';
+  if (!sysEnvId) {
+    throw new Error(
+      `No system environment id is available for "${canonicalBase.serviceName}"; refusing partial linking writes.`
+    );
   }
 
   reporter.info(`Preparing collection for service ${match.id} in workspace ${inputs.workspaceId}...`);
@@ -280,28 +350,13 @@ export async function runOnboarding(
     reporter.info(`Skipping git onboarding for non-GitHub repo: ${repoUrl}`);
   }
 
-  const providerServiceId = await client.resolveProviderServiceId(
-    inputs.projectName,
-    inputs.clusterName || undefined,
-  );
-  let applicationId = '';
-  if (providerServiceId) {
-    const sysEnvId = inputs.systemEnvironmentId || match.systemEnvironmentId || '';
-    if (sysEnvId) {
-      reporter.info(`Acknowledging Insights onboarding for ${providerServiceId}...`);
-      await client.acknowledgeOnboarding(providerServiceId, inputs.workspaceId, sysEnvId);
-      reporter.info(`Insights acknowledged: ${providerServiceId}`);
+  reporter.info(`Acknowledging Insights onboarding for ${providerServiceId}...`);
+  await client.acknowledgeOnboarding(providerServiceId, inputs.workspaceId, sysEnvId);
+  reporter.info(`Insights acknowledged: ${providerServiceId}`);
 
-      reporter.info(`Creating application binding for workspace ${inputs.workspaceId} with system_env ${sysEnvId}...`);
-      const appResult = await client.createApplication(inputs.workspaceId, sysEnvId);
-      applicationId = appResult.application_id;
-      reporter.info(`Application binding created: ${appResult.application_id} for service ${appResult.service_id}`);
-    } else {
-      reporter.warning('No systemEnvironmentId available; skipping Insights acknowledgment and application binding');
-    }
-  } else {
-    reporter.warning('Could not resolve Akita provider service ID; skipping acknowledgment and application binding');
-  }
+  reporter.info(`Creating application binding for workspace ${inputs.workspaceId} with system_env ${sysEnvId}...`);
+  const appResult = await client.createApplication(inputs.workspaceId, sysEnvId, providerServiceId);
+  reporter.info(`Application binding created: ${appResult.application_id} for service ${appResult.service_id}`);
 
   reporter.info(`Acknowledging workspace onboarding for ${inputs.workspaceId}...`);
   await client.acknowledgeWorkspace(inputs.workspaceId);
@@ -320,12 +375,23 @@ export async function runOnboarding(
     discoveredServiceId: match.id,
     discoveredServiceName: match.name,
     collectionId,
-    applicationId,
+    applicationId: appResult.application_id,
     verificationToken,
     status: 'success',
+    canonicalIdentity: {
+      ...canonicalBase,
+      ...(providerServiceId ? { providerServiceId } : {})
+    }
   };
 }
 
+/**
+ * Validate the provided API key and resolve the explicit team id.
+ *
+ * Durable API-key creation is opt-in via `create-api-key=true`. Ordinary reruns
+ * never create timestamp-named orphan keys. Team id comes only from explicit
+ * `postman-team-id` / `POSTMAN_TEAM_ID` — never from PMAK /teams or /me inference.
+ */
 export async function resolveApiKeyAndTeamId(
   inputs: ActionInputs,
   client: BifrostCatalogClient,
@@ -337,6 +403,7 @@ export async function resolveApiKeyAndTeamId(
   let pmakIdentity: CredentialIdentity | undefined;
 
   const apiBase = inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE;
+  const createApiKey = inputs.createApiKey === true;
 
   if (apiKey) {
     const result = await validateApiKey(apiKey, apiBase);
@@ -350,56 +417,39 @@ export async function resolveApiKeyAndTeamId(
   }
 
   if (!keyValid) {
-    reporter.info('Generating a new Postman API key via Bifrost identity service...');
-    const keyName = `insights-onboarding-action-${Date.now()}`;
+    if (!createApiKey) {
+      if (apiKey) {
+        throw new Error(
+          'postman-api-key is invalid or expired. Provide a valid key, or set create-api-key=true to opt in to durable Bifrost API-key creation.'
+        );
+      }
+      throw new Error(
+        'postman-api-key is required for application binding. Provide a valid key, or set create-api-key=true to opt in to durable Bifrost API-key creation.'
+      );
+    }
+
+    reporter.info('create-api-key=true: generating a durable Postman API key via Bifrost identity service...');
+    const keyName = `insights-onboarding-${inputs.projectName}`;
     apiKey = await client.createApiKey(keyName);
     reporter.setSecret(apiKey);
     client.setApiKey(apiKey);
-    reporter.info('New API key created successfully.');
-  }
-
-  // Auto-detect org-mode and derive team ID when not explicitly provided
-  let resolvedTeamId = teamId;
-  if (!resolvedTeamId && apiKey) {
-    try {
-      const teams = await getTeams(apiKey, apiBase);
-      if (teams.length > 1 && teams.every(t => t.organizationId == null)) {
-        reporter.warning(
-          'GET /teams returned multiple teams but none include organizationId. ' +
-          'Org-mode auto-detection may be degraded due to an upstream API change. ' +
-          'Set postman-team-id explicitly if Bifrost calls fail.'
-        );
-      }
-      const isOrgMode = teams.some(t => t.organizationId != null);
-      if (isOrgMode) {
-        if (teams.length === 1) {
-          resolvedTeamId = String(teams[0].id);
-          reporter.info(
-            `Org-mode account detected. Using sub-team ${teams[0].id} (${teams[0].name ?? 'unknown'}) for Bifrost calls.`
-          );
-        } else {
-          const meResult = await validateApiKey(apiKey, apiBase);
-          const meTeamId = meResult.teamId ? parseInt(meResult.teamId, 10) : NaN;
-          if (!Number.isNaN(meTeamId) && teams.some(t => t.id === meTeamId)) {
-            resolvedTeamId = String(meTeamId);
-            reporter.info(
-              `Org-mode account detected. Using sub-team ${meTeamId} (from /me) for Bifrost calls.`
-            );
-          }
-        }
-      }
-    } catch {
-      // Non-fatal: if detection fails, teamId stays empty (header omitted) which is safe
+    const createdIdentity = await validateApiKey(apiKey, apiBase);
+    if (!createdIdentity.valid) {
+      throw new Error('The explicitly created postman-api-key could not be validated; refusing linking writes.');
     }
+    pmakIdentity = { source: 'pmak/me', teamId: createdIdentity.teamId };
+    reporter.info(`New API key created successfully (${keyName}).`);
   }
 
-  if (resolvedTeamId) {
-    reporter.info(`Using postman-team-id for Bifrost headers: ${resolvedTeamId}`);
+  if (teamId) {
+    reporter.info(`Using explicit postman-team-id for Bifrost headers: ${teamId}`);
   } else {
-    reporter.info('No postman-team-id resolved; omitting x-entity-team-id so Bifrost resolves team from the access token.');
+    reporter.info(
+      'No postman-team-id / POSTMAN_TEAM_ID provided; omitting x-entity-team-id so Bifrost resolves team from the access token.'
+    );
   }
 
-  return { apiKey, teamId: resolvedTeamId, pmakIdentity };
+  return { apiKey, teamId, pmakIdentity };
 }
 
 /**
@@ -407,8 +457,8 @@ export async function resolveApiKeyAndTeamId(
  *
  * The PMAK identity is reused from validateApiKey's /me result (via resolveApiKeyAndTeamId),
  * so the preflight itself never issues a /me probe. A rejected or absent postman-api-key
- * yields no PMAK identity, which downgrades the cross-check to a note; it can never FAIL
- * the run, even under credential-preflight: enforce.
+ * yields no PMAK identity, so only access-token identity can be validated until
+ * an explicitly requested key has been created and validated.
  */
 export async function runCredentialPreflightForInputs(
   inputs: ActionInputs,
@@ -487,6 +537,7 @@ export async function runAction(): Promise<void> {
   if (inputs.githubToken) core.setSecret(inputs.githubToken);
 
   const tokenProvider = createInsightsTokenProvider(inputs, core);
+  // Preliminary client uses only the explicit team id (never PMAK-inferred).
   const preliminaryClient = createInsightsBifrostClient(
     inputs,
     tokenProvider,
@@ -494,32 +545,68 @@ export async function runAction(): Promise<void> {
     inputs.postmanApiKey
   );
 
-  const { apiKey, teamId, pmakIdentity } = await resolveApiKeyAndTeamId(inputs, preliminaryClient, core);
-
-  const activeTokenProvider =
-    apiKey !== inputs.postmanApiKey
-      ? new AccessTokenProvider({
-          accessToken: tokenProvider.current(),
-          apiKey,
-          apiBaseUrl: inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE,
-          onToken: (token) => core.setSecret(token)
-        })
-      : tokenProvider;
-
   const telemetry = createTelemetryContext({ action: 'postman-insights-onboarding-action', actionVersion: resolveActionVersion(), logger: core });
-  telemetry.setTeamId(inputs.postmanTeamId || pmakIdentity?.teamId);
+  telemetry.setTeamId(inputs.postmanTeamId);
 
-  let result: import('./index.js').OnboardingResult;
+  let result: OnboardingResult;
   try {
-    // Credential preflight can throw under enforce; keep it inside the try so a
-    // known-team credential failure still routes through emitCompletion('failure').
+    // Validate credentials and scope before any durable API-key or linking write.
+    // When create-api-key is false, resolveApiKeyAndTeamId only validates.
+    // When true and the key is missing/invalid, creation happens after preflight
+    // would ideally run — but preflight needs a valid PMAK identity when present.
+    // Order: validate provided key -> preflight with access token -> optional create.
+    let apiKey = inputs.postmanApiKey;
+    let pmakIdentity: CredentialIdentity | undefined;
+    const apiBase = inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE;
+
+    if (apiKey) {
+      const validated = await validateApiKey(apiKey, apiBase);
+      if (validated.valid) {
+        pmakIdentity = { source: 'pmak/me', teamId: validated.teamId };
+      } else if (!inputs.createApiKey) {
+        throw new Error(
+          'postman-api-key is invalid or expired. Provide a valid key, or set create-api-key=true to opt in to durable Bifrost API-key creation.'
+        );
+      } else {
+        core.warning('Provided postman-api-key is invalid or expired.');
+      }
+    } else if (!inputs.createApiKey) {
+      throw new Error(
+        'postman-api-key is required for application binding. Provide a valid key, or set create-api-key=true to opt in to durable Bifrost API-key creation.'
+      );
+    }
+
     await runCredentialPreflightForInputs(
       inputs,
       pmakIdentity,
       core,
       undefined,
-      activeTokenProvider.current()
+      tokenProvider.current()
     );
+
+    const resolved = await resolveApiKeyAndTeamId(inputs, preliminaryClient, core);
+    apiKey = resolved.apiKey;
+    const teamId = resolved.teamId;
+
+    if (resolved.pmakIdentity?.teamId !== pmakIdentity?.teamId) {
+      await runCredentialPreflightForInputs(
+        inputs,
+        resolved.pmakIdentity,
+        core,
+        undefined,
+        tokenProvider.current()
+      );
+    }
+
+    const activeTokenProvider =
+      apiKey !== inputs.postmanApiKey
+        ? new AccessTokenProvider({
+            accessToken: tokenProvider.current(),
+            apiKey,
+            apiBaseUrl: inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE,
+            onToken: (token) => core.setSecret(token)
+          })
+        : tokenProvider;
 
     const client = createInsightsBifrostClient(inputs, activeTokenProvider, teamId, apiKey);
 

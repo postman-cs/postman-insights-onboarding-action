@@ -460,7 +460,7 @@ describe('runCli credential preflight', () => {
     expect(telemetrySpies.emitCompletion).toHaveBeenCalledWith('failure');
   });
 
-  it('continues under the default warn mode and surfaces the preflight note', async () => {
+  it('continues under the explicit warn policy and surfaces the preflight note', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     stubFetch(10490519, 13347347);
     const executeOnboarding = fakeOnboarding();
@@ -472,8 +472,9 @@ describe('runCli credential preflight', () => {
         '--environment-id', 'env-1',
         '--postman-access-token', 'cli-warn-token',
         '--postman-api-key', 'PMAK-cli-warn',
-        '--postman-team-id', '13347347',
-        '--result-json', '.vitest-tmp/cli-preflight-result.json'
+          '--postman-team-id', '13347347',
+          '--credential-preflight', 'warn',
+          '--result-json', '.vitest-tmp/cli-preflight-result.json'
       ],
       { env: { PATH: process.env.PATH }, executeOnboarding, writeStdout: () => {} }
     );

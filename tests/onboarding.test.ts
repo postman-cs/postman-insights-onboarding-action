@@ -24,6 +24,8 @@ function makeInputs(overrides: Partial<ActionInputs> = {}): ActionInputs {
     postmanTeamId: '14103640',
     githubToken: 'ghp_test',
     credentialPreflight: 'warn',
+    createApiKey: false,
+    serviceNotFoundPolicy: 'warn',
     pollTimeoutSeconds: 5,
     pollIntervalSeconds: 1,
     postmanRegion: 'us',
@@ -84,7 +86,7 @@ describe('runOnboarding', () => {
       gitRepositoryUrl: 'https://github.com/postman-cs/af-cards-activation',
       gitApiKey: 'ghp_test',
     });
-    expect(client.createApplication).toHaveBeenCalledWith('ws-123', '8bfa188b');
+    expect(client.createApplication).toHaveBeenCalledWith('ws-123', '8bfa188b', 'svc_test123');
   });
 
   it('returns not-found when service is not discovered within timeout', async () => {
@@ -161,40 +163,48 @@ describe('resolveApiKeyAndTeamId', () => {
     expect(client.createApiKey).not.toHaveBeenCalled();
   });
 
-  it('creates new API key when provided key is invalid', async () => {
-    let callCount = 0;
-    globalThis.fetch = vi.fn().mockImplementation(async () => {
-      callCount++;
-      if (callCount === 1) {
-        return { ok: false, status: 401, json: async () => ({}) };
-      }
-      return { ok: true, json: async () => ({ user: { teamId: 88888 } }) };
+  it('rejects invalid API key unless create-api-key is opted in', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: async () => ({}),
     }) as unknown as typeof fetch;
 
     const client = makeClient();
+    await expect(
+      resolveApiKeyAndTeamId(makeInputs({ postmanTeamId: '', createApiKey: false }), client)
+    ).rejects.toThrow(/postman-api-key is invalid|create-api-key/i);
+    expect(client.createApiKey).not.toHaveBeenCalled();
+  });
+
+  it('creates a durable API key only when create-api-key is opted in', async () => {
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({}) })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: { teamId: 13347347 } }),
+      }) as unknown as typeof fetch;
+
+    const client = makeClient();
     const result = await resolveApiKeyAndTeamId(
-      makeInputs({ postmanTeamId: '' }),
+      makeInputs({ postmanTeamId: '', createApiKey: true, projectName: 'payments' }),
       client,
     );
     expect(result.apiKey).toBe('PMAK-generated');
-    expect(client.createApiKey).toHaveBeenCalled();
+    expect(client.createApiKey).toHaveBeenCalledWith('insights-onboarding-payments');
     expect(result.teamId).toBe('');
   });
 
-  it('creates new API key when no key is provided', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ user: { teamId: 77777 } }),
-    }) as unknown as typeof fetch;
-
+  it('rejects missing API key unless create-api-key is opted in', async () => {
     const client = makeClient();
-    const result = await resolveApiKeyAndTeamId(
-      makeInputs({ postmanApiKey: '', postmanTeamId: '' }),
-      client,
-    );
-    expect(result.apiKey).toBe('PMAK-generated');
-    expect(client.createApiKey).toHaveBeenCalled();
-    expect(result.teamId).toBe('');
+    await expect(
+      resolveApiKeyAndTeamId(
+        makeInputs({ postmanApiKey: '', postmanTeamId: '', createApiKey: false }),
+        client,
+      )
+    ).rejects.toThrow(/postman-api-key is required|create-api-key/i);
+    expect(client.createApiKey).not.toHaveBeenCalled();
   });
 
   it('does not require a derived team ID when none is provided', async () => {
@@ -424,7 +434,7 @@ describe('resolveInputs env var fallbacks', () => {
   });
 });
 
-describe('resolveApiKeyAndTeamId org-mode auto-detection', () => {
+describe('resolveApiKeyAndTeamId never infers team from PMAK', () => {
   let originalFetch: typeof globalThis.fetch;
 
   beforeEach(() => {
@@ -435,12 +445,12 @@ describe('resolveApiKeyAndTeamId org-mode auto-detection', () => {
     globalThis.fetch = originalFetch;
   });
 
-  it('auto-detects org-mode and derives team ID when multiple sub-teams exist', async () => {
-    let callCount = 0;
-    globalThis.fetch = vi.fn().mockImplementation(async () => {
-      callCount++;
-      if (callCount === 1) {
-        // getTeams response - realistic IDs: sub-team IDs distinct from org ID
+  it('leaves team id empty even when /teams returns org-mode sub-teams', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (String(url).endsWith('/me')) {
+        return { ok: true, json: async () => ({ user: { teamId: 10 } }) };
+      }
+      if (String(url).endsWith('/teams')) {
         return {
           ok: true,
           json: async () => ({
@@ -450,69 +460,39 @@ describe('resolveApiKeyAndTeamId org-mode auto-detection', () => {
             ]
           }),
         };
-      } else {
-        // validateApiKey response - /me returns a sub-team ID, not org ID
-        return {
-          ok: true,
-          json: async () => ({ user: { teamId: 10 } }),
-        };
       }
+      throw new Error(`unexpected ${url}`);
     }) as unknown as typeof fetch;
 
     const client = makeClient();
     const result = await resolveApiKeyAndTeamId(
-      makeInputs({ postmanApiKey: '', postmanTeamId: '' }),
+      makeInputs({ postmanTeamId: '' }),
       client,
     );
-    expect(result.teamId).toBe('10');
+    expect(result.teamId).toBe('');
+    const urls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.map((c) => String(c[0]));
+    expect(urls.some((u) => u.endsWith('/teams'))).toBe(false);
   });
 
-  it('auto-detects org-mode and auto-picks team when only one sub-team exists', async () => {
-    globalThis.fetch = vi.fn().mockImplementation(async () => {
-      // getTeams response - single sub-team with org ID
-      return {
-        ok: true,
-        json: async () => ({
-          data: [{ id: 10, name: 'Only Team', organizationId: 999 }]
-        }),
-      };
-    }) as unknown as typeof fetch;
-
-    const client = makeClient();
-    const result = await resolveApiKeyAndTeamId(
-      makeInputs({ postmanApiKey: '', postmanTeamId: '' }),
-      client,
-    );
-    expect(result.teamId).toBe('10');
-  });
-
-  it('does not auto-pick team when /me teamId does not match any sub-team', async () => {
-    let callCount = 0;
-    globalThis.fetch = vi.fn().mockImplementation(async () => {
-      callCount++;
-      if (callCount === 1) {
-        // getTeams response - two sub-teams with org ID
+  it('does not auto-pick a single org-mode sub-team from PMAK', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (String(url).endsWith('/me')) {
+        return { ok: true, json: async () => ({ user: { teamId: 10 } }) };
+      }
+      if (String(url).endsWith('/teams')) {
         return {
           ok: true,
           json: async () => ({
-            data: [
-              { id: 10, name: 'SubTeam A', organizationId: 999 },
-              { id: 11, name: 'SubTeam B', organizationId: 999 }
-            ]
+            data: [{ id: 10, name: 'Only Team', organizationId: 999 }]
           }),
         };
-      } else {
-        // validateApiKey response - /me returns a team ID not in the sub-teams list
-        return {
-          ok: true,
-          json: async () => ({ user: { teamId: 888 } }),
-        };
       }
+      throw new Error(`unexpected ${url}`);
     }) as unknown as typeof fetch;
 
     const client = makeClient();
     const result = await resolveApiKeyAndTeamId(
-      makeInputs({ postmanApiKey: '', postmanTeamId: '' }),
+      makeInputs({ postmanTeamId: '' }),
       client,
     );
     expect(result.teamId).toBe('');
@@ -573,11 +553,20 @@ describe('credential preflight seam', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('rejected PMAK yields no pmak identity and the preflight never FAILs, even under enforce', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 401 }) as unknown as typeof fetch;
-    const resolved = await resolveApiKeyAndTeamId(makeInputs({ postmanTeamId: '55555' }), makeClient());
+  it('validates an explicitly created PMAK before linking', async () => {
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 401 })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: { teamId: 13347347 } })
+      }) as unknown as typeof fetch;
+    const resolved = await resolveApiKeyAndTeamId(
+      makeInputs({ postmanTeamId: '55555', createApiKey: true }),
+      makeClient()
+    );
     expect(resolved.apiKey).toBe('PMAK-generated');
-    expect(resolved.pmakIdentity).toBeUndefined();
+    expect(resolved.pmakIdentity).toEqual({ source: 'pmak/me', teamId: '13347347' });
 
     const { infos, warnings, reporter } = createReporter();
     const preflightFetch = vi.fn(async (input: RequestInfo | URL) => {
@@ -595,7 +584,7 @@ describe('credential preflight seam', () => {
         preflightFetch as unknown as typeof fetch
       )
     ).resolves.toBeUndefined();
-    expect(warnings.some((entry) => entry.includes('cross-check skipped'))).toBe(true);
+    expect(warnings).toHaveLength(0);
     expect(infos.some((entry) => entry.includes('access-token session identity'))).toBe(true);
   });
 
@@ -634,9 +623,9 @@ describe('credential preflight seam', () => {
     expect(infos.some((entry) => entry.includes('credential preflight OK'))).toBe(true);
   });
 
-  it('parsePreflightMode defaults to warn, normalizes case, and rejects unknown values', () => {
-    expect(parsePreflightMode(undefined)).toBe('warn');
-    expect(parsePreflightMode('')).toBe('warn');
+  it('parsePreflightMode defaults to enforce, normalizes case, and rejects unknown values', () => {
+    expect(parsePreflightMode(undefined)).toBe('enforce');
+    expect(parsePreflightMode('')).toBe('enforce');
     expect(parsePreflightMode(' ENFORCE ')).toBe('enforce');
     expect(() => parsePreflightMode('off')).toThrow(/Unsupported credential-preflight/);
     expect(() => parsePreflightMode('strict')).toThrow(/Unsupported credential-preflight/);

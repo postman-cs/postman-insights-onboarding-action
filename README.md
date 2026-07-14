@@ -158,7 +158,7 @@ The Insights agent takes time to discover services after pods start. The action 
 
 ### Credential preflight modes
 
-Before any onboarding write, the action can verify that `postman-api-key` and `postman-access-token` resolve to the same parent organization. The default `warn` mode logs a note and continues. Set `credential-preflight` to `enforce` to fail fast on mismatched credentials:
+Before any onboarding write, the action verifies that `postman-api-key` and `postman-access-token` resolve to the same parent organization. The default `enforce` mode fails the run fast on mismatched credentials; set `credential-preflight` to `warn` to log and continue as an explicit compatibility policy:
 
 ```yaml
       - uses: postman-cs/postman-insights-onboarding-action@v2
@@ -171,7 +171,7 @@ Before any onboarding write, the action can verify that `postman-api-key` and `p
           credential-preflight: enforce
 ```
 
-See [Credentials and Identity](docs/credentials.md) for the full policy, API key auto-creation behavior, and how to obtain the access token.
+See [Credentials and Identity](docs/credentials.md) for the full policy, API-key opt-in creation, and how to obtain the access token.
 
 ### Non-GitHub CI via the CLI
 
@@ -206,14 +206,16 @@ See [CLI Usage](docs/cli.md) for provider auto-detection, output formats, and Gi
 | `postman-access-token` | Postman access token (x-access-token) for the Bifrost linking calls. When omitted, the action mints a service-account token from postman-api-key. The api-catalog discovery and git-link steps accept a service-account token (mint it with postman-resolve-service-token-action); the Insights (akita) acknowledgment and application-binding steps require a token carrying a Postman user identity — a service-account token answers 401 "Postman User not found" there. | No |  |
 | `postman-team-id` | Explicit Postman team ID for org-mode integration request headers. When omitted, x-entity-team-id is not sent. | No |  |
 | `github-token` | Optional GitHub token passed as git_api_key when repository auth is required by onboarding/git | No |  |
-| `postman-api-key` | Service-account Postman API key (PMAK-*) for the application binding call. Auto-created from postman-access-token when omitted or invalid after a clear 401/403 validation failure. | No |  |
-| `credential-preflight` | Credential identity preflight policy. warn (default) logs a note and continues when postman-api-key and postman-access-token resolve to different parent orgs; enforce fails the run on that condition before any onboarding write. Supported values are warn and enforce. | No | `warn` |
+| `postman-api-key` | Service-account Postman API key (PMAK-*) for the application binding call. Required unless create-api-key=true. Ordinary reruns never auto-create durable keys. | No |  |
+| `create-api-key` | Explicit opt-in to create a durable Bifrost API key when postman-api-key is omitted or invalid. Default false — never creates timestamp-named orphan keys on ordinary runs. Supported values: true, false. | No | `false` |
+| `credential-preflight` | Credential identity preflight policy. enforce (default) fails before linking writes when postman-api-key and postman-access-token resolve to different parent orgs; warn is an explicit compatibility policy that logs and continues. Supported values are enforce and warn. | No | `enforce` |
+| `service-not-found-policy` | Behavior when the discovered service is absent after polling. fail (default) aborts full linking; warn returns status=not-found without writes. Supported values: fail, warn. | No | `fail` |
 | `poll-timeout-seconds` | Maximum seconds to wait for the service to appear in the discovered list | No | `120` |
 | `poll-interval-seconds` | Seconds between discovery polling attempts | No | `10` |
 | `postman-region` | Postman data residency region for public API calls. One of: us or eu. | No | `us` |
 <!-- inputs-table:end -->
 
-Supply `postman-team-id` only for org-mode tokens that require an explicit team header. For non-org tokens, leave it unset so Postman can infer team context from the access token. Credential details, the preflight policy, and API key auto-creation are documented in [Credentials and Identity](docs/credentials.md).
+Supply `postman-team-id` only for org-mode tokens that require an explicit team header. For non-org tokens, leave it unset so Postman can infer team context from the access token. Team id is never inferred from PMAK. Credential details, the preflight policy, and API-key opt-in creation are documented in [Credentials and Identity](docs/credentials.md).
 
 ## Outputs
 
