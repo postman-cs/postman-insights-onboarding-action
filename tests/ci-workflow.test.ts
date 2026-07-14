@@ -12,10 +12,12 @@ function namedStep(name: string): string {
 }
 
 describe('CI workflow dist/pack race contract', () => {
-  it('builds dist once before fan-out and keeps the parallel dist gate read-only', () => {
+  it('bundles once, typechecks once, caps fan-out, and keeps dist read-only', () => {
     // Regression for the parallel race where `npm run verify:dist` deleted
     // dist/ while packaging tests packed the immutable artifact.
-    expect(ciWorkflow).toMatch(/run: npm run build[\s\S]*?- name: Run gates/);
+    expect(ciWorkflow).toMatch(/run: npm run bundle[\s\S]*?- name: Run gates/);
+    expect(ciWorkflow).not.toMatch(/run: npm run build/);
+    expect(ciWorkflow.match(/npm run typecheck/g) ?? []).toHaveLength(1);
 
     const runGates = namedStep('Run gates');
     expect(runGates).toContain('run test');
@@ -30,6 +32,8 @@ describe('CI workflow dist/pack race contract', () => {
     expect(runGates).toContain('gate:$n=pass');
     expect(runGates).toContain('gate:$n=fail');
     expect(runGates).toContain('::group::$n');
+    expect(runGates).toContain('MAX_PARALLEL_GATES=2');
+    expect(runGates).toContain('wait -n -p finished_pid');
 
     const upload = namedStep('Upload expected dist on mismatch');
     expect(upload).toContain('if: failure()');
