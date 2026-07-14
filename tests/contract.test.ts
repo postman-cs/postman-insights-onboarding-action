@@ -68,8 +68,10 @@ describe('action contract', () => {
     expect(packageManifest.scripts.bundle).toContain('chmod 755 dist/cli.cjs');
     expect(packageManifest.scripts.bundle).not.toContain('chmod +x dist/cli.cjs');
     expect(packageManifest.scripts.build).toMatch(/typecheck.*&&.*bundle|bundle.*typecheck/);
-    expect(packageManifest.scripts['verify:dist:assert']).toContain('scripts/verify-dist-artifact.mjs');
-    expect(packageManifest.scripts['verify:dist']).toMatch(/build.*verify:dist:assert|verify:dist:assert/);
+    expect(packageManifest.scripts['verify:dist:assert']).toBe(
+      'git diff --ignore-space-at-eol --text --exit-code -- dist && node scripts/verify-dist-artifact.mjs'
+    );
+    expect(packageManifest.scripts['verify:dist']).toBe('npm run build && npm run verify:dist:assert');
   });
 
   it('keeps postman-stack compatible while documenting postman-region for data residency', () => {
