@@ -45,7 +45,7 @@ jobs:
           run lint       npm run lint
           run typecheck  npm run typecheck
           run test       npm test
-          run dist       git diff --ignore-space-at-eol --text --exit-code -- dist
+          run dist       npm run verify:dist:assert
           run actionlint "$ACTIONLINT_BIN"
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             run commitlint npx commitlint \
