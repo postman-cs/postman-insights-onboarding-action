@@ -18682,6 +18682,7 @@ __export(index_exports, {
   DEFAULT_POSTMAN_BIFROST_BASE: () => DEFAULT_POSTMAN_BIFROST_BASE,
   DEFAULT_POSTMAN_IAPUB_BASE: () => DEFAULT_POSTMAN_IAPUB_BASE,
   DEFAULT_POSTMAN_OBSERVABILITY_BASE: () => DEFAULT_POSTMAN_OBSERVABILITY_BASE,
+  assertWritingInputs: () => assertWritingInputs,
   createInsightsBifrostClient: () => createInsightsBifrostClient,
   createInsightsTokenProvider: () => createInsightsTokenProvider,
   createPlannedOutputs: () => createPlannedOutputs,
@@ -23254,26 +23255,26 @@ function clamp(value, min, max, fallback) {
   const parsed = Number.isFinite(value) ? value : fallback;
   return Math.min(max, Math.max(min, parsed));
 }
-function resolveInputs(env = process.env) {
+function resolveInputs(env = process.env, allowGatedMissing = false) {
   const get = (name, fallback = "") => getInput2(name, env) || fallback;
   const projectName = get("project-name");
   if (!projectName) throw new Error("project-name is required");
   const postmanAccessToken = get("postman-access-token");
   const postmanApiKey = get("postman-api-key");
-  if (!postmanAccessToken && !postmanApiKey) {
+  if (!allowGatedMissing && !postmanAccessToken && !postmanApiKey) {
     throw new Error(
       "postman-access-token is required (or provide a service-account postman-api-key so the action can mint one)."
     );
   }
   const postmanTeamId = get("postman-team-id") || env.POSTMAN_TEAM_ID?.trim() || "";
   const workspaceId = get("workspace-id") || env.POSTMAN_WORKSPACE_ID?.trim() || "";
-  if (!workspaceId) {
+  if (!allowGatedMissing && !workspaceId) {
     throw new Error(
       "workspace-id is required. Provide it as an input, or set the POSTMAN_WORKSPACE_ID environment variable."
     );
   }
   const environmentId = get("environment-id") || env.POSTMAN_ENVIRONMENT_ID?.trim() || "";
-  if (!environmentId) {
+  if (!allowGatedMissing && !environmentId) {
     throw new Error(
       "environment-id is required. Provide it as an input, or set the POSTMAN_ENVIRONMENT_ID environment variable."
     );
@@ -23312,6 +23313,17 @@ function resolveInputs(env = process.env) {
     canonicalBranch: get("canonical-branch", ""),
     channels: get("channels", "")
   };
+}
+function assertWritingInputs(inputs) {
+  if (!inputs.postmanAccessToken && !inputs.postmanApiKey) {
+    throw new Error("postman-access-token is required (or provide a service-account postman-api-key so the action can mint one).");
+  }
+  if (!inputs.workspaceId) {
+    throw new Error("workspace-id is required. Provide it as an input, or set POSTMAN_WORKSPACE_ID.");
+  }
+  if (!inputs.environmentId) {
+    throw new Error("environment-id is required. Provide it as an input, or set POSTMAN_ENVIRONMENT_ID.");
+  }
 }
 function createPlannedOutputs(inputs) {
   return {
@@ -23513,7 +23525,7 @@ function decideBranchTier(inputs, env = process.env) {
   );
 }
 async function runAction() {
-  const inputs = resolveInputs();
+  const inputs = resolveInputs(process.env, true);
   const planned = createPlannedOutputs(inputs);
   for (const [key, value] of Object.entries(planned)) {
     setOutput(key, value);
@@ -23527,6 +23539,7 @@ async function runAction() {
     process.env[BRANCH_DECISION_ENV] = serializeBranchDecision(branchDecision);
     return;
   }
+  assertWritingInputs(inputs);
   if (branchDecision.tier !== "legacy") {
     info(`branch-aware sync: tier=${branchDecision.tier} (${branchDecision.reason})`);
     process.env[BRANCH_DECISION_ENV] = serializeBranchDecision(branchDecision);
@@ -23629,6 +23642,7 @@ async function runAction() {
   DEFAULT_POSTMAN_BIFROST_BASE,
   DEFAULT_POSTMAN_IAPUB_BASE,
   DEFAULT_POSTMAN_OBSERVABILITY_BASE,
+  assertWritingInputs,
   createInsightsBifrostClient,
   createInsightsTokenProvider,
   createPlannedOutputs,

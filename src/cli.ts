@@ -7,6 +7,8 @@ import { AccessTokenProvider, mintAccessTokenIfNeeded } from './lib/postman/toke
 import {
   createInsightsBifrostClient,
   createInsightsTokenProvider,
+  assertWritingInputs,
+  decideBranchTier,
   DEFAULT_POSTMAN_API_BASE,
   resolveApiKeyAndTeamId,
   resolveInputs,
@@ -15,6 +17,7 @@ import {
   validateApiKey,
   type Reporter
 } from './index.js';
+import { serializeBranchDecision } from './lib/repo-branch-decision.js';
 import { sleep } from './lib/retry.js';
 import { getMemoizedSessionIdentity } from './lib/credential-identity.js';
 import { normalizedInputEnvName, runnerInputEnvName } from './lib/input.js';
@@ -309,9 +312,28 @@ export async function runCli(
   const config = parsed;
   await validateOutputPath(config.resultJsonPath);
   await validateOutputPath(config.dotenvPath);
-  const inputs = resolveInputs(config.inputEnv);
+  const inputs = resolveInputs(config.inputEnv, true);
 
   const reporter = new ConsoleReporter();
+  const branchDecision = decideBranchTier(inputs, config.inputEnv);
+  if (branchDecision.tier !== 'legacy' && branchDecision.tier !== 'canonical') {
+    const outputs = {
+      'discovered-service-id': '',
+      'discovered-service-name': '',
+      'collection-id': '',
+      'application-id': '',
+      'verification-token': '',
+      status: 'skipped',
+      'sync-status': 'skipped-branch-gate',
+      'branch-decision': serializeBranchDecision(branchDecision)
+    };
+    const jsonOutput = JSON.stringify(outputs, null, 2);
+    await writeOptionalFile(config.resultJsonPath, jsonOutput);
+    await writeOptionalFile(config.dotenvPath, toDotenv(outputs));
+    writeStdout(`${jsonOutput}\n`);
+    return;
+  }
+  assertWritingInputs(inputs);
 
   // PMAK-only runs: mint the access token up front (mirrors runAction) so
   // dist/cli.cjs behaves exactly like dist/index.cjs.

@@ -186,7 +186,8 @@ function clamp(value: number, min: number, max: number, fallback: number): numbe
 }
 
 export function resolveInputs(
-  env: Record<string, string | undefined> = process.env
+  env: Record<string, string | undefined> = process.env,
+  allowGatedMissing = false
 ): ActionInputs {
   const get = (name: string, fallback = ''): string => getInput(name, env) || fallback;
 
@@ -195,7 +196,7 @@ export function resolveInputs(
 
   const postmanAccessToken = get('postman-access-token');
   const postmanApiKey = get('postman-api-key');
-  if (!postmanAccessToken && !postmanApiKey) {
+  if (!allowGatedMissing && !postmanAccessToken && !postmanApiKey) {
     throw new Error(
       'postman-access-token is required (or provide a service-account postman-api-key so the action can mint one).'
     );
@@ -205,14 +206,14 @@ export function resolveInputs(
   const postmanTeamId = get('postman-team-id') || env.POSTMAN_TEAM_ID?.trim() || '';
 
   const workspaceId = get('workspace-id') || env.POSTMAN_WORKSPACE_ID?.trim() || '';
-  if (!workspaceId) {
+  if (!allowGatedMissing && !workspaceId) {
     throw new Error(
       'workspace-id is required. Provide it as an input, or set the POSTMAN_WORKSPACE_ID environment variable.'
     );
   }
 
   const environmentId = get('environment-id') || env.POSTMAN_ENVIRONMENT_ID?.trim() || '';
-  if (!environmentId) {
+  if (!allowGatedMissing && !environmentId) {
     throw new Error(
       'environment-id is required. Provide it as an input, or set the POSTMAN_ENVIRONMENT_ID environment variable.'
     );
@@ -262,6 +263,18 @@ export function resolveInputs(
     canonicalBranch: get('canonical-branch', ''),
     channels: get('channels', ''),
   };
+}
+
+export function assertWritingInputs(inputs: Pick<ActionInputs, 'postmanAccessToken' | 'postmanApiKey' | 'workspaceId' | 'environmentId'>): void {
+  if (!inputs.postmanAccessToken && !inputs.postmanApiKey) {
+    throw new Error('postman-access-token is required (or provide a service-account postman-api-key so the action can mint one).');
+  }
+  if (!inputs.workspaceId) {
+    throw new Error('workspace-id is required. Provide it as an input, or set POSTMAN_WORKSPACE_ID.');
+  }
+  if (!inputs.environmentId) {
+    throw new Error('environment-id is required. Provide it as an input, or set POSTMAN_ENVIRONMENT_ID.');
+  }
 }
 
 export function createPlannedOutputs(inputs: ActionInputs): Record<string, string> {
@@ -541,7 +554,7 @@ export function decideBranchTier(
 }
 
 export async function runAction(): Promise<void> {
-  const inputs = resolveInputs();
+  const inputs = resolveInputs(process.env, true);
   const planned = createPlannedOutputs(inputs);
   for (const [key, value] of Object.entries(planned)) {
     core.setOutput(key, value);
@@ -557,6 +570,7 @@ export async function runAction(): Promise<void> {
     process.env[BRANCH_DECISION_ENV] = serializeBranchDecision(branchDecision);
     return;
   }
+  assertWritingInputs(inputs);
   if (branchDecision.tier !== 'legacy') {
     core.info(`branch-aware sync: tier=${branchDecision.tier} (${branchDecision.reason})`);
     process.env[BRANCH_DECISION_ENV] = serializeBranchDecision(branchDecision);
