@@ -28,7 +28,6 @@ import {
   resolveBranchIdentity,
   resolveEffectiveBranchDecision,
   serializeBranchDecision,
-  type BranchDecision,
   type BranchStrategy
 } from './lib/repo-branch-decision.js';
 import { createTelemetryContext } from '@postman-cse/automation-telemetry-core';
@@ -550,8 +549,8 @@ export async function runAction(): Promise<void> {
 
   // Branch-aware sync: decide BEFORE any credential validation or mint.
   const branchDecision = decideBranchTier(inputs);
-  if (branchDecision.tier === 'gated') {
-    core.info(`branch-aware sync: gated run (${branchDecision.reason}) — skipping insights linking, zero writes`);
+  if (branchDecision.tier !== 'legacy' && branchDecision.tier !== 'canonical') {
+    core.info(`branch-aware sync: ${branchDecision.tier} run (${branchDecision.reason}) — skipping insights linking, zero writes`);
     core.setOutput('status', 'skipped');
     core.setOutput('sync-status', 'skipped-branch-gate');
     core.setOutput('branch-decision', serializeBranchDecision(branchDecision));

@@ -23519,8 +23519,8 @@ async function runAction() {
     setOutput(key, value);
   }
   const branchDecision = decideBranchTier(inputs);
-  if (branchDecision.tier === "gated") {
-    info(`branch-aware sync: gated run (${branchDecision.reason}) \u2014 skipping insights linking, zero writes`);
+  if (branchDecision.tier !== "legacy" && branchDecision.tier !== "canonical") {
+    info(`branch-aware sync: ${branchDecision.tier} run (${branchDecision.reason}) \u2014 skipping insights linking, zero writes`);
     setOutput("status", "skipped");
     setOutput("sync-status", "skipped-branch-gate");
     setOutput("branch-decision", serializeBranchDecision(branchDecision));
