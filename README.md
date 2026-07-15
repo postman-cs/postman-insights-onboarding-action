@@ -213,6 +213,9 @@ See [CLI Usage](docs/cli.md) for provider auto-detection, output formats, and Gi
 | `poll-timeout-seconds` | Maximum seconds to wait for the service to appear in the discovered list | No | `120` |
 | `poll-interval-seconds` | Seconds between discovery polling attempts | No | `10` |
 | `postman-region` | Postman data residency region for public API calls. One of: us or eu. | No | `us` |
+| `branch-strategy` | Branch-aware sync strategy. legacy (default) keeps branch-blind behavior; publish-gate restricts canonical writes to the canonical branch and skips on other branches; preview additionally maintains suffixed per-branch preview asset sets. | No | `legacy` |
+| `canonical-branch` | Explicit canonical branch (the sole writer of canonical assets). Defaults to the provider-resolved default branch. | No |  |
+| `channels` | Comma-separated channel map for long-lived promotion branches. | No |  |
 <!-- inputs-table:end -->
 
 Supply `postman-team-id` only for org-mode tokens that require an explicit team header. For non-org tokens, leave it unset so Postman can infer team context from the access token. Team id is never inferred from PMAK. Credential details, the preflight policy, and API-key opt-in creation are documented in [Credentials and Identity](docs/credentials.md).
@@ -228,6 +231,8 @@ Supply `postman-team-id` only for org-mode tokens that require an explicit team 
 | `application-id` | Insights application binding ID from the observability API |  |  |
 | `verification-token` | Insights team verification token (tvt_*) for DaemonSet telemetry |  |  |
 | `status` | Onboarding result: success, not-found, or error |  |  |
+| `sync-status` | Branch-aware sync status: synced, skipped-branch-gate, or empty under branch-strategy legacy. |  |  |
+| `branch-decision` | Serialized BranchDecision JSON for downstream actions (also exported as POSTMAN_BRANCH_DECISION). |  |  |
 <!-- outputs-table:end -->
 
 Failures set `status=error` before the action exits.

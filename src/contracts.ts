@@ -104,6 +104,20 @@ export const insightsActionContract: ActionContract = {
       default: 'prod',
       allowedValues: ['prod', 'beta'],
     },
+    'branch-strategy': {
+      description: 'Branch-aware sync strategy. legacy keeps branch-blind behavior; publish-gate skips non-canonical writes; preview supports branch-scoped asset sets.',
+      required: false,
+      default: 'legacy',
+      allowedValues: ['legacy', 'publish-gate', 'preview'],
+    },
+    'canonical-branch': {
+      description: 'Explicit canonical branch. Defaults to the provider-resolved default branch.',
+      required: false,
+    },
+    channels: {
+      description: 'Comma-separated channel map for long-lived promotion branches.',
+      required: false,
+    },
   },
   outputs: {
     'discovered-service-id': {
@@ -123,6 +137,12 @@ export const insightsActionContract: ActionContract = {
     },
     'status': {
       description: 'Onboarding result: success, not-found, or error.',
+    },
+    'sync-status': {
+      description: 'Branch-aware sync status.',
+    },
+    'branch-decision': {
+      description: 'Serialized BranchDecision JSON.',
     },
   },
 };

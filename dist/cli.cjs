@@ -23002,7 +23002,10 @@ function resolveInputs(env = process.env) {
     postmanBifrostBase: endpointProfile.bifrostBaseUrl,
     postmanIapubBase: endpointProfile.iapubBaseUrl,
     postmanObservabilityBase: endpointProfile.observabilityBaseUrl,
-    postmanObservabilityEnv: endpointProfile.observabilityEnv
+    postmanObservabilityEnv: endpointProfile.observabilityEnv,
+    branchStrategy: get("branch-strategy", "legacy"),
+    canonicalBranch: get("canonical-branch", ""),
+    channels: get("channels", "")
   };
 }
 async function runOnboarding(inputs, client, sleepFn = sleep, reporter = core_exports) {
@@ -23202,7 +23205,10 @@ var INPUT_NAMES = [
   "poll-timeout-seconds",
   "poll-interval-seconds",
   "postman-region",
-  "postman-stack"
+  "postman-stack",
+  "branch-strategy",
+  "canonical-branch",
+  "channels"
 ];
 var OUTPUT_OPTION_NAMES = ["result-json", "dotenv-path"];
 var ConsoleReporter = class {

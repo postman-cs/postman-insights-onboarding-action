@@ -38,7 +38,10 @@ const INPUT_NAMES = [
   'poll-timeout-seconds',
   'poll-interval-seconds',
   'postman-region',
-  'postman-stack'
+  'postman-stack',
+  'branch-strategy',
+  'canonical-branch',
+  'channels'
 ] as const;
 
 const OUTPUT_OPTION_NAMES = ['result-json', 'dotenv-path'] as const;

@@ -63,6 +63,16 @@ inputs:
     description: 'Postman stack profile. Defaults to the public production stack. Marketplace workflows should leave this as prod.'
     required: false
     default: 'prod'
+  branch-strategy:
+    description: Branch-aware sync strategy. legacy (default) keeps branch-blind behavior; publish-gate restricts canonical writes to the canonical branch and skips on other branches; preview additionally maintains suffixed per-branch preview asset sets.
+    required: false
+    default: legacy
+  canonical-branch:
+    description: Explicit canonical branch (the sole writer of canonical assets). Defaults to the provider-resolved default branch.
+    required: false
+  channels:
+    description: Comma-separated channel map for long-lived promotion branches.
+    required: false
 outputs:
   discovered-service-id:
     description: 'Numeric ID from the API Catalog discovered-services list'
@@ -76,6 +86,10 @@ outputs:
     description: 'Insights team verification token (tvt_*) for DaemonSet telemetry'
   status:
     description: 'Onboarding result: success, not-found, or error'
+  sync-status:
+    description: 'Branch-aware sync status: synced, skipped-branch-gate, or empty under branch-strategy legacy.'
+  branch-decision:
+    description: Serialized BranchDecision JSON for downstream actions (also exported as POSTMAN_BRANCH_DECISION).
 runs:
   using: 'node24'
   main: 'dist/action.cjs'

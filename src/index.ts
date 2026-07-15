@@ -22,6 +22,15 @@ import { sleep } from './lib/retry.js';
 import { createSecretMasker } from './lib/secrets.js';
 import { AccessTokenProvider, mintAccessTokenIfNeeded } from './lib/postman/token-provider.js';
 import { getInput } from './lib/input.js';
+import {
+  BRANCH_DECISION_ENV,
+  parseChannelRules,
+  resolveBranchIdentity,
+  resolveEffectiveBranchDecision,
+  serializeBranchDecision,
+  type BranchDecision,
+  type BranchStrategy
+} from './lib/repo-branch-decision.js';
 import { createTelemetryContext } from '@postman-cse/automation-telemetry-core';
 import { resolveActionVersion } from './action-version.js';
 
@@ -151,6 +160,9 @@ export interface ActionInputs {
   postmanIapubBase: string;
   postmanObservabilityBase: string;
   postmanObservabilityEnv: string;
+  branchStrategy?: string;
+  canonicalBranch?: string;
+  channels?: string;
 }
 
 export interface OnboardingResult {
@@ -247,6 +259,9 @@ export function resolveInputs(
     postmanIapubBase: endpointProfile.iapubBaseUrl,
     postmanObservabilityBase: endpointProfile.observabilityBaseUrl,
     postmanObservabilityEnv: endpointProfile.observabilityEnv,
+    branchStrategy: get('branch-strategy', 'legacy'),
+    canonicalBranch: get('canonical-branch', ''),
+    channels: get('channels', ''),
   };
 }
 
@@ -511,11 +526,43 @@ export function createInsightsBifrostClient(
   });
 }
 
+export function decideBranchTier(
+  inputs: Pick<ActionInputs, 'branchStrategy' | 'canonicalBranch' | 'channels'>,
+  env: NodeJS.ProcessEnv = process.env
+): import('./lib/repo-branch-decision.js').BranchDecision {
+  return resolveEffectiveBranchDecision(
+    {
+      strategy: (inputs.branchStrategy as BranchStrategy) ?? 'legacy',
+      identity: resolveBranchIdentity(env, { defaultBranch: inputs.canonicalBranch }),
+      canonicalBranch: inputs.canonicalBranch,
+      channels: parseChannelRules(inputs.channels)
+    },
+    env
+  );
+}
+
 export async function runAction(): Promise<void> {
   const inputs = resolveInputs();
   const planned = createPlannedOutputs(inputs);
   for (const [key, value] of Object.entries(planned)) {
     core.setOutput(key, value);
+  }
+
+  // Branch-aware sync: decide BEFORE any credential validation or mint.
+  const branchDecision = decideBranchTier(inputs);
+  if (branchDecision.tier === 'gated') {
+    core.info(`branch-aware sync: gated run (${branchDecision.reason}) — skipping insights linking, zero writes`);
+    core.setOutput('status', 'skipped');
+    core.setOutput('sync-status', 'skipped-branch-gate');
+    core.setOutput('branch-decision', serializeBranchDecision(branchDecision));
+    process.env[BRANCH_DECISION_ENV] = serializeBranchDecision(branchDecision);
+    return;
+  }
+  if (branchDecision.tier !== 'legacy') {
+    core.info(`branch-aware sync: tier=${branchDecision.tier} (${branchDecision.reason})`);
+    process.env[BRANCH_DECISION_ENV] = serializeBranchDecision(branchDecision);
+    core.setOutput('branch-decision', serializeBranchDecision(branchDecision));
+    core.setOutput('sync-status', 'synced');
   }
 
   // PMAK-only runs: eagerly mint the short-lived access token from the service
