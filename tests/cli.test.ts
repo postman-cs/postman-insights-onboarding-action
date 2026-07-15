@@ -271,6 +271,31 @@ describe('runCli result-json opt-in', () => {
     }));
   }
 
+  it('gates a feature-branch CLI run before credential or workspace validation', async () => {
+    const writeStdout = vi.fn();
+    const executeOnboarding = fakeOnboarding();
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await runCli(
+      ['--project-name', 'svc', '--branch-strategy', 'publish-gate', '--canonical-branch', 'main'],
+      {
+        env: {
+          PATH: process.env.PATH,
+          GITHUB_ACTIONS: 'true',
+          GITHUB_REF: 'refs/heads/feature/no-credentials',
+          GITHUB_REF_NAME: 'feature/no-credentials'
+        },
+        executeOnboarding,
+        writeStdout
+      }
+    );
+
+    expect(executeOnboarding).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(JSON.parse(String(writeStdout.mock.calls[0]?.[0]))['sync-status']).toBe('skipped-branch-gate');
+  });
+
   it('does not create a result JSON file unless --result-json is provided', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     stubFetch(10490519, 10490519);
