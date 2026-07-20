@@ -1,4 +1,5 @@
 import { retry } from '../retry.js';
+import { createSecretMasker, toOneLine } from '../secrets.js';
 import { POSTMAN_ENDPOINT_PROFILES } from './base-urls.js';
 
 export interface AccessTokenProviderOptions {
@@ -254,10 +255,15 @@ export async function mintAccessTokenIfNeeded(
     );
   } catch (error) {
     const diagnosis = await describeMintFailure(error, inputs.postmanApiKey, apiBaseUrl, fetchImpl);
+    const mask = createSecretMasker([inputs.postmanApiKey, inputs.postmanAccessToken]);
     log.warning(
-      'postman: could not mint an access token from the postman-api-key. ' +
-        diagnosis +
-        ' Continuing without an access token - access-token-only functionality will be unavailable unless postman-access-token is provided.'
+      toOneLine(
+        mask(
+          'postman: could not mint an access token from the postman-api-key. ' +
+            diagnosis +
+            ' Continuing without an access token - access-token-only functionality will be unavailable unless postman-access-token is provided.'
+        )
+      )
     );
   }
 }

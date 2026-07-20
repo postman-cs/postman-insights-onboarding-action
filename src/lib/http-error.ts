@@ -1,4 +1,4 @@
-import { redactSecrets, sanitizeHeaders, type HeaderBag } from './secrets.js';
+import { redactSecrets, sanitizeHeaders, toOneLine, type HeaderBag } from './secrets.js';
 
 export interface HttpErrorInit {
   method: string;
@@ -21,10 +21,12 @@ function truncate(value: string, limit: number): string {
 function buildMessage(init: HttpErrorInit): string {
   const method = String(init.method || 'GET').toUpperCase();
   const status = `${init.status}${init.statusText ? ` ${init.statusText}` : ''}`;
-  const url = redactSecrets(init.url, init.secretValues);
-  const body = truncate(
-    redactSecrets(init.responseBody || '', init.secretValues),
-    Math.max(0, init.bodyLimit ?? 800)
+  const url = toOneLine(redactSecrets(init.url, init.secretValues));
+  const body = toOneLine(
+    truncate(
+      redactSecrets(init.responseBody || '', init.secretValues),
+      Math.max(0, init.bodyLimit ?? 800)
+    )
   );
   return body ? `${method} ${url} failed: ${status} - ${body}` : `${method} ${url} failed: ${status}`;
 }

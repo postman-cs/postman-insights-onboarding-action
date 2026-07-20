@@ -20947,7 +20947,104 @@ function getIDToken(aud) {
   });
 }
 
+// src/lib/secrets.ts
+var REDACTED = "[REDACTED]";
+var SENSITIVE_HEADER_NAMES = /* @__PURE__ */ new Set([
+  "authorization",
+  "cookie",
+  "proxy-authorization",
+  "set-cookie",
+  "x-access-token",
+  "x-api-key"
+]);
+function toOneLine(value) {
+  const source = String(value ?? "");
+  const parts = [];
+  let pendingSpace = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const code = source.charCodeAt(index);
+    if (code <= 31 || code === 127 || code === 32) {
+      pendingSpace = parts.length > 0;
+      continue;
+    }
+    if (pendingSpace) {
+      parts.push(" ");
+      pendingSpace = false;
+    }
+    parts.push(source.charAt(index));
+  }
+  return parts.join("");
+}
+function isIterable(value) {
+  return value !== null && value !== void 0 && typeof value !== "string" && typeof value[Symbol.iterator] === "function";
+}
+function appendSecretValues(value, results) {
+  if (value === null || value === void 0) {
+    return;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    if (normalized) {
+      results.push(normalized);
+    }
+    return;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    results.push(String(value));
+    return;
+  }
+  if (Array.isArray(value) || isIterable(value)) {
+    for (const entry of value) {
+      appendSecretValues(entry, results);
+    }
+  }
+}
+function normalizeSecretValues(secretValues) {
+  const values = [];
+  appendSecretValues(secretValues, values);
+  return [...new Set(values)].sort((left, right) => right.length - left.length);
+}
+function redactSecrets(input, secretValues, replacement = REDACTED) {
+  const source = String(input ?? "");
+  const secrets = normalizeSecretValues(secretValues);
+  if (!source || secrets.length === 0) {
+    return source;
+  }
+  return secrets.reduce((sanitized, secret) => {
+    if (!secret) {
+      return sanitized;
+    }
+    return sanitized.split(secret).join(replacement);
+  }, source);
+}
+function createSecretMasker(secretValues, replacement = REDACTED) {
+  return (input) => redactSecrets(input, secretValues, replacement);
+}
+function headerEntries(headers) {
+  if (headers instanceof Headers) {
+    return Array.from(headers.entries());
+  }
+  if (Array.isArray(headers)) {
+    return headers.map(([name, value]) => [name, String(value)]);
+  }
+  return Object.entries(headers).map(([name, value]) => [name, String(value)]);
+}
+function sanitizeHeaders(headers, secretValues) {
+  if (!headers) {
+    return {};
+  }
+  const sanitized = {};
+  for (const [name, value] of headerEntries(headers)) {
+    const normalizedName = name.toLowerCase();
+    sanitized[normalizedName] = SENSITIVE_HEADER_NAMES.has(normalizedName) ? REDACTED : redactSecrets(value, secretValues);
+  }
+  return sanitized;
+}
+
 // src/lib/credential-identity.ts
+function emitSafe(mask, message) {
+  return toOneLine(mask(message));
+}
 var sessionPath = "/api/sessions/current";
 var SESSION_MAX_ATTEMPTS = 3;
 var SESSION_RETRY_BASE_DELAY_MS = 500;
@@ -21167,9 +21264,10 @@ function formatIdentityLine(id, mask) {
   const domainPart = id.teamDomain ? `, domain ${id.teamDomain}` : "";
   if (id.source === "pmak/me") {
     const userPart = id.userId ? `user ${id.userId}${id.fullName ? ` (${id.fullName})` : ""}, ` : "";
-    return mask(`postman: PMAK identity - ${userPart}${teamPart}${domainPart}`);
+    return emitSafe(mask, `postman: PMAK identity - ${userPart}${teamPart}${domainPart}`);
   }
-  return mask(
+  return emitSafe(
+    mask,
     `postman: access-token session identity - ${teamPart}${domainPart} [source: iapub/sessions]`
   );
 }
@@ -21183,7 +21281,8 @@ function crossCheckIdentities(args) {
     return {
       ok: false,
       level,
-      message: args.mask(
+      message: emitSafe(
+        args.mask,
         `postman: ${lead} - PMAK belongs to ${describeTeam(args.pmak)} but the access token's session belongs to a different parent org, ${describeTeam(args.session)}. Assets would be created against one team while Bifrost linking and governance act under the other, producing duplicate-link 400s and workspaces not visible to the other credential. ` + fix
       )
     };
@@ -21194,7 +21293,8 @@ function crossCheckIdentities(args) {
     return {
       ok: true,
       level: "ok",
-      message: args.mask(
+      message: emitSafe(
+        args.mask,
         `postman: credential preflight OK - PMAK and access token both resolve to ${scope} ${pmakTeamId}${label ? ` (${label})` : ""}`
       )
     };
@@ -21206,7 +21306,8 @@ function crossCheckIdentities(args) {
   return {
     ok: false,
     level: "note",
-    message: args.mask(
+    message: emitSafe(
+      args.mask,
       `postman: credential preflight note - cross-check skipped because the ${missing} did not resolve a team id; continuing with reactive error guidance only`
     )
   };
@@ -21227,7 +21328,8 @@ async function runCredentialPreflight(args) {
       });
     } catch (error2) {
       args.log.warning(
-        mask(
+        emitSafe(
+          mask,
           `postman: credential preflight could not resolve PMAK identity: ${error2 instanceof Error ? error2.message : String(error2)}`
         )
       );
@@ -21236,12 +21338,15 @@ async function runCredentialPreflight(args) {
       args.log.info(formatIdentityLine(pmak, mask));
     } else {
       args.log.warning(
-        mask("postman: credential preflight could not resolve PMAK identity from GET /me; continuing")
+        emitSafe(
+          mask,
+          "postman: credential preflight could not resolve PMAK identity from GET /me; continuing"
+        )
       );
     }
   }
   if (!accessToken) {
-    args.log.info(mask("postman: Bifrost diagnostics limited: no access token"));
+    args.log.info(emitSafe(mask, "postman: Bifrost diagnostics limited: no access token"));
     return;
   }
   let session;
@@ -21255,7 +21360,8 @@ async function runCredentialPreflight(args) {
     });
   } catch (error2) {
     args.log.warning(
-      mask(
+      emitSafe(
+        mask,
         `postman: credential preflight could not resolve access-token session identity: ${error2 instanceof Error ? error2.message : String(error2)}`
       )
     );
@@ -21265,7 +21371,8 @@ async function runCredentialPreflight(args) {
     const consumerType = session.consumerType?.trim();
     if (consumerType && consumerType.toLowerCase() !== "service_account") {
       args.log.warning(
-        mask(
+        emitSafe(
+          mask,
           `postman: deprecation warning - postman-access-token resolved to consumerType ${consumerType}. postman-cs/postman-resolve-service-token-action is the primary CI path for service-account access tokens. The Postman CLI credential store populated by \`postman login\` is a legacy fallback for migration only.`
         )
       );
@@ -21276,13 +21383,17 @@ async function runCredentialPreflight(args) {
     const base = "postman: credential preflight could not resolve the access-token session identity from iapub: " + detail;
     if (args.mode === "enforce") {
       throw new Error(
-        mask(
+        emitSafe(
+          mask,
           `${base} (credential-preflight: enforce requires a resolvable session identity; use credential-preflight: warn to continue with reactive error guidance only.)`
         )
       );
     }
     args.log.warning(
-      mask(`${base} Continuing with reactive error guidance only (credential-preflight: warn).`)
+      emitSafe(
+        mask,
+        `${base} Continuing with reactive error guidance only (credential-preflight: warn).`
+      )
     );
     return;
   }
@@ -21308,6 +21419,9 @@ async function runCredentialPreflight(args) {
 }
 
 // src/lib/error-advice.ts
+function safeAdvice(mask, message) {
+  return toOneLine(mask(message));
+}
 var WORKSPACE_PERSONAL_ONLY_ADVICE = "Workspace creation failed: This may be an Org-mode account that requires a workspace-team-id input. The Postman API does not allow creating team workspaces at the organization level. Use the workspace-team-id input to specify which sub-team should own this workspace.";
 function expiryAdvice(code) {
   return `postman: Bifrost rejected the access token (${code}). Service-account access tokens expire after about 1 to 1.5 hours; this run likely outlived its token. Re-mint a fresh token (postman-resolve-service-token-action, or POST https://api.getpostman.com/service-account-tokens) and re-run. If it was just minted, confirm postman-access-token is the token for the same parent org as postman-api-key.`;
@@ -21348,92 +21462,16 @@ function adviseFromHttpError(err, ctx) {
   if (!advice) {
     return void 0;
   }
-  return new Error(ctx.mask(advice), { cause: err });
+  return new Error(safeAdvice(ctx.mask, advice), { cause: err });
 }
 function adviseFromBifrostBody(status, body, ctx) {
   const advice = buildAdvice(status, String(body || ""), ctx);
   if (!advice) {
     return void 0;
   }
-  return new Error(ctx.mask(advice), {
-    cause: new Error(ctx.mask(`HTTP ${status}: ${String(body || "").slice(0, 800)}`))
+  return new Error(safeAdvice(ctx.mask, advice), {
+    cause: new Error(safeAdvice(ctx.mask, `HTTP ${status}: ${String(body || "").slice(0, 800)}`))
   });
-}
-
-// src/lib/secrets.ts
-var REDACTED = "[REDACTED]";
-var SENSITIVE_HEADER_NAMES = /* @__PURE__ */ new Set([
-  "authorization",
-  "cookie",
-  "proxy-authorization",
-  "set-cookie",
-  "x-access-token",
-  "x-api-key"
-]);
-function isIterable(value) {
-  return value !== null && value !== void 0 && typeof value !== "string" && typeof value[Symbol.iterator] === "function";
-}
-function appendSecretValues(value, results) {
-  if (value === null || value === void 0) {
-    return;
-  }
-  if (typeof value === "string") {
-    const normalized = value.trim();
-    if (normalized) {
-      results.push(normalized);
-    }
-    return;
-  }
-  if (typeof value === "number" || typeof value === "boolean") {
-    results.push(String(value));
-    return;
-  }
-  if (Array.isArray(value) || isIterable(value)) {
-    for (const entry of value) {
-      appendSecretValues(entry, results);
-    }
-  }
-}
-function normalizeSecretValues(secretValues) {
-  const values = [];
-  appendSecretValues(secretValues, values);
-  return [...new Set(values)].sort((left, right) => right.length - left.length);
-}
-function redactSecrets(input, secretValues, replacement = REDACTED) {
-  const source = String(input ?? "");
-  const secrets = normalizeSecretValues(secretValues);
-  if (!source || secrets.length === 0) {
-    return source;
-  }
-  return secrets.reduce((sanitized, secret) => {
-    if (!secret) {
-      return sanitized;
-    }
-    return sanitized.split(secret).join(replacement);
-  }, source);
-}
-function createSecretMasker(secretValues, replacement = REDACTED) {
-  return (input) => redactSecrets(input, secretValues, replacement);
-}
-function headerEntries(headers) {
-  if (headers instanceof Headers) {
-    return Array.from(headers.entries());
-  }
-  if (Array.isArray(headers)) {
-    return headers.map(([name, value]) => [name, String(value)]);
-  }
-  return Object.entries(headers).map(([name, value]) => [name, String(value)]);
-}
-function sanitizeHeaders(headers, secretValues) {
-  if (!headers) {
-    return {};
-  }
-  const sanitized = {};
-  for (const [name, value] of headerEntries(headers)) {
-    const normalizedName = name.toLowerCase();
-    sanitized[normalizedName] = SENSITIVE_HEADER_NAMES.has(normalizedName) ? REDACTED : redactSecrets(value, secretValues);
-  }
-  return sanitized;
 }
 
 // src/lib/http-error.ts
@@ -21446,10 +21484,12 @@ function truncate(value, limit) {
 function buildMessage(init) {
   const method = String(init.method || "GET").toUpperCase();
   const status = `${init.status}${init.statusText ? ` ${init.statusText}` : ""}`;
-  const url = redactSecrets(init.url, init.secretValues);
-  const body = truncate(
-    redactSecrets(init.responseBody || "", init.secretValues),
-    Math.max(0, init.bodyLimit ?? 800)
+  const url = toOneLine(redactSecrets(init.url, init.secretValues));
+  const body = toOneLine(
+    truncate(
+      redactSecrets(init.responseBody || "", init.secretValues),
+      Math.max(0, init.bodyLimit ?? 800)
+    )
   );
   return body ? `${method} ${url} failed: ${status} - ${body}` : `${method} ${url} failed: ${status}`;
 }
@@ -21599,14 +21639,18 @@ function parsePostmanRegion(value) {
   if (normalized === "us" || normalized === "eu") {
     return normalized;
   }
-  throw new Error(`Unsupported postman-region "${value}". Supported values: us, eu`);
+  throw new Error(
+    `Unsupported postman-region "${toOneLine(value)}". Supported values: us, eu`
+  );
 }
 function parsePostmanStack(value) {
   const normalized = String(value || "prod").trim().toLowerCase();
   if (normalized === "prod" || normalized === "beta") {
     return normalized;
   }
-  throw new Error(`Unsupported postman-stack "${value}". Supported values: prod, beta`);
+  throw new Error(
+    `Unsupported postman-stack "${toOneLine(value)}". Supported values: prod, beta`
+  );
 }
 function resolvePostmanEndpointProfile(stack, region = "us") {
   if (stack === "beta" && region !== "us") {
@@ -21774,8 +21818,13 @@ async function mintAccessTokenIfNeeded(inputs, log, setSecret2, fetchImpl = fetc
     );
   } catch (error2) {
     const diagnosis = await describeMintFailure(error2, inputs.postmanApiKey, apiBaseUrl, fetchImpl);
+    const mask = createSecretMasker([inputs.postmanApiKey, inputs.postmanAccessToken]);
     log.warning(
-      "postman: could not mint an access token from the postman-api-key. " + diagnosis + " Continuing without an access token - access-token-only functionality will be unavailable unless postman-access-token is provided."
+      toOneLine(
+        mask(
+          "postman: could not mint an access token from the postman-api-key. " + diagnosis + " Continuing without an access token - access-token-only functionality will be unavailable unless postman-access-token is provided."
+        )
+      )
     );
   }
 }
@@ -21938,7 +21987,8 @@ var BifrostCatalogClient = class {
         JSON.stringify({ error: errObj }),
         this.adviceContext(operation)
       );
-      throw advised ?? new Error(`api-catalog error: ${errObj?.message || errObj?.code || "unknown"}`);
+      const fallback = `api-catalog error: ${errObj?.message || errObj?.code || "unknown"}`;
+      throw advised ?? new Error(createSecretMasker(this.secretValues)(fallback));
     }
     return data;
   }
@@ -21991,7 +22041,8 @@ ${advised.message}` : advised.message : text;
       url: `bifrost:akita:${path6}`,
       status,
       statusText: status >= 500 ? "Error" : "Client Error",
-      responseBody: errorText
+      responseBody: errorText,
+      secretValues: this.secretValues
     });
     const advised = adviseFromHttpError(httpErr, this.adviceContext(operation));
     throw advised ?? httpErr;
@@ -22087,13 +22138,19 @@ ${advised.message}` : advised.message : text;
           false
         );
         if (!data?.id) {
-          throw new Error("prepare-collection succeeded without a collection id");
+          throw new Error(
+            `prepare-collection for service ${serviceId} in workspace ${workspaceId} succeeded without a collection id; inspect the POST /api/v1/onboarding/prepare-collection response or retry after confirming the service is still discoverable`
+          );
         }
         return data.id;
       }
     });
   }
   async onboardGit(params) {
+    if (params.gitApiKey && !this.secretValues.includes(params.gitApiKey)) {
+      this.secretValues.push(params.gitApiKey);
+    }
+    const gitOperation = `git onboarding for ${params.gitRepositoryUrl} (service ${params.serviceId}, workspace ${params.workspaceId}, environment ${params.environmentId})`;
     await mutateOnceThenReconcile({
       findExisting: () => this.findGitLink(params),
       mutate: async () => {
@@ -22112,7 +22169,7 @@ ${advised.message}` : advised.message : text;
           "POST",
           "/api/v1/onboarding/git",
           body,
-          "git onboarding",
+          gitOperation,
           false
         );
         return true;
@@ -22187,6 +22244,7 @@ ${advised.message}` : advised.message : text;
     return match ? true : null;
   }
   async acknowledgeOnboarding(providerServiceId, workspaceId, systemEnvironmentId) {
+    const operation = `Insights onboarding acknowledgment for service ${providerServiceId}, workspace ${workspaceId}, system environment ${systemEnvironmentId}`;
     await mutateOnceThenReconcile({
       findExisting: () => this.findAcknowledgedOnboarding(providerServiceId, workspaceId, systemEnvironmentId),
       mutate: async () => {
@@ -22200,14 +22258,14 @@ ${advised.message}` : advised.message : text;
               system_env: systemEnvironmentId
             }]
           },
-          "Insights onboarding acknowledgment",
+          operation,
           false
         );
         if (!result.ok) {
           this.throwAkitaFailure(
             result.status,
             result.errorText,
-            "Insights onboarding acknowledgment",
+            operation,
             "POST /v2/api-catalog/services/onboard"
           );
         }
@@ -22216,19 +22274,20 @@ ${advised.message}` : advised.message : text;
     });
   }
   async findWorkspaceAcknowledged(workspaceId) {
+    const operation = `workspace onboarding acknowledgment status for workspace ${workspaceId}`;
     const result = await retry(
       async () => {
         const response = await this.akitaProxyRequest(
           "GET",
           `/v2/workspaces/${workspaceId}/onboarding/acknowledge`,
           {},
-          "workspace onboarding acknowledgment status"
+          operation
         );
         if (!response.ok) {
           this.throwAkitaFailure(
             response.status,
             response.errorText,
-            "workspace onboarding acknowledgment status",
+            operation,
             `GET /v2/workspaces/${workspaceId}/onboarding/acknowledge`
           );
         }
@@ -22239,6 +22298,7 @@ ${advised.message}` : advised.message : text;
     return result.data?.onboarding_acknowledged ? true : null;
   }
   async acknowledgeWorkspace(workspaceId) {
+    const operation = `workspace onboarding acknowledgment for workspace ${workspaceId}`;
     await mutateOnceThenReconcile({
       findExisting: () => this.findWorkspaceAcknowledged(workspaceId),
       mutate: async () => {
@@ -22246,14 +22306,14 @@ ${advised.message}` : advised.message : text;
           "POST",
           `/v2/workspaces/${workspaceId}/onboarding/acknowledge`,
           {},
-          "workspace onboarding acknowledgment",
+          operation,
           false
         );
         if (!result.ok) {
           this.throwAkitaFailure(
             result.status,
             result.errorText,
-            "workspace onboarding acknowledgment",
+            operation,
             `POST /v2/workspaces/${workspaceId}/onboarding/acknowledge`
           );
         }
@@ -22347,13 +22407,14 @@ ${advised.message}` : advised.message : text;
     });
   }
   async getTeamVerificationToken(workspaceId) {
+    const operation = `team verification token retrieval for workspace ${workspaceId}`;
     const result = await retry(
       async () => {
         const page = await this.akitaProxyRequest(
           "GET",
           `/v2/workspaces/${workspaceId}/team-verification-token`,
           {},
-          "team verification token retrieval"
+          operation
         );
         if (!page.ok && (page.status === 408 || page.status === 429 || page.status >= 500)) {
           throw new HttpError({
@@ -22361,7 +22422,8 @@ ${advised.message}` : advised.message : text;
             url: `bifrost:akita:GET /v2/workspaces/${workspaceId}/team-verification-token`,
             status: page.status,
             statusText: "Error",
-            responseBody: page.errorText
+            responseBody: page.errorText,
+            secretValues: this.secretValues
           });
         }
         return page;
@@ -22394,7 +22456,9 @@ ${advised.message}` : advised.message : text;
     const data = await response.json();
     const apikey = data?.apikey;
     if (!apikey?.key) {
-      throw new Error("Failed to extract API key from Bifrost identity response");
+      throw new Error(
+        `Failed to extract API key from Bifrost identity response for POST /api/keys (requested name=${name}); confirm the identity service returned apikey.key and retry`
+      );
     }
     return String(apikey.key);
   }
@@ -22473,7 +22537,7 @@ function getInput2(name, env = process.env) {
     const runnerValue = normalizeInputValue(runnerRaw);
     if (normalizedValue !== runnerValue) {
       throw new Error(
-        `Conflicting values for ${name}: ${normalizedName}=${JSON.stringify(normalizedValue)} vs ${runnerName}=${JSON.stringify(runnerValue)}`
+        `Conflicting values for ${name}: ${normalizedName} and ${runnerName} differ. Remove one alias or make both values identical.`
       );
     }
   }
@@ -23161,13 +23225,40 @@ var DEFAULT_POSTMAN_API_BASE = PROD_ENDPOINTS.apiBaseUrl;
 var DEFAULT_POSTMAN_BIFROST_BASE = PROD_ENDPOINTS.bifrostBaseUrl;
 var DEFAULT_POSTMAN_IAPUB_BASE = PROD_ENDPOINTS.iapubBaseUrl;
 var DEFAULT_POSTMAN_OBSERVABILITY_BASE = PROD_ENDPOINTS.observabilityBaseUrl;
+function collapseControlChars(value) {
+  return toOneLine(value);
+}
+function underlyingErrorMessage(error2) {
+  if (error2 instanceof Error) {
+    return error2.message || error2.name || "unknown error";
+  }
+  if (typeof error2 === "string") {
+    return error2;
+  }
+  return String(error2 ?? "unknown error");
+}
+function formatOnboardingDiagnostic(value, mask) {
+  return mask(collapseControlChars(String(value ?? "")));
+}
+function wrapOnboardingPhaseError(operation, context, remediation, error2, mask) {
+  const causeText = formatOnboardingDiagnostic(underlyingErrorMessage(error2), mask);
+  const message = mask(
+    collapseControlChars(
+      `Failed to ${operation}${context ? ` ${context}` : ""}: ${causeText}. ${remediation}`
+    )
+  );
+  return new Error(message, { cause: error2 instanceof Error ? error2 : void 0 });
+}
 function parsePreflightMode(value) {
   const normalized = String(value || "enforce").trim().toLowerCase();
   if (normalized === "enforce" || normalized === "warn") {
     return normalized;
   }
+  const sanitized = collapseControlChars(String(value ?? ""));
   throw new Error(
-    `Unsupported credential-preflight "${value}". Supported values: enforce, warn`
+    collapseControlChars(
+      `Unsupported credential-preflight "${sanitized}". Supported values: enforce, warn. Provide one of the supported values, then rerun.`
+    )
   );
 }
 function parseServiceNotFoundPolicy(value) {
@@ -23175,8 +23266,11 @@ function parseServiceNotFoundPolicy(value) {
   if (normalized === "fail" || normalized === "warn") {
     return normalized;
   }
+  const sanitized = collapseControlChars(String(value ?? ""));
   throw new Error(
-    `Unsupported service-not-found-policy "${value}". Supported values: fail, warn`
+    collapseControlChars(
+      `Unsupported service-not-found-policy "${sanitized}". Supported values: fail, warn. Provide one of the supported values, then rerun.`
+    )
   );
 }
 function parseCreateApiKey(value) {
@@ -23187,23 +23281,48 @@ function parseCreateApiKey(value) {
   if (normalized === "false" || normalized === "") {
     return false;
   }
+  const sanitized = collapseControlChars(String(value ?? ""));
   throw new Error(
-    `Unsupported create-api-key "${value}". Supported values: true, false`
+    collapseControlChars(
+      `Unsupported create-api-key "${sanitized}". Supported values: true, false. Provide one of the supported values, then rerun.`
+    )
   );
 }
 function trimTrailingSlash(value) {
   return value.replace(/\/+$/, "");
 }
 async function validateApiKey(apiKey, apiBase = DEFAULT_POSTMAN_API_BASE) {
-  const res = await fetch(`${trimTrailingSlash(apiBase)}/me`, {
-    method: "GET",
-    headers: { "x-api-key": apiKey }
-  });
+  const mask = createSecretMasker([apiKey]);
+  const meUrl = `${trimTrailingSlash(apiBase)}/me`;
+  const endpointLabel = formatOnboardingDiagnostic(meUrl, mask);
+  const remediation = "Verify the Postman API endpoint/network and that the postman-api-key is valid, then rerun.";
+  let res;
+  try {
+    res = await fetch(meUrl, {
+      method: "GET",
+      headers: { "x-api-key": apiKey }
+    });
+  } catch (error2) {
+    throw new Error(
+      mask(
+        collapseControlChars(
+          `API key validation failed for GET ${endpointLabel}: ${formatOnboardingDiagnostic(underlyingErrorMessage(error2), mask)}. ${remediation}`
+        )
+      ),
+      { cause: error2 }
+    );
+  }
   if (!res.ok) {
     if (res.status === 401 || res.status === 403) {
       return { valid: false };
     }
-    throw new Error(`API key validation failed with unexpected status ${res.status}`);
+    throw new Error(
+      mask(
+        collapseControlChars(
+          `API key validation failed for GET ${endpointLabel} with unexpected status ${res.status}. ${remediation}`
+        )
+      )
+    );
   }
   const data = await res.json();
   const teamId = data?.user?.teamId ? String(data.user.teamId) : void 0;
@@ -23298,13 +23417,49 @@ async function runOnboarding(inputs, client, sleepFn = sleep, reporter = core_ex
   const intervalMs = inputs.pollIntervalSeconds * 1e3;
   const startTime = Date.now();
   const policy = inputs.serviceNotFoundPolicy ?? "fail";
-  reporter.info(`Looking for discovered service matching "${inputs.clusterName ? `${inputs.clusterName}/` : ""}${inputs.projectName}"...`);
+  const mask = createSecretMasker([
+    inputs.postmanAccessToken,
+    inputs.postmanApiKey,
+    inputs.githubToken
+  ]);
+  const diag = (value) => formatOnboardingDiagnostic(value, mask);
+  const projectLabel = diag(inputs.projectName);
+  const clusterLabel = diag(inputs.clusterName);
+  const workspaceLabel = diag(inputs.workspaceId);
+  const environmentLabel = diag(inputs.environmentId);
+  const repoLabel = diag(inputs.repoUrl);
+  const canonicalTarget = inputs.clusterName ? `${inputs.clusterName}/${inputs.projectName}` : inputs.projectName;
+  const canonicalLabel = diag(canonicalTarget);
+  reporter.info(
+    `Looking for discovered service matching "${clusterLabel ? `${clusterLabel}/` : ""}${projectLabel}"...`
+  );
   let match = void 0;
   while (Date.now() - startTime < timeoutMs) {
-    const discovered = await client.listDiscoveredServices();
-    match = findDiscoveredService(discovered, inputs.projectName, inputs.clusterName || void 0);
+    let discovered;
+    try {
+      discovered = await client.listDiscoveredServices();
+    } catch (error2) {
+      throw wrapOnboardingPhaseError(
+        "listDiscoveredServices",
+        `for project "${projectLabel}"${clusterLabel ? ` cluster "${clusterLabel}"` : ""} canonical "${canonicalLabel}"`,
+        "Verify the access token team scope plus project-name/cluster-name inputs, then rerun.",
+        error2,
+        mask
+      );
+    }
+    try {
+      match = findDiscoveredService(discovered, inputs.projectName, inputs.clusterName || void 0);
+    } catch (error2) {
+      throw wrapOnboardingPhaseError(
+        "resolve discovered-service identity",
+        `for project "${projectLabel}"${clusterLabel ? ` cluster "${clusterLabel}"` : ""} canonical "${canonicalLabel}" workspace ${workspaceLabel}`,
+        "Provide or correct cluster-name so exactly one discovered service matches, then rerun.",
+        error2,
+        mask
+      );
+    }
     if (match) {
-      reporter.info(`Found discovered service: ${match.name} (id: ${match.id})`);
+      reporter.info(`Found discovered service: ${diag(match.name)} (id: ${diag(match.id)})`);
       break;
     }
     const elapsedSec = Math.round((Date.now() - startTime) / 1e3);
@@ -23312,7 +23467,7 @@ async function runOnboarding(inputs, client, sleepFn = sleep, reporter = core_ex
     await sleepFn(intervalMs);
   }
   if (!match) {
-    const message = `Service "${inputs.projectName}" not found in discovered services after ${inputs.pollTimeoutSeconds}s`;
+    const message = `Service "${projectLabel}"${clusterLabel ? ` cluster "${clusterLabel}"` : ""} (canonical "${canonicalLabel}") not found in discovered services after ${inputs.pollTimeoutSeconds}s. Verify the access token team scope and that project-name/cluster-name match a discovered Insights service, then rerun.`;
     if (policy === "warn") {
       reporter.warning(message);
       return {
@@ -23324,58 +23479,154 @@ async function runOnboarding(inputs, client, sleepFn = sleep, reporter = core_ex
         status: "not-found"
       };
     }
-    throw new Error(`${message}. Full linking requires a discovered service (service-not-found-policy=fail).`);
-  }
-  const canonicalBase = match.canonicalIdentity ?? buildCanonicalServiceIdentity(match, inputs.projectName, inputs.clusterName || void 0);
-  const providerServiceId = await client.resolveProviderServiceId(
-    inputs.projectName,
-    inputs.clusterName || void 0
-  );
-  if (!providerServiceId) {
     throw new Error(
-      `Insights provider service "${canonicalBase.serviceName}" was not found. Full linking requires one exact canonical service identity.`
+      `${message} Full linking requires a discovered service (service-not-found-policy=fail).`
     );
   }
+  const canonicalBase = match.canonicalIdentity ?? buildCanonicalServiceIdentity(match, inputs.projectName, inputs.clusterName || void 0);
+  const discoveredServiceLabel = diag(match.name);
+  const discoveredServiceIdLabel = diag(match.id);
+  let providerServiceId;
+  try {
+    providerServiceId = await client.resolveProviderServiceId(
+      inputs.projectName,
+      inputs.clusterName || void 0
+    );
+  } catch (error2) {
+    throw wrapOnboardingPhaseError(
+      "resolveProviderServiceId",
+      `for project "${projectLabel}"${clusterLabel ? ` cluster "${clusterLabel}"` : ""} discovered service id=${discoveredServiceIdLabel} name="${discoveredServiceLabel}"`,
+      "Verify the access token team scope plus project-name/cluster-name inputs, then rerun.",
+      error2,
+      mask
+    );
+  }
+  if (!providerServiceId) {
+    throw new Error(
+      mask(
+        collapseControlChars(
+          `Insights provider service "${diag(canonicalBase.serviceName)}" was not found for discovered service id=${discoveredServiceIdLabel} name="${discoveredServiceLabel}" workspace ${workspaceLabel}. Full linking requires one exact canonical service identity. Verify the access token team scope plus project-name/cluster-name inputs, then rerun.`
+        )
+      )
+    );
+  }
+  const providerLabel = diag(providerServiceId);
   const sysEnvId = inputs.systemEnvironmentId || match.systemEnvironmentId || "";
   if (!sysEnvId) {
     throw new Error(
-      `No system environment id is available for "${canonicalBase.serviceName}"; refusing partial linking writes.`
+      mask(
+        collapseControlChars(
+          `No system environment id is available for discovered service id=${discoveredServiceIdLabel} name="${discoveredServiceLabel}" (canonical "${diag(canonicalBase.serviceName)}", workspace ${workspaceLabel}); provide system-environment-id or ensure the discovered service includes one. Refusing partial linking writes.`
+        )
+      )
     );
   }
-  reporter.info(`Preparing collection for service ${match.id} in workspace ${inputs.workspaceId}...`);
-  const collectionId = await client.prepareCollection(match.id, inputs.workspaceId);
-  reporter.info(`Collection prepared: ${collectionId}`);
+  const sysEnvLabel = diag(sysEnvId);
+  reporter.info(
+    `Preparing collection for service ${discoveredServiceIdLabel} in workspace ${workspaceLabel}...`
+  );
+  let collectionId;
+  try {
+    collectionId = await client.prepareCollection(match.id, inputs.workspaceId);
+  } catch (error2) {
+    throw wrapOnboardingPhaseError(
+      "prepareCollection",
+      `for discovered service id=${discoveredServiceIdLabel} name="${discoveredServiceLabel}" in workspace ${workspaceLabel}`,
+      `Verify workspace ${workspaceLabel} exists and the access token can edit it, then rerun.`,
+      error2,
+      mask
+    );
+  }
+  reporter.info(`Collection prepared: ${diag(collectionId)}`);
   const repoUrl = inputs.repoUrl;
   const isGitHub = /^https?:\/\/(www\.)?github\.com\//i.test(repoUrl);
   if (isGitHub) {
-    reporter.info(`Onboarding git integration: ${repoUrl}`);
-    await client.onboardGit({
-      serviceId: match.id,
-      workspaceId: inputs.workspaceId,
-      environmentId: inputs.environmentId,
-      gitRepositoryUrl: repoUrl,
-      gitApiKey: inputs.githubToken || void 0
-    });
-    reporter.info(`Git onboarding complete for ${match.name}`);
+    reporter.info(`Onboarding git integration: ${repoLabel}`);
+    try {
+      await client.onboardGit({
+        serviceId: match.id,
+        workspaceId: inputs.workspaceId,
+        environmentId: inputs.environmentId,
+        gitRepositoryUrl: repoUrl,
+        gitApiKey: inputs.githubToken || void 0
+      });
+    } catch (error2) {
+      throw wrapOnboardingPhaseError(
+        "onboardGit",
+        `for discovered service id=${discoveredServiceIdLabel} repo ${repoLabel} workspace ${workspaceLabel} environment ${environmentLabel}`,
+        "Verify github-token/repo ownership and remove any stale git link or target its current workspace when already linked, then rerun.",
+        error2,
+        mask
+      );
+    }
+    reporter.info(`Git onboarding complete for ${discoveredServiceLabel}`);
   } else {
-    reporter.info(`Skipping git onboarding for non-GitHub repo: ${repoUrl}`);
+    reporter.info(`Skipping git onboarding for non-GitHub repo: ${repoLabel}`);
   }
-  reporter.info(`Acknowledging Insights onboarding for ${providerServiceId}...`);
-  await client.acknowledgeOnboarding(providerServiceId, inputs.workspaceId, sysEnvId);
-  reporter.info(`Insights acknowledged: ${providerServiceId}`);
-  reporter.info(`Creating application binding for workspace ${inputs.workspaceId} with system_env ${sysEnvId}...`);
-  const appResult = await client.createApplication(inputs.workspaceId, sysEnvId, providerServiceId);
-  reporter.info(`Application binding created: ${appResult.application_id} for service ${appResult.service_id}`);
-  reporter.info(`Acknowledging workspace onboarding for ${inputs.workspaceId}...`);
-  await client.acknowledgeWorkspace(inputs.workspaceId);
+  reporter.info(`Acknowledging Insights onboarding for ${providerLabel}...`);
+  try {
+    await client.acknowledgeOnboarding(providerServiceId, inputs.workspaceId, sysEnvId);
+  } catch (error2) {
+    throw wrapOnboardingPhaseError(
+      "acknowledgeOnboarding",
+      `for provider service ${providerLabel} workspace ${workspaceLabel} system-environment ${sysEnvLabel}`,
+      "Use a Postman-user-identity access token for the same org and verify the provider/workspace/system-environment IDs, then rerun.",
+      error2,
+      mask
+    );
+  }
+  reporter.info(`Insights acknowledged: ${providerLabel}`);
+  reporter.info(
+    `Creating application binding for workspace ${workspaceLabel} with system_env ${sysEnvLabel}...`
+  );
+  let appResult;
+  try {
+    appResult = await client.createApplication(inputs.workspaceId, sysEnvId, providerServiceId);
+  } catch (error2) {
+    throw wrapOnboardingPhaseError(
+      "createApplication",
+      `for workspace ${workspaceLabel} system-environment ${sysEnvLabel} provider service ${providerLabel}`,
+      "Verify the PMAK/access token belong to the same org/team and the workspace/system-environment IDs are correct, then rerun.",
+      error2,
+      mask
+    );
+  }
+  reporter.info(
+    `Application binding created: ${diag(appResult.application_id)} for service ${diag(appResult.service_id)}`
+  );
+  reporter.info(`Acknowledging workspace onboarding for ${workspaceLabel}...`);
+  try {
+    await client.acknowledgeWorkspace(inputs.workspaceId);
+  } catch (error2) {
+    throw wrapOnboardingPhaseError(
+      "acknowledgeWorkspace",
+      `for workspace ${workspaceLabel}`,
+      "Verify workspace/team access and rerun.",
+      error2,
+      mask
+    );
+  }
   reporter.info("Workspace onboarding acknowledged");
   reporter.info("Retrieving team verification token...");
-  const verificationToken = await client.getTeamVerificationToken(inputs.workspaceId);
+  let verificationToken;
+  try {
+    verificationToken = await client.getTeamVerificationToken(inputs.workspaceId);
+  } catch (error2) {
+    throw wrapOnboardingPhaseError(
+      "getTeamVerificationToken",
+      `for workspace ${workspaceLabel}`,
+      "Verify workspace/team access and rerun.",
+      error2,
+      mask
+    );
+  }
   if (verificationToken) {
     reporter.info("Team verification token retrieved");
     reporter.setSecret(verificationToken);
   } else {
-    reporter.warning("Failed to retrieve team verification token");
+    reporter.warning(
+      `Team verification token unavailable for workspace ${workspaceLabel}: linking already completed, but the endpoint returned no token. Verify workspace/team access and rerun if a verification token is required.`
+    );
   }
   return {
     discoveredServiceId: match.id,
@@ -23397,6 +23648,15 @@ async function resolveApiKeyAndTeamId(inputs, client, reporter = core_exports) {
   let pmakIdentity;
   const apiBase = inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE;
   const createApiKey = inputs.createApiKey === true;
+  const mask = createSecretMasker([
+    inputs.postmanAccessToken,
+    inputs.postmanApiKey,
+    inputs.githubToken
+  ]);
+  const diag = (value) => formatOnboardingDiagnostic(value, mask);
+  const projectLabel = diag(inputs.projectName);
+  const teamIdLabel = diag(teamId);
+  const meEndpointLabel = diag(`${trimTrailingSlash(apiBase)}/me`);
   if (apiKey) {
     const result = await validateApiKey(apiKey, apiBase);
     keyValid = result.valid;
@@ -23419,18 +23679,35 @@ async function resolveApiKeyAndTeamId(inputs, client, reporter = core_exports) {
     }
     reporter.info("create-api-key=true: generating a durable Postman API key via Bifrost identity service...");
     const keyName = `insights-onboarding-${inputs.projectName}`;
-    apiKey = await client.createApiKey(keyName);
+    const keyNameLabel = diag(keyName);
+    try {
+      apiKey = await client.createApiKey(keyName);
+    } catch (error2) {
+      throw wrapOnboardingPhaseError(
+        "createApiKey",
+        `for key name "${keyNameLabel}" project "${projectLabel}"`,
+        "Verify Bifrost identity access for durable API-key creation and that create-api-key is intentional, then rerun.",
+        error2,
+        mask
+      );
+    }
     reporter.setSecret(apiKey);
     client.setApiKey(apiKey);
     const createdIdentity = await validateApiKey(apiKey, apiBase);
     if (!createdIdentity.valid) {
-      throw new Error("The explicitly created postman-api-key could not be validated; refusing linking writes.");
+      throw new Error(
+        mask(
+          collapseControlChars(
+            `The explicitly created postman-api-key "${keyNameLabel}" for project "${projectLabel}" could not be validated via GET ${meEndpointLabel}; refusing linking writes. Verify the Postman API endpoint/network and Bifrost-created key, then rerun.`
+          )
+        )
+      );
     }
     pmakIdentity = { source: "pmak/me", teamId: createdIdentity.teamId };
-    reporter.info(`New API key created successfully (${keyName}).`);
+    reporter.info(`New API key created successfully (${keyNameLabel}).`);
   }
   if (teamId) {
-    reporter.info(`Using explicit postman-team-id for Bifrost headers: ${teamId}`);
+    reporter.info(`Using explicit postman-team-id for Bifrost headers: ${teamIdLabel}`);
   } else {
     reporter.info(
       "No postman-team-id / POSTMAN_TEAM_ID provided; omitting x-entity-team-id so Bifrost resolves team from the access token."
@@ -23488,9 +23765,17 @@ async function runAction() {
   for (const [key, value] of Object.entries(planned)) {
     setOutput(key, value);
   }
+  const logMask = () => createSecretMasker([
+    inputs.postmanAccessToken,
+    inputs.postmanApiKey,
+    inputs.githubToken
+  ]);
+  const logDiag = (value) => formatOnboardingDiagnostic(value, logMask());
   const branchDecision = decideBranchTier(inputs);
   if (branchDecision.tier !== "legacy" && branchDecision.tier !== "canonical") {
-    info(`branch-aware sync: ${branchDecision.tier} run (${branchDecision.reason}) \u2014 skipping insights linking, zero writes`);
+    info(
+      `branch-aware sync: ${logDiag(branchDecision.tier)} run (${logDiag(branchDecision.reason)}) \u2014 skipping insights linking, zero writes`
+    );
     setOutput("status", "skipped");
     setOutput("sync-status", "skipped-branch-gate");
     setOutput("branch-decision", serializeBranchDecision(branchDecision));
@@ -23499,7 +23784,9 @@ async function runAction() {
   }
   assertWritingInputs(inputs);
   if (branchDecision.tier !== "legacy") {
-    info(`branch-aware sync: tier=${branchDecision.tier} (${branchDecision.reason})`);
+    info(
+      `branch-aware sync: tier=${logDiag(branchDecision.tier)} (${logDiag(branchDecision.reason)})`
+    );
     process.env[BRANCH_DECISION_ENV] = serializeBranchDecision(branchDecision);
     setOutput("branch-decision", serializeBranchDecision(branchDecision));
     setOutput("sync-status", "synced");
@@ -23572,7 +23859,7 @@ async function runAction() {
     const client = createInsightsBifrostClient(inputs, activeTokenProvider, teamId, apiKey);
     result = await runOnboarding(inputs, client, sleep, core_exports);
   } catch (error2) {
-    const message = error2 instanceof Error ? error2.message : String(error2);
+    const message = logDiag(error2 instanceof Error ? error2.message : String(error2));
     setOutput("status", "error");
     setFailed(`Insights onboarding failed: ${message}`);
     telemetry.setAccountType(getMemoizedSessionIdentity()?.consumerType);
@@ -23587,10 +23874,19 @@ async function runAction() {
   setOutput("status", result.status);
   telemetry.setAccountType(getMemoizedSessionIdentity()?.consumerType);
   if (result.status === "not-found") {
-    warning("Insights onboarding skipped: service not found in discovered list");
+    const projectLabel = logDiag(inputs.projectName);
+    const canonicalLabel = logDiag(
+      inputs.clusterName ? `${inputs.clusterName}/${inputs.projectName}` : inputs.projectName
+    );
+    const workspaceLabel = logDiag(inputs.workspaceId);
+    warning(
+      `Insights onboarding skipped: service "${projectLabel}" (canonical "${canonicalLabel}") not found in discovered list for workspace ${workspaceLabel}. Verify the access token team scope and that project-name/cluster-name match a discovered Insights service, then rerun.`
+    );
     telemetry.emitCompletion("failure");
   } else {
-    info(`Insights onboarding succeeded: ${result.discoveredServiceName} -> workspace ${inputs.workspaceId}`);
+    info(
+      `Insights onboarding succeeded: ${logDiag(result.discoveredServiceName)} -> workspace ${logDiag(inputs.workspaceId)}`
+    );
     telemetry.emitCompletion("success");
   }
 }
@@ -23599,7 +23895,7 @@ async function runAction() {
 runAction().catch((error2) => {
   const message = error2 instanceof Error ? error2.message : String(error2);
   setOutput("status", "error");
-  setFailed(message);
+  setFailed(toOneLine(message));
   process.exitCode = 1;
 });
 /*! Bundled license information:

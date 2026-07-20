@@ -1,5 +1,9 @@
 import type { HttpError } from './http-error.js';
-import type { SecretMasker } from './secrets.js';
+import { toOneLine, type SecretMasker } from './secrets.js';
+
+function safeAdvice(mask: SecretMasker, message: string): string {
+  return toOneLine(mask(message));
+}
 
 export interface ErrorAdviceContext {
   operation: string;
@@ -89,7 +93,7 @@ export function adviseFromHttpError(err: HttpError, ctx: ErrorAdviceContext): Er
   if (!advice) {
     return undefined;
   }
-  return new Error(ctx.mask(advice), { cause: err });
+  return new Error(safeAdvice(ctx.mask, advice), { cause: err });
 }
 
 export function adviseFromBifrostBody(
@@ -101,7 +105,7 @@ export function adviseFromBifrostBody(
   if (!advice) {
     return undefined;
   }
-  return new Error(ctx.mask(advice), {
-    cause: new Error(ctx.mask(`HTTP ${status}: ${String(body || '').slice(0, 800)}`))
+  return new Error(safeAdvice(ctx.mask, advice), {
+    cause: new Error(safeAdvice(ctx.mask, `HTTP ${status}: ${String(body || '').slice(0, 800)}`))
   });
 }

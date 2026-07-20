@@ -39,7 +39,7 @@ export function getInput(
     const runnerValue = normalizeInputValue(runnerRaw);
     if (normalizedValue !== runnerValue) {
       throw new Error(
-        `Conflicting values for ${name}: ${normalizedName}=${JSON.stringify(normalizedValue)} vs ${runnerName}=${JSON.stringify(runnerValue)}`
+        `Conflicting values for ${name}: ${normalizedName} and ${runnerName} differ. Remove one alias or make both values identical.`
       );
     }
   }

@@ -20,8 +20,19 @@ import {
   createSecretMasker,
   redactSecrets,
   sanitizeHeaders,
+  toOneLine,
   type SecretMasker
 } from '../src/lib/secrets.js';
+
+describe('toOneLine', () => {
+  it('replaces CR/LF/control characters, collapses spaces, and trims', () => {
+    expect(toOneLine('  a\nb\r\nc\u0000d  ')).toBe('a b c d');
+    expect(toOneLine('keep   spaced')).toBe('keep spaced');
+    expect(toOneLine(undefined)).toBe('');
+    expect(toOneLine(null)).toBe('');
+    expect(toOneLine(42)).toBe('42');
+  });
+});
 
 describe('secret safety rails', () => {
   it('redacts configured secret values from freeform text', () => {
@@ -78,6 +89,55 @@ describe('secret safety rails', () => {
       statusText: 'Unauthorized',
       url: `https://example.test/resource?token=${REDACTED}`
     });
+  });
+
+  it('collapses CR/LF from HttpError.message while preserving status and cause context', () => {
+    const error = new HttpError({
+      method: 'POST',
+      url: 'https://example.test/resource\r\nX-Injected: yes',
+      status: 502,
+      statusText: 'Bad Gateway',
+      responseBody: 'upstream failed:\nline-two\rcause=token-123',
+      secretValues: ['token-123']
+    });
+
+    expect(error.message).not.toContain('\r');
+    expect(error.message).not.toContain('\n');
+    expect(error.message).toContain('502');
+    expect(error.message).toContain('Bad Gateway');
+    expect(error.message).toContain('upstream failed');
+    expect(error.message).toContain('line-two');
+    expect(error.message).toContain('cause=');
+    expect(error.message).not.toContain('token-123');
+    expect(error.responseBody).toContain('\n');
+    expect(error.responseBody).toContain('token-123');
+    expect(error.toJSON().responseBody).toContain(`${REDACTED}`);
+    expect(error.toJSON().responseBody).not.toContain('token-123');
+  });
+
+  it('formats credential identity lines as one masked line when backend values contain CR/LF', () => {
+    const secret = 'identity-secret-token-xyz';
+    const mask = createSecretMasker([secret]);
+    const bell = String.fromCharCode(7);
+    const line = formatIdentityLine(
+      {
+        source: 'pmak/me',
+        userId: '1',
+        fullName: `Ada\n${secret}`,
+        teamId: '10490519',
+        teamName: 'jared\rdemo',
+        teamDomain: `domain${bell}value`
+      },
+      mask
+    );
+
+    expect(line).not.toContain('\r');
+    expect(line).not.toContain('\n');
+    expect(line).not.toContain(bell);
+    expect(line).not.toContain(secret);
+    expect(line).toContain(REDACTED);
+    expect(line).toContain('10490519');
+    expect(line).toContain('postman: PMAK identity');
   });
 });
 

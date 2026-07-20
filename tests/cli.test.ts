@@ -98,8 +98,21 @@ describe('parseCliArgs', () => {
       /Missing value for --project-name/
     );
     expect(() => parseCliArgs(['positional-arg'], {})).toThrow(
-      /Unexpected positional argument: positional-arg/
+      /Unexpected positional argument at argv\[0\]; use named --<input> options/
     );
+  });
+
+  it('does not echo unexpected positional credential-like values and names argv index', () => {
+    const sentinel = 'ghp_cli_positional_secret_should_not_echo';
+    try {
+      parseCliArgs([sentinel], {});
+      expect.fail('expected parseCliArgs to throw');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      expect(message).not.toContain(sentinel);
+      expect(message).toMatch(/Unexpected positional argument at argv\[0\]/);
+      expect(message).toMatch(/named --<input> options/);
+    }
   });
 
   it('rejects duplicate options', () => {
@@ -361,6 +374,36 @@ describe('runCli result-json opt-in', () => {
     expect(executeOnboarding).not.toHaveBeenCalled();
   });
 
+  it('keeps multiline output-path diagnostics one line while still rejecting', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    stubFetch(10490519, 10490519);
+    const executeOnboarding = fakeOnboarding();
+    const multilinePath = '../out\nside-result.json';
+
+    try {
+      await runCli(
+        [
+          '--project-name', 'svc',
+          '--workspace-id', 'ws-1',
+          '--environment-id', 'env-1',
+          '--postman-access-token', 'cli-token',
+          '--postman-api-key', 'PMAK-cli',
+          '--postman-team-id', '10490519',
+          '--result-json', multilinePath
+        ],
+        { env: { PATH: process.env.PATH }, executeOnboarding, writeStdout: () => {} }
+      );
+      expect.fail('expected runCli to throw');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      expect(message).not.toMatch(/[\r\n]/);
+      expect(message).toMatch(/Output path must stay within workspace/);
+      expect(message).toContain('out');
+      expect(message).toContain('side-result.json');
+    }
+    expect(executeOnboarding).not.toHaveBeenCalled();
+  });
+
   it('rejects output paths whose parent symlink escapes the workspace', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     stubFetch(10490519, 10490519);
@@ -526,5 +569,21 @@ describe('ConsoleReporter', () => {
 
     expect(stderrSpy).toHaveBeenNthCalledWith(1, 'token=***');
     expect(stderrSpy).toHaveBeenNthCalledWith(2, 'WARNING: warning ***');
+  });
+
+  it('masks a secret and collapses multiline text to one line', () => {
+    const stderrSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const reporter = new ConsoleReporter();
+    reporter.setSecret('secret-token');
+
+    reporter.info('line-one\nsecret-token\r\nline-two');
+    reporter.warning('warn\nsecret-token\rnext');
+
+    expect(stderrSpy).toHaveBeenNthCalledWith(1, 'line-one *** line-two');
+    expect(stderrSpy).toHaveBeenNthCalledWith(2, 'WARNING: warn *** next');
+    for (const call of stderrSpy.mock.calls) {
+      expect(String(call[0])).not.toMatch(/[\r\n]/);
+      expect(String(call[0])).not.toContain('secret-token');
+    }
   });
 });

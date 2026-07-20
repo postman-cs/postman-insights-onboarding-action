@@ -14,6 +14,31 @@ const SENSITIVE_HEADER_NAMES = new Set([
   'x-api-key'
 ]);
 
+/**
+ * Convert unknown text to a one-line CI-safe string: replace C0 controls
+ * (code <= 0x1f) and DEL (0x7f) with spaces, collapse repeated spaces, trim.
+ * Linear in input length; no control-character regex.
+ */
+export function toOneLine(value: unknown): string {
+  const source = String(value ?? '');
+  const parts: string[] = [];
+  let pendingSpace = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const code = source.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f || code === 0x20) {
+      // Defer spaces (and controls-as-spaces) so leading/trailing collapse away.
+      pendingSpace = parts.length > 0;
+      continue;
+    }
+    if (pendingSpace) {
+      parts.push(' ');
+      pendingSpace = false;
+    }
+    parts.push(source.charAt(index));
+  }
+  return parts.join('');
+}
+
 function isIterable(value: unknown): value is Iterable<unknown> {
   return (
     value !== null &&

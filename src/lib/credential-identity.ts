@@ -1,4 +1,8 @@
-import type { SecretMasker } from './secrets.js';
+import { toOneLine, type SecretMasker } from './secrets.js';
+
+function emitSafe(mask: SecretMasker, message: string): string {
+  return toOneLine(mask(message));
+}
 
 export interface CredentialIdentity {
   source: 'pmak/me' | 'iapub/sessions';
@@ -419,9 +423,10 @@ export function formatIdentityLine(id: CredentialIdentity, mask: SecretMasker): 
     const userPart = id.userId
       ? `user ${id.userId}${id.fullName ? ` (${id.fullName})` : ''}, `
       : '';
-    return mask(`postman: PMAK identity - ${userPart}${teamPart}${domainPart}`);
+    return emitSafe(mask, `postman: PMAK identity - ${userPart}${teamPart}${domainPart}`);
   }
-  return mask(
+  return emitSafe(
+    mask,
     `postman: access-token session identity - ${teamPart}${domainPart} [source: iapub/sessions]`
   );
 }
@@ -442,7 +447,8 @@ export function crossCheckIdentities(args: CrossCheckIdentitiesArgs): CrossCheck
     return {
       ok: false,
       level,
-      message: args.mask(
+      message: emitSafe(
+        args.mask,
         `postman: ${lead} - PMAK belongs to ${describeTeam(args.pmak)} but the access token's session belongs to a different parent org, ${describeTeam(args.session)}. ` +
           'Assets would be created against one team while Bifrost linking and governance act under the other, ' +
           'producing duplicate-link 400s and workspaces not visible to the other credential. ' +
@@ -461,7 +467,8 @@ export function crossCheckIdentities(args: CrossCheckIdentitiesArgs): CrossCheck
     return {
       ok: true,
       level: 'ok',
-      message: args.mask(
+      message: emitSafe(
+        args.mask,
         `postman: credential preflight OK - PMAK and access token both resolve to ${scope} ${pmakTeamId}${label ? ` (${label})` : ''}`
       )
     };
@@ -476,7 +483,8 @@ export function crossCheckIdentities(args: CrossCheckIdentitiesArgs): CrossCheck
   return {
     ok: false,
     level: 'note',
-    message: args.mask(
+    message: emitSafe(
+      args.mask,
       `postman: credential preflight note - cross-check skipped because the ${missing} did not resolve a team id; continuing with reactive error guidance only`
     )
   };
@@ -499,7 +507,8 @@ export async function runCredentialPreflight(args: RunCredentialPreflightArgs): 
       });
     } catch (error) {
       args.log.warning(
-        mask(
+        emitSafe(
+          mask,
           `postman: credential preflight could not resolve PMAK identity: ${error instanceof Error ? error.message : String(error)}`
         )
       );
@@ -508,13 +517,16 @@ export async function runCredentialPreflight(args: RunCredentialPreflightArgs): 
       args.log.info(formatIdentityLine(pmak, mask));
     } else {
       args.log.warning(
-        mask('postman: credential preflight could not resolve PMAK identity from GET /me; continuing')
+        emitSafe(
+          mask,
+          'postman: credential preflight could not resolve PMAK identity from GET /me; continuing'
+        )
       );
     }
   }
 
   if (!accessToken) {
-    args.log.info(mask('postman: Bifrost diagnostics limited: no access token'));
+    args.log.info(emitSafe(mask, 'postman: Bifrost diagnostics limited: no access token'));
     return;
   }
 
@@ -529,7 +541,8 @@ export async function runCredentialPreflight(args: RunCredentialPreflightArgs): 
     });
   } catch (error) {
     args.log.warning(
-      mask(
+      emitSafe(
+        mask,
         `postman: credential preflight could not resolve access-token session identity: ${error instanceof Error ? error.message : String(error)}`
       )
     );
@@ -539,7 +552,8 @@ export async function runCredentialPreflight(args: RunCredentialPreflightArgs): 
     const consumerType = session.consumerType?.trim();
     if (consumerType && consumerType.toLowerCase() !== 'service_account') {
       args.log.warning(
-        mask(
+        emitSafe(
+          mask,
           `postman: deprecation warning - postman-access-token resolved to consumerType ${consumerType}. postman-cs/postman-resolve-service-token-action is the primary CI path for service-account access tokens. The Postman CLI credential store populated by \`postman login\` is a legacy fallback for migration only.`
         )
       );
@@ -561,13 +575,17 @@ export async function runCredentialPreflight(args: RunCredentialPreflightArgs): 
       detail;
     if (args.mode === 'enforce') {
       throw new Error(
-        mask(
+        emitSafe(
+          mask,
           `${base} (credential-preflight: enforce requires a resolvable session identity; use credential-preflight: warn to continue with reactive error guidance only.)`
         )
       );
     }
     args.log.warning(
-      mask(`${base} Continuing with reactive error guidance only (credential-preflight: warn).`)
+      emitSafe(
+        mask,
+        `${base} Continuing with reactive error guidance only (credential-preflight: warn).`
+      )
     );
     return;
   }

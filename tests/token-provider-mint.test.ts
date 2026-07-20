@@ -166,15 +166,19 @@ describe('mintAccessTokenIfNeeded (PMAK-only eager mint)', () => {
   });
 
   it('falls back to the raw mint error when the /me probe itself fails', async () => {
+    const sentinel = 'PMAK-sentinel-q2-c4-leak';
     const fetchImpl = vi.fn(async (url: string) => {
       if (String(url).endsWith('/service-account-tokens')) {
-        return jsonResponse({}, { status: 401 });
+        // Transport/mint error that embeds the PMAK (and CR/LF) before reporter registration.
+        throw new Error(
+          `transport failed while minting with ${sentinel}\r\nPMAK rejected, HTTP 401`
+        );
       }
       throw new Error('network down');
     });
     const inputs = {
       postmanAccessToken: '',
-      postmanApiKey: 'PMAK-x',
+      postmanApiKey: sentinel,
       postmanApiBase: 'https://api.getpostman.com'
     };
     const log = makeLog();
@@ -182,5 +186,9 @@ describe('mintAccessTokenIfNeeded (PMAK-only eager mint)', () => {
     await mintAccessTokenIfNeeded(inputs, log, undefined, fetchImpl as unknown as typeof fetch);
 
     const warned = String(log.warning.mock.calls[0]?.[0] ?? '');
+    expect(warned).toContain('could not mint an access token from the postman-api-key');
     expect(warned).toContain('PMAK rejected, HTTP 401');
+    expect(warned).toContain('Continuing without an access token');
+    expect(warned).not.toContain(sentinel);
+    expect(warned).not.toMatch(/[\r\n]/);
   });

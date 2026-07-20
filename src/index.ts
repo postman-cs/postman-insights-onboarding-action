@@ -19,7 +19,7 @@ import {
   type PostmanStack
 } from './lib/postman/base-urls.js';
 import { sleep } from './lib/retry.js';
-import { createSecretMasker } from './lib/secrets.js';
+import { createSecretMasker, toOneLine } from './lib/secrets.js';
 import { AccessTokenProvider, mintAccessTokenIfNeeded } from './lib/postman/token-provider.js';
 import { getInput } from './lib/input.js';
 import {
@@ -50,13 +50,54 @@ export const DEFAULT_POSTMAN_OBSERVABILITY_BASE = PROD_ENDPOINTS.observabilityBa
 
 export type ServiceNotFoundPolicy = 'fail' | 'warn';
 
+/** Collapse control/newline characters so CI log/error lines stay single-line. */
+function collapseControlChars(value: string): string {
+  return toOneLine(value);
+}
+
+function underlyingErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message || error.name || 'unknown error';
+  }
+  if (typeof error === 'string') {
+    return error;
+  }
+  return String(error ?? 'unknown error');
+}
+
+function formatOnboardingDiagnostic(
+  value: string | number | undefined | null,
+  mask: (input: string) => string
+): string {
+  return mask(collapseControlChars(String(value ?? '')));
+}
+
+function wrapOnboardingPhaseError(
+  operation: string,
+  context: string,
+  remediation: string,
+  error: unknown,
+  mask: (input: string) => string
+): Error {
+  const causeText = formatOnboardingDiagnostic(underlyingErrorMessage(error), mask);
+  const message = mask(
+    collapseControlChars(
+      `Failed to ${operation}${context ? ` ${context}` : ''}: ${causeText}. ${remediation}`
+    )
+  );
+  return new Error(message, { cause: error instanceof Error ? error : undefined });
+}
+
 export function parsePreflightMode(value: string | undefined): PreflightMode {
   const normalized = String(value || 'enforce').trim().toLowerCase();
   if (normalized === 'enforce' || normalized === 'warn') {
     return normalized;
   }
+  const sanitized = collapseControlChars(String(value ?? ''));
   throw new Error(
-    `Unsupported credential-preflight "${value}". Supported values: enforce, warn`
+    collapseControlChars(
+      `Unsupported credential-preflight "${sanitized}". Supported values: enforce, warn. Provide one of the supported values, then rerun.`
+    )
   );
 }
 
@@ -65,8 +106,11 @@ export function parseServiceNotFoundPolicy(value: string | undefined): ServiceNo
   if (normalized === 'fail' || normalized === 'warn') {
     return normalized;
   }
+  const sanitized = collapseControlChars(String(value ?? ''));
   throw new Error(
-    `Unsupported service-not-found-policy "${value}". Supported values: fail, warn`
+    collapseControlChars(
+      `Unsupported service-not-found-policy "${sanitized}". Supported values: fail, warn. Provide one of the supported values, then rerun.`
+    )
   );
 }
 
@@ -78,8 +122,11 @@ export function parseCreateApiKey(value: string | undefined): boolean {
   if (normalized === 'false' || normalized === '') {
     return false;
   }
+  const sanitized = collapseControlChars(String(value ?? ''));
   throw new Error(
-    `Unsupported create-api-key "${value}". Supported values: true, false`
+    collapseControlChars(
+      `Unsupported create-api-key "${sanitized}". Supported values: true, false. Provide one of the supported values, then rerun.`
+    )
   );
 }
 
@@ -91,15 +138,39 @@ export async function validateApiKey(
   apiKey: string,
   apiBase: string = DEFAULT_POSTMAN_API_BASE
 ): Promise<{ valid: boolean; teamId?: string }> {
-  const res = await fetch(`${trimTrailingSlash(apiBase)}/me`, {
-    method: 'GET',
-    headers: { 'x-api-key': apiKey },
-  });
+  const mask = createSecretMasker([apiKey]);
+  const meUrl = `${trimTrailingSlash(apiBase)}/me`;
+  const endpointLabel = formatOnboardingDiagnostic(meUrl, mask);
+  const remediation =
+    'Verify the Postman API endpoint/network and that the postman-api-key is valid, then rerun.';
+
+  let res: Response;
+  try {
+    res = await fetch(meUrl, {
+      method: 'GET',
+      headers: { 'x-api-key': apiKey },
+    });
+  } catch (error) {
+    throw new Error(
+      mask(
+        collapseControlChars(
+          `API key validation failed for GET ${endpointLabel}: ${formatOnboardingDiagnostic(underlyingErrorMessage(error), mask)}. ${remediation}`
+        )
+      ),
+      { cause: error }
+    );
+  }
   if (!res.ok) {
     if (res.status === 401 || res.status === 403) {
       return { valid: false };
     }
-    throw new Error(`API key validation failed with unexpected status ${res.status}`);
+    throw new Error(
+      mask(
+        collapseControlChars(
+          `API key validation failed for GET ${endpointLabel} with unexpected status ${res.status}. ${remediation}`
+        )
+      )
+    );
   }
   const data = (await res.json()) as { user?: { teamId?: number | string } };
   const teamId = data?.user?.teamId ? String(data.user.teamId) : undefined;
@@ -300,17 +371,57 @@ export async function runOnboarding(
   const intervalMs = inputs.pollIntervalSeconds * 1000;
   const startTime = Date.now();
   const policy = inputs.serviceNotFoundPolicy ?? 'fail';
+  const mask = createSecretMasker([
+    inputs.postmanAccessToken,
+    inputs.postmanApiKey,
+    inputs.githubToken
+  ]);
+  const diag = (value: string | number | undefined | null): string =>
+    formatOnboardingDiagnostic(value, mask);
 
-  reporter.info(`Looking for discovered service matching "${inputs.clusterName ? `${inputs.clusterName}/` : ''}${inputs.projectName}"...`);
+  const projectLabel = diag(inputs.projectName);
+  const clusterLabel = diag(inputs.clusterName);
+  const workspaceLabel = diag(inputs.workspaceId);
+  const environmentLabel = diag(inputs.environmentId);
+  const repoLabel = diag(inputs.repoUrl);
+  const canonicalTarget = inputs.clusterName
+    ? `${inputs.clusterName}/${inputs.projectName}`
+    : inputs.projectName;
+  const canonicalLabel = diag(canonicalTarget);
+
+  reporter.info(
+    `Looking for discovered service matching "${clusterLabel ? `${clusterLabel}/` : ''}${projectLabel}"...`
+  );
 
   let match = undefined;
 
   while (Date.now() - startTime < timeoutMs) {
-    const discovered = await client.listDiscoveredServices();
-    match = findDiscoveredService(discovered, inputs.projectName, inputs.clusterName || undefined);
+    let discovered;
+    try {
+      discovered = await client.listDiscoveredServices();
+    } catch (error) {
+      throw wrapOnboardingPhaseError(
+        'listDiscoveredServices',
+        `for project "${projectLabel}"${clusterLabel ? ` cluster "${clusterLabel}"` : ''} canonical "${canonicalLabel}"`,
+        'Verify the access token team scope plus project-name/cluster-name inputs, then rerun.',
+        error,
+        mask
+      );
+    }
+    try {
+      match = findDiscoveredService(discovered, inputs.projectName, inputs.clusterName || undefined);
+    } catch (error) {
+      throw wrapOnboardingPhaseError(
+        'resolve discovered-service identity',
+        `for project "${projectLabel}"${clusterLabel ? ` cluster "${clusterLabel}"` : ''} canonical "${canonicalLabel}" workspace ${workspaceLabel}`,
+        'Provide or correct cluster-name so exactly one discovered service matches, then rerun.',
+        error,
+        mask
+      );
+    }
 
     if (match) {
-      reporter.info(`Found discovered service: ${match.name} (id: ${match.id})`);
+      reporter.info(`Found discovered service: ${diag(match.name)} (id: ${diag(match.id)})`);
       break;
     }
 
@@ -321,7 +432,7 @@ export async function runOnboarding(
 
   if (!match) {
     const message =
-      `Service "${inputs.projectName}" not found in discovered services after ${inputs.pollTimeoutSeconds}s`;
+      `Service "${projectLabel}"${clusterLabel ? ` cluster "${clusterLabel}"` : ''} (canonical "${canonicalLabel}") not found in discovered services after ${inputs.pollTimeoutSeconds}s. Verify the access token team scope and that project-name/cluster-name match a discovered Insights service, then rerun.`;
     if (policy === 'warn') {
       reporter.warning(message);
       return {
@@ -333,69 +444,165 @@ export async function runOnboarding(
         status: 'not-found',
       };
     }
-    throw new Error(`${message}. Full linking requires a discovered service (service-not-found-policy=fail).`);
+    throw new Error(
+      `${message} Full linking requires a discovered service (service-not-found-policy=fail).`
+    );
   }
 
   const canonicalBase = match.canonicalIdentity
     ?? buildCanonicalServiceIdentity(match, inputs.projectName, inputs.clusterName || undefined);
+  const discoveredServiceLabel = diag(match.name);
+  const discoveredServiceIdLabel = diag(match.id);
 
   // Resolve the complete canonical identity before the first write. Full linking
   // cannot safely start when Catalog and Insights do not identify the same service.
-  const providerServiceId = await client.resolveProviderServiceId(
-    inputs.projectName,
-    inputs.clusterName || undefined,
-  );
-  if (!providerServiceId) {
-    throw new Error(
-      `Insights provider service "${canonicalBase.serviceName}" was not found. Full linking requires one exact canonical service identity.`
+  let providerServiceId: string | null;
+  try {
+    providerServiceId = await client.resolveProviderServiceId(
+      inputs.projectName,
+      inputs.clusterName || undefined,
+    );
+  } catch (error) {
+    throw wrapOnboardingPhaseError(
+      'resolveProviderServiceId',
+      `for project "${projectLabel}"${clusterLabel ? ` cluster "${clusterLabel}"` : ''} discovered service id=${discoveredServiceIdLabel} name="${discoveredServiceLabel}"`,
+      'Verify the access token team scope plus project-name/cluster-name inputs, then rerun.',
+      error,
+      mask
     );
   }
+  if (!providerServiceId) {
+    throw new Error(
+      mask(
+        collapseControlChars(
+          `Insights provider service "${diag(canonicalBase.serviceName)}" was not found for discovered service id=${discoveredServiceIdLabel} name="${discoveredServiceLabel}" workspace ${workspaceLabel}. Full linking requires one exact canonical service identity. Verify the access token team scope plus project-name/cluster-name inputs, then rerun.`
+        )
+      )
+    );
+  }
+  const providerLabel = diag(providerServiceId);
   const sysEnvId = inputs.systemEnvironmentId || match.systemEnvironmentId || '';
   if (!sysEnvId) {
     throw new Error(
-      `No system environment id is available for "${canonicalBase.serviceName}"; refusing partial linking writes.`
+      mask(
+        collapseControlChars(
+          `No system environment id is available for discovered service id=${discoveredServiceIdLabel} name="${discoveredServiceLabel}" (canonical "${diag(canonicalBase.serviceName)}", workspace ${workspaceLabel}); provide system-environment-id or ensure the discovered service includes one. Refusing partial linking writes.`
+        )
+      )
     );
   }
+  const sysEnvLabel = diag(sysEnvId);
 
-  reporter.info(`Preparing collection for service ${match.id} in workspace ${inputs.workspaceId}...`);
-  const collectionId = await client.prepareCollection(match.id, inputs.workspaceId);
-  reporter.info(`Collection prepared: ${collectionId}`);
+  reporter.info(
+    `Preparing collection for service ${discoveredServiceIdLabel} in workspace ${workspaceLabel}...`
+  );
+  let collectionId: string;
+  try {
+    collectionId = await client.prepareCollection(match.id, inputs.workspaceId);
+  } catch (error) {
+    throw wrapOnboardingPhaseError(
+      'prepareCollection',
+      `for discovered service id=${discoveredServiceIdLabel} name="${discoveredServiceLabel}" in workspace ${workspaceLabel}`,
+      `Verify workspace ${workspaceLabel} exists and the access token can edit it, then rerun.`,
+      error,
+      mask
+    );
+  }
+  reporter.info(`Collection prepared: ${diag(collectionId)}`);
 
   const repoUrl = inputs.repoUrl;
   const isGitHub = /^https?:\/\/(www\.)?github\.com\//i.test(repoUrl);
   if (isGitHub) {
-    reporter.info(`Onboarding git integration: ${repoUrl}`);
-    await client.onboardGit({
-      serviceId: match.id,
-      workspaceId: inputs.workspaceId,
-      environmentId: inputs.environmentId,
-      gitRepositoryUrl: repoUrl,
-      gitApiKey: inputs.githubToken || undefined,
-    });
-    reporter.info(`Git onboarding complete for ${match.name}`);
+    reporter.info(`Onboarding git integration: ${repoLabel}`);
+    try {
+      await client.onboardGit({
+        serviceId: match.id,
+        workspaceId: inputs.workspaceId,
+        environmentId: inputs.environmentId,
+        gitRepositoryUrl: repoUrl,
+        gitApiKey: inputs.githubToken || undefined,
+      });
+    } catch (error) {
+      throw wrapOnboardingPhaseError(
+        'onboardGit',
+        `for discovered service id=${discoveredServiceIdLabel} repo ${repoLabel} workspace ${workspaceLabel} environment ${environmentLabel}`,
+        'Verify github-token/repo ownership and remove any stale git link or target its current workspace when already linked, then rerun.',
+        error,
+        mask
+      );
+    }
+    reporter.info(`Git onboarding complete for ${discoveredServiceLabel}`);
   } else {
-    reporter.info(`Skipping git onboarding for non-GitHub repo: ${repoUrl}`);
+    reporter.info(`Skipping git onboarding for non-GitHub repo: ${repoLabel}`);
   }
 
-  reporter.info(`Acknowledging Insights onboarding for ${providerServiceId}...`);
-  await client.acknowledgeOnboarding(providerServiceId, inputs.workspaceId, sysEnvId);
-  reporter.info(`Insights acknowledged: ${providerServiceId}`);
+  reporter.info(`Acknowledging Insights onboarding for ${providerLabel}...`);
+  try {
+    await client.acknowledgeOnboarding(providerServiceId, inputs.workspaceId, sysEnvId);
+  } catch (error) {
+    throw wrapOnboardingPhaseError(
+      'acknowledgeOnboarding',
+      `for provider service ${providerLabel} workspace ${workspaceLabel} system-environment ${sysEnvLabel}`,
+      'Use a Postman-user-identity access token for the same org and verify the provider/workspace/system-environment IDs, then rerun.',
+      error,
+      mask
+    );
+  }
+  reporter.info(`Insights acknowledged: ${providerLabel}`);
 
-  reporter.info(`Creating application binding for workspace ${inputs.workspaceId} with system_env ${sysEnvId}...`);
-  const appResult = await client.createApplication(inputs.workspaceId, sysEnvId, providerServiceId);
-  reporter.info(`Application binding created: ${appResult.application_id} for service ${appResult.service_id}`);
+  reporter.info(
+    `Creating application binding for workspace ${workspaceLabel} with system_env ${sysEnvLabel}...`
+  );
+  let appResult: { application_id: string; service_id: string };
+  try {
+    appResult = await client.createApplication(inputs.workspaceId, sysEnvId, providerServiceId);
+  } catch (error) {
+    throw wrapOnboardingPhaseError(
+      'createApplication',
+      `for workspace ${workspaceLabel} system-environment ${sysEnvLabel} provider service ${providerLabel}`,
+      'Verify the PMAK/access token belong to the same org/team and the workspace/system-environment IDs are correct, then rerun.',
+      error,
+      mask
+    );
+  }
+  reporter.info(
+    `Application binding created: ${diag(appResult.application_id)} for service ${diag(appResult.service_id)}`
+  );
 
-  reporter.info(`Acknowledging workspace onboarding for ${inputs.workspaceId}...`);
-  await client.acknowledgeWorkspace(inputs.workspaceId);
+  reporter.info(`Acknowledging workspace onboarding for ${workspaceLabel}...`);
+  try {
+    await client.acknowledgeWorkspace(inputs.workspaceId);
+  } catch (error) {
+    throw wrapOnboardingPhaseError(
+      'acknowledgeWorkspace',
+      `for workspace ${workspaceLabel}`,
+      'Verify workspace/team access and rerun.',
+      error,
+      mask
+    );
+  }
   reporter.info('Workspace onboarding acknowledged');
 
   reporter.info('Retrieving team verification token...');
-  const verificationToken = await client.getTeamVerificationToken(inputs.workspaceId);
+  let verificationToken: string | null;
+  try {
+    verificationToken = await client.getTeamVerificationToken(inputs.workspaceId);
+  } catch (error) {
+    throw wrapOnboardingPhaseError(
+      'getTeamVerificationToken',
+      `for workspace ${workspaceLabel}`,
+      'Verify workspace/team access and rerun.',
+      error,
+      mask
+    );
+  }
   if (verificationToken) {
     reporter.info('Team verification token retrieved');
     reporter.setSecret(verificationToken);
   } else {
-    reporter.warning('Failed to retrieve team verification token');
+    reporter.warning(
+      `Team verification token unavailable for workspace ${workspaceLabel}: linking already completed, but the endpoint returned no token. Verify workspace/team access and rerun if a verification token is required.`
+    );
   }
 
   return {
@@ -431,6 +638,16 @@ export async function resolveApiKeyAndTeamId(
 
   const apiBase = inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE;
   const createApiKey = inputs.createApiKey === true;
+  const mask = createSecretMasker([
+    inputs.postmanAccessToken,
+    inputs.postmanApiKey,
+    inputs.githubToken
+  ]);
+  const diag = (value: string | number | undefined | null): string =>
+    formatOnboardingDiagnostic(value, mask);
+  const projectLabel = diag(inputs.projectName);
+  const teamIdLabel = diag(teamId);
+  const meEndpointLabel = diag(`${trimTrailingSlash(apiBase)}/me`);
 
   if (apiKey) {
     const result = await validateApiKey(apiKey, apiBase);
@@ -457,19 +674,36 @@ export async function resolveApiKeyAndTeamId(
 
     reporter.info('create-api-key=true: generating a durable Postman API key via Bifrost identity service...');
     const keyName = `insights-onboarding-${inputs.projectName}`;
-    apiKey = await client.createApiKey(keyName);
+    const keyNameLabel = diag(keyName);
+    try {
+      apiKey = await client.createApiKey(keyName);
+    } catch (error) {
+      throw wrapOnboardingPhaseError(
+        'createApiKey',
+        `for key name "${keyNameLabel}" project "${projectLabel}"`,
+        'Verify Bifrost identity access for durable API-key creation and that create-api-key is intentional, then rerun.',
+        error,
+        mask
+      );
+    }
     reporter.setSecret(apiKey);
     client.setApiKey(apiKey);
     const createdIdentity = await validateApiKey(apiKey, apiBase);
     if (!createdIdentity.valid) {
-      throw new Error('The explicitly created postman-api-key could not be validated; refusing linking writes.');
+      throw new Error(
+        mask(
+          collapseControlChars(
+            `The explicitly created postman-api-key "${keyNameLabel}" for project "${projectLabel}" could not be validated via GET ${meEndpointLabel}; refusing linking writes. Verify the Postman API endpoint/network and Bifrost-created key, then rerun.`
+          )
+        )
+      );
     }
     pmakIdentity = { source: 'pmak/me', teamId: createdIdentity.teamId };
-    reporter.info(`New API key created successfully (${keyName}).`);
+    reporter.info(`New API key created successfully (${keyNameLabel}).`);
   }
 
   if (teamId) {
-    reporter.info(`Using explicit postman-team-id for Bifrost headers: ${teamId}`);
+    reporter.info(`Using explicit postman-team-id for Bifrost headers: ${teamIdLabel}`);
   } else {
     reporter.info(
       'No postman-team-id / POSTMAN_TEAM_ID provided; omitting x-entity-team-id so Bifrost resolves team from the access token.'
@@ -560,10 +794,21 @@ export async function runAction(): Promise<void> {
     core.setOutput(key, value);
   }
 
+  const logMask = () =>
+    createSecretMasker([
+      inputs.postmanAccessToken,
+      inputs.postmanApiKey,
+      inputs.githubToken
+    ]);
+  const logDiag = (value: string | number | undefined | null): string =>
+    formatOnboardingDiagnostic(value, logMask());
+
   // Branch-aware sync: decide BEFORE any credential validation or mint.
   const branchDecision = decideBranchTier(inputs);
   if (branchDecision.tier !== 'legacy' && branchDecision.tier !== 'canonical') {
-    core.info(`branch-aware sync: ${branchDecision.tier} run (${branchDecision.reason}) — skipping insights linking, zero writes`);
+    core.info(
+      `branch-aware sync: ${logDiag(branchDecision.tier)} run (${logDiag(branchDecision.reason)}) — skipping insights linking, zero writes`
+    );
     core.setOutput('status', 'skipped');
     core.setOutput('sync-status', 'skipped-branch-gate');
     core.setOutput('branch-decision', serializeBranchDecision(branchDecision));
@@ -572,7 +817,9 @@ export async function runAction(): Promise<void> {
   }
   assertWritingInputs(inputs);
   if (branchDecision.tier !== 'legacy') {
-    core.info(`branch-aware sync: tier=${branchDecision.tier} (${branchDecision.reason})`);
+    core.info(
+      `branch-aware sync: tier=${logDiag(branchDecision.tier)} (${logDiag(branchDecision.reason)})`
+    );
     process.env[BRANCH_DECISION_ENV] = serializeBranchDecision(branchDecision);
     core.setOutput('branch-decision', serializeBranchDecision(branchDecision));
     core.setOutput('sync-status', 'synced');
@@ -672,7 +919,7 @@ export async function runAction(): Promise<void> {
 
     result = await runOnboarding(inputs, client, sleep, core);
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = logDiag(error instanceof Error ? error.message : String(error));
     core.setOutput('status', 'error');
     core.setFailed(`Insights onboarding failed: ${message}`);
     telemetry.setAccountType(getMemoizedSessionIdentity()?.consumerType);
@@ -689,10 +936,19 @@ export async function runAction(): Promise<void> {
 
   telemetry.setAccountType(getMemoizedSessionIdentity()?.consumerType);
   if (result.status === 'not-found') {
-    core.warning('Insights onboarding skipped: service not found in discovered list');
+    const projectLabel = logDiag(inputs.projectName);
+    const canonicalLabel = logDiag(
+      inputs.clusterName ? `${inputs.clusterName}/${inputs.projectName}` : inputs.projectName
+    );
+    const workspaceLabel = logDiag(inputs.workspaceId);
+    core.warning(
+      `Insights onboarding skipped: service "${projectLabel}" (canonical "${canonicalLabel}") not found in discovered list for workspace ${workspaceLabel}. Verify the access token team scope and that project-name/cluster-name match a discovered Insights service, then rerun.`
+    );
     telemetry.emitCompletion('failure');
   } else {
-    core.info(`Insights onboarding succeeded: ${result.discoveredServiceName} -> workspace ${inputs.workspaceId}`);
+    core.info(
+      `Insights onboarding succeeded: ${logDiag(result.discoveredServiceName)} -> workspace ${logDiag(inputs.workspaceId)}`
+    );
     telemetry.emitCompletion('success');
   }
 }

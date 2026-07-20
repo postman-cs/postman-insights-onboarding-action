@@ -23,6 +23,7 @@ import { getMemoizedSessionIdentity } from './lib/credential-identity.js';
 import { normalizedInputEnvName, runnerInputEnvName } from './lib/input.js';
 import { createTelemetryContext } from '@postman-cse/automation-telemetry-core';
 import { resolveActionVersion } from './action-version.js';
+import { toOneLine } from './lib/secrets.js';
 
 const INPUT_NAMES = [
   'project-name',
@@ -89,7 +90,7 @@ export class ConsoleReporter implements Reporter {
     for (const secret of this.secretValues) {
       masked = masked.replaceAll(secret, '***');
     }
-    return masked;
+    return toOneLine(masked);
   }
 }
 
@@ -157,16 +158,19 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
       continue;
     }
     if (!arg.startsWith('--')) {
-      throw new Error(`Unexpected positional argument: ${arg}`);
+      throw new Error(
+        `Unexpected positional argument at argv[${index}]; use named --<input> options (see --help)`
+      );
     }
 
     const equalsIndex = arg.indexOf('=');
     const name = equalsIndex >= 0 ? arg.slice(2, equalsIndex) : arg.slice(2);
+    const safeName = toOneLine(name);
     if (!allowed.has(name)) {
-      throw new Error(`Unknown option: --${name}`);
+      throw new Error(`Unknown option: --${safeName}`);
     }
     if (seen.has(name)) {
-      throw new Error(`Duplicate option: --${name}`);
+      throw new Error(`Duplicate option: --${safeName}`);
     }
 
     let value: string | undefined;
@@ -175,13 +179,13 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     } else {
       const next = argv[index + 1];
       if (next === undefined || next.startsWith('--')) {
-        throw new Error(`Missing value for --${name}`);
+        throw new Error(`Missing value for --${safeName}`);
       }
       value = next;
       index += 1;
     }
     if (value.length === 0) {
-      throw new Error(`Missing value for --${name}`);
+      throw new Error(`Missing value for --${safeName}`);
     }
 
     seen.add(name);
@@ -220,7 +224,7 @@ export function toDotenv(outputs: Record<string, string>): string {
 function assertWithinWorkspace(workspaceRoot: string, resolved: string, filePath: string): void {
   const relative = path.relative(workspaceRoot, resolved);
   if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-    throw new Error(`Output path must stay within workspace: ${filePath}`);
+    throw new Error(`Output path must stay within workspace: ${toOneLine(filePath)}`);
   }
 }
 
@@ -459,7 +463,7 @@ function isEntrypoint(currentPath: string, entrypointPath: string | undefined): 
 if (isEntrypoint(currentModulePath, entrypoint)) {
   runCli().catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`${message}\n`);
+    process.stderr.write(`${toOneLine(message)}\n`);
     process.exitCode = 1;
   });
 }

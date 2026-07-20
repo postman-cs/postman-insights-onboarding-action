@@ -1,3 +1,5 @@
+import { toOneLine } from '../secrets.js';
+
 export type PostmanStack = 'prod' | 'beta';
 export type PostmanRegion = 'us' | 'eu';
 
@@ -31,7 +33,9 @@ export function parsePostmanRegion(value: string | undefined): PostmanRegion {
   if (normalized === 'us' || normalized === 'eu') {
     return normalized;
   }
-  throw new Error(`Unsupported postman-region "${value}". Supported values: us, eu`);
+  throw new Error(
+    `Unsupported postman-region "${toOneLine(value)}". Supported values: us, eu`
+  );
 }
 
 export function parsePostmanStack(value: string | undefined): PostmanStack {
@@ -39,7 +43,9 @@ export function parsePostmanStack(value: string | undefined): PostmanStack {
   if (normalized === 'prod' || normalized === 'beta') {
     return normalized;
   }
-  throw new Error(`Unsupported postman-stack "${value}". Supported values: prod, beta`);
+  throw new Error(
+    `Unsupported postman-stack "${toOneLine(value)}". Supported values: prod, beta`
+  );
 }
 
 export function resolvePostmanEndpointProfile(

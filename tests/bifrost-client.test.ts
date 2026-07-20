@@ -156,13 +156,115 @@ describe('BifrostCatalogClient', () => {
       environmentId: 'env-x',
       gitRepositoryUrl: 'https://github.com/org/repo',
       gitApiKey: 'ghp_test',
-    })).rejects.toThrow(/refused git onboarding with 403/);
+    })).rejects.toThrow(/refused git onboarding.*with 403/);
     const mutationPosts = (fetchFn as ReturnType<typeof vi.fn>).mock.calls.filter((call) => {
       const body = JSON.parse(call[1].body);
       return body.method === 'POST' && String(body.path).includes('/onboarding/git');
     });
     expect(mutationPosts).toHaveLength(1);
   }, 15_000);
+
+  it('redacts an echoed github token from failed git onboarding while keeping entity context', async () => {
+    const gitApiKey = 'ghp_echoed_secret_token_for_redaction';
+    const fetchFn = mockFetch([
+      { ok: true, status: 200, body: { total: 0, nextCursor: null, items: [] } },
+      {
+        ok: false,
+        status: 403,
+        body: { error: `forbidden; received key ${gitApiKey}` },
+      },
+    ]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: 'PMAK-test',
+      fetchFn,
+    });
+    try {
+      await client.onboardGit({
+        serviceId: 24701,
+        workspaceId: 'ws-123',
+        environmentId: 'env-456',
+        gitRepositoryUrl: 'https://github.com/postman-cs/af-cards-activation',
+        gitApiKey,
+      });
+      expect.fail('expected onboardGit to throw');
+    } catch (err) {
+      const error = err as Error;
+      const causeMessage = error.cause instanceof Error ? error.cause.message : '';
+      const combined = `${error.message}\n${causeMessage}`;
+      expect(combined).not.toContain(gitApiKey);
+      expect(error.message).toContain('https://github.com/postman-cs/af-cards-activation');
+      expect(error.message).toContain('24701');
+      expect(error.message).toContain('ws-123');
+      expect(error.message).toContain('env-456');
+    }
+    const mutationPosts = (fetchFn as ReturnType<typeof vi.fn>).mock.calls.filter((call) => {
+      const body = JSON.parse(call[1].body);
+      return body.method === 'POST' && String(body.path).includes('/onboarding/git');
+    });
+    expect(mutationPosts).toHaveLength(1);
+  }, 15_000);
+
+  it('redacts access token and PMAK from unknown Akita acknowledge errors while keeping operation IDs', async () => {
+    const accessToken = 'tok-akita-secret-abc';
+    const apiKey = 'PMAK-akita-secret-xyz';
+    const fetchFn = mockFetch([
+      { ok: true, status: 200, body: { services: [] } },
+      {
+        ok: false,
+        status: 403,
+        body: { error: `denied token=${accessToken} key=${apiKey}` },
+      },
+    ]);
+    const client = new BifrostCatalogClient({
+      accessToken,
+      teamId: '14103640',
+      apiKey,
+      fetchFn,
+    });
+    try {
+      await client.acknowledgeOnboarding('svc_provider_1', 'ws_ack_1', 'sys_env_1');
+      expect.fail('expected acknowledgeOnboarding to throw');
+    } catch (err) {
+      const error = err as Error;
+      const causeMessage = error.cause instanceof Error ? error.cause.message : '';
+      const combined = `${error.message}\n${causeMessage}`;
+      expect(combined).not.toContain(accessToken);
+      expect(combined).not.toContain(apiKey);
+      expect(error.message).toContain('svc_provider_1');
+      expect(error.message).toContain('ws_ack_1');
+      expect(error.message).toContain('sys_env_1');
+    }
+  });
+
+  it('masks secrets on retryable team verification token HttpError', async () => {
+    const accessToken = 'tok-verify-secret-abc';
+    const apiKey = 'PMAK-verify-secret-xyz';
+    const fetchFn = mockFetch([
+      {
+        ok: false,
+        status: 503,
+        body: { error: `unavailable token=${accessToken} key=${apiKey}` },
+      },
+    ]);
+    const client = new BifrostCatalogClient({
+      accessToken,
+      teamId: '14103640',
+      apiKey,
+      fetchFn,
+    });
+    try {
+      await client.getTeamVerificationToken('ws-verify-1');
+      expect.fail('expected getTeamVerificationToken to throw');
+    } catch (err) {
+      const error = err as Error;
+      expect(error.message).not.toContain(accessToken);
+      expect(error.message).not.toContain(apiKey);
+      expect(error.message).toMatch(/503/);
+      expect(error.message).toContain('ws-verify-1');
+    }
+  }, 20_000);
 
   it('enriches akita acknowledge failures with token-expiry advice', async () => {
     const fetchFn = mockFetch([

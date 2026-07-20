@@ -613,48 +613,147 @@ describe('failure after each linking phase', () => {
     } as unknown as BifrostCatalogClient;
   }
 
+  async function expectWrappedPhaseFailure(
+    client: BifrostCatalogClient,
+    causeText: string | RegExp,
+    entityPatterns: RegExp[],
+    actionPattern: RegExp
+  ): Promise<Error> {
+    let thrown: unknown;
+    try {
+      await runOnboarding(makeInputs(), client, vi.fn(), silentReporter());
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    const err = thrown as Error;
+    expect(err.message).toMatch(causeText);
+    for (const pattern of entityPatterns) {
+      expect(err.message).toMatch(pattern);
+    }
+    expect(err.message).toMatch(actionPattern);
+    expect(err.message).not.toMatch(/[\r\n]/);
+    expect(err.cause).toBeInstanceOf(Error);
+    expect((err.cause as Error).message).toMatch(causeText);
+    return err;
+  }
+
   it('stops before git when prepareCollection fails', async () => {
+    const cause = new Error('prepare failed');
     const client = makeClient({
-      prepareCollection: vi.fn().mockRejectedValue(new Error('prepare failed'))
+      prepareCollection: vi.fn().mockRejectedValue(cause)
     });
-    await expect(runOnboarding(makeInputs(), client, vi.fn(), silentReporter())).rejects.toThrow(
-      /prepare failed/
+    const err = await expectWrappedPhaseFailure(
+      client,
+      /prepare failed/,
+      [/24701/, /ws-123/, /se-catalog-demo\/af-cards-activation/],
+      /Verify workspace .* exists and the access token can edit it/i
     );
+    expect(err.cause).toBe(cause);
     expect(client.onboardGit).not.toHaveBeenCalled();
   });
 
   it('stops before acknowledge when onboardGit fails', async () => {
+    const cause = new Error('git failed');
     const client = makeClient({
-      onboardGit: vi.fn().mockRejectedValue(new Error('git failed'))
+      onboardGit: vi.fn().mockRejectedValue(cause)
     });
-    await expect(runOnboarding(makeInputs(), client, vi.fn(), silentReporter())).rejects.toThrow(/git failed/);
+    const err = await expectWrappedPhaseFailure(
+      client,
+      /git failed/,
+      [/24701/, /ws-123/, /env-456/, /github\.com\/postman-cs\/af-cards-activation/],
+      /Verify github-token\/repo ownership/i
+    );
+    expect(err.cause).toBe(cause);
     expect(client.acknowledgeOnboarding).not.toHaveBeenCalled();
   });
 
   it('stops before createApplication when acknowledgeOnboarding fails', async () => {
+    const cause = new Error('ack failed');
     const client = makeClient({
-      acknowledgeOnboarding: vi.fn().mockRejectedValue(new Error('ack failed'))
+      acknowledgeOnboarding: vi.fn().mockRejectedValue(cause)
     });
-    await expect(runOnboarding(makeInputs(), client, vi.fn(), silentReporter())).rejects.toThrow(/ack failed/);
+    const err = await expectWrappedPhaseFailure(
+      client,
+      /ack failed/,
+      [/svc_test123/, /ws-123/, /sys-env-1/],
+      /Postman-user-identity access token/i
+    );
+    expect(err.cause).toBe(cause);
     expect(client.createApplication).not.toHaveBeenCalled();
   });
 
   it('stops before workspace ack when createApplication fails', async () => {
+    const cause = new Error('app failed');
     const client = makeClient({
-      createApplication: vi.fn().mockRejectedValue(new Error('app failed'))
+      createApplication: vi.fn().mockRejectedValue(cause)
     });
-    await expect(runOnboarding(makeInputs(), client, vi.fn(), silentReporter())).rejects.toThrow(/app failed/);
+    const err = await expectWrappedPhaseFailure(
+      client,
+      /app failed/,
+      [/ws-123/, /sys-env-1/, /svc_test123/],
+      /Verify the PMAK\/access token belong to the same org\/team/i
+    );
+    expect(err.cause).toBe(cause);
     expect(client.acknowledgeWorkspace).not.toHaveBeenCalled();
   });
 
   it('surfaces workspace acknowledge failure after prior phases succeeded', async () => {
+    const cause = new Error('workspace ack failed');
     const client = makeClient({
-      acknowledgeWorkspace: vi.fn().mockRejectedValue(new Error('workspace ack failed'))
+      acknowledgeWorkspace: vi.fn().mockRejectedValue(cause)
     });
-    await expect(runOnboarding(makeInputs(), client, vi.fn(), silentReporter())).rejects.toThrow(
-      /workspace ack failed/
+    const err = await expectWrappedPhaseFailure(
+      client,
+      /workspace ack failed/,
+      [/ws-123/],
+      /Verify workspace\/team access and rerun/i
     );
+    expect(err.cause).toBe(cause);
     expect(client.createApplication).toHaveBeenCalled();
+  });
+
+  it('collapses multiline entity/cause text in diagnostics while passing raw values to clients', async () => {
+    const multilineWorkspace = 'ws-\r\nlinked';
+    const multilineRepo = 'https://github.com/postman-cs/af-\rcards\nactivation';
+    const cause = new Error('prepare failed\r\nwith detail');
+    const prepareCollection = vi.fn().mockRejectedValue(cause);
+    const client = makeClient({ prepareCollection });
+    const infos: string[] = [];
+    const warnings: string[] = [];
+    const reporter: Reporter = {
+      info: (message: string) => {
+        infos.push(message);
+      },
+      warning: (message: string) => {
+        warnings.push(message);
+      },
+      setSecret: () => undefined
+    };
+
+    let thrown: unknown;
+    try {
+      await runOnboarding(
+        makeInputs({ workspaceId: multilineWorkspace, repoUrl: multilineRepo }),
+        client,
+        vi.fn(),
+        reporter
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    const err = thrown as Error;
+    expect(err.message).toMatch(/prepare failed with detail/);
+    expect(err.message).toMatch(/ws- linked/);
+    expect(err.message).not.toMatch(/[\r\n]/);
+    expect(err.cause).toBe(cause);
+    expect((err.cause as Error).message).toBe('prepare failed\r\nwith detail');
+    expect(prepareCollection).toHaveBeenCalledWith(24701, multilineWorkspace);
+    for (const message of [...infos, ...warnings]) {
+      expect(message).not.toMatch(/[\r\n]/);
+    }
   });
 });
 

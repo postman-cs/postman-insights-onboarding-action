@@ -9,6 +9,7 @@ import {
   contractOutputNames
 } from '../src/contracts.js';
 import { resolveInputs, createPlannedOutputs } from '../src/index.js';
+import { parsePostmanRegion, parsePostmanStack } from '../src/lib/postman/base-urls.js';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 const actionManifest = parse(
@@ -198,6 +199,27 @@ describe('action contract', () => {
         INPUT_POSTMAN_STACK: 'stage',
       })
     ).toThrow(/Unsupported postman-stack/);
+  });
+
+  it('keeps multiline invalid region/stack errors one line and lists supported values', () => {
+    try {
+      parsePostmanRegion('eu\ninjected');
+      expect.fail('expected parsePostmanRegion to throw');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      expect(message).not.toMatch(/[\r\n]/);
+      expect(message).toMatch(/Unsupported postman-region/);
+      expect(message).toContain('Supported values: us, eu');
+    }
+    try {
+      parsePostmanStack('beta\rinjected');
+      expect.fail('expected parsePostmanStack to throw');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      expect(message).not.toMatch(/[\r\n]/);
+      expect(message).toMatch(/Unsupported postman-stack/);
+      expect(message).toContain('Supported values: prod, beta');
+    }
   });
 
   it('auto-detects repo-url from CI context when the input is omitted', () => {

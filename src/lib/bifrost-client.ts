@@ -259,7 +259,8 @@ export class BifrostCatalogClient {
         JSON.stringify({ error: errObj }),
         this.adviceContext(operation)
       );
-      throw advised ?? new Error(`api-catalog error: ${errObj?.message || errObj?.code || 'unknown'}`);
+      const fallback = `api-catalog error: ${errObj?.message || errObj?.code || 'unknown'}`;
+      throw advised ?? new Error(createSecretMasker(this.secretValues)(fallback));
     }
 
     return data;
@@ -325,7 +326,8 @@ export class BifrostCatalogClient {
       url: `bifrost:akita:${path}`,
       status,
       statusText: status >= 500 ? 'Error' : 'Client Error',
-      responseBody: errorText
+      responseBody: errorText,
+      secretValues: this.secretValues
     });
     const advised = adviseFromHttpError(httpErr, this.adviceContext(operation));
     throw advised ?? httpErr;
@@ -429,7 +431,11 @@ export class BifrostCatalogClient {
           false
         );
         if (!data?.id) {
-          throw new Error('prepare-collection succeeded without a collection id');
+          throw new Error(
+            `prepare-collection for service ${serviceId} in workspace ${workspaceId} ` +
+              'succeeded without a collection id; inspect the POST /api/v1/onboarding/prepare-collection ' +
+              'response or retry after confirming the service is still discoverable'
+          );
         }
         return data.id;
       }
@@ -437,6 +443,12 @@ export class BifrostCatalogClient {
   }
 
   async onboardGit(params: OnboardGitParams): Promise<void> {
+    if (params.gitApiKey && !this.secretValues.includes(params.gitApiKey)) {
+      this.secretValues.push(params.gitApiKey);
+    }
+    const gitOperation =
+      `git onboarding for ${params.gitRepositoryUrl} ` +
+      `(service ${params.serviceId}, workspace ${params.workspaceId}, environment ${params.environmentId})`;
     await mutateOnceThenReconcile({
       findExisting: () => this.findGitLink(params),
       mutate: async () => {
@@ -455,7 +467,7 @@ export class BifrostCatalogClient {
           'POST',
           '/api/v1/onboarding/git',
           body,
-          'git onboarding',
+          gitOperation,
           false
         );
         return true as const;
@@ -578,6 +590,9 @@ export class BifrostCatalogClient {
     workspaceId: string,
     systemEnvironmentId: string
   ): Promise<void> {
+    const operation =
+      `Insights onboarding acknowledgment for service ${providerServiceId}, ` +
+      `workspace ${workspaceId}, system environment ${systemEnvironmentId}`;
     await mutateOnceThenReconcile({
       findExisting: () =>
         this.findAcknowledgedOnboarding(providerServiceId, workspaceId, systemEnvironmentId),
@@ -592,14 +607,14 @@ export class BifrostCatalogClient {
               system_env: systemEnvironmentId
             }]
           },
-          'Insights onboarding acknowledgment',
+          operation,
           false
         );
         if (!result.ok) {
           this.throwAkitaFailure(
             result.status,
             result.errorText,
-            'Insights onboarding acknowledgment',
+            operation,
             'POST /v2/api-catalog/services/onboard'
           );
         }
@@ -609,19 +624,20 @@ export class BifrostCatalogClient {
   }
 
   private async findWorkspaceAcknowledged(workspaceId: string): Promise<true | null> {
+    const operation = `workspace onboarding acknowledgment status for workspace ${workspaceId}`;
     const result = await retry(
       async () => {
         const response = await this.akitaProxyRequest<{ onboarding_acknowledged?: boolean }>(
           'GET',
           `/v2/workspaces/${workspaceId}/onboarding/acknowledge`,
           {},
-          'workspace onboarding acknowledgment status'
+          operation
         );
         if (!response.ok) {
           this.throwAkitaFailure(
             response.status,
             response.errorText,
-            'workspace onboarding acknowledgment status',
+            operation,
             `GET /v2/workspaces/${workspaceId}/onboarding/acknowledge`
           );
         }
@@ -633,6 +649,7 @@ export class BifrostCatalogClient {
   }
 
   async acknowledgeWorkspace(workspaceId: string): Promise<void> {
+    const operation = `workspace onboarding acknowledgment for workspace ${workspaceId}`;
     await mutateOnceThenReconcile({
       findExisting: () => this.findWorkspaceAcknowledged(workspaceId),
       mutate: async () => {
@@ -640,14 +657,14 @@ export class BifrostCatalogClient {
           'POST',
           `/v2/workspaces/${workspaceId}/onboarding/acknowledge`,
           {},
-          'workspace onboarding acknowledgment',
+          operation,
           false
         );
         if (!result.ok) {
           this.throwAkitaFailure(
             result.status,
             result.errorText,
-            'workspace onboarding acknowledgment',
+            operation,
             `POST /v2/workspaces/${workspaceId}/onboarding/acknowledge`
           );
         }
@@ -759,13 +776,14 @@ export class BifrostCatalogClient {
   }
 
   async getTeamVerificationToken(workspaceId: string): Promise<string | null> {
+    const operation = `team verification token retrieval for workspace ${workspaceId}`;
     const result = await retry(
       async () => {
         const page = await this.akitaProxyRequest<{ team_verification_token?: string }>(
           'GET',
           `/v2/workspaces/${workspaceId}/team-verification-token`,
           {},
-          'team verification token retrieval'
+          operation
         );
         if (!page.ok && (page.status === 408 || page.status === 429 || page.status >= 500)) {
           throw new HttpError({
@@ -773,7 +791,8 @@ export class BifrostCatalogClient {
             url: `bifrost:akita:GET /v2/workspaces/${workspaceId}/team-verification-token`,
             status: page.status,
             statusText: 'Error',
-            responseBody: page.errorText
+            responseBody: page.errorText,
+            secretValues: this.secretValues
           });
         }
         return page;
@@ -809,7 +828,10 @@ export class BifrostCatalogClient {
     const data = await response.json() as Record<string, unknown>;
     const apikey = data?.apikey as Record<string, unknown> | undefined;
     if (!apikey?.key) {
-      throw new Error('Failed to extract API key from Bifrost identity response');
+      throw new Error(
+        `Failed to extract API key from Bifrost identity response for POST /api/keys ` +
+          `(requested name=${name}); confirm the identity service returned apikey.key and retry`
+      );
     }
 
     return String(apikey.key);

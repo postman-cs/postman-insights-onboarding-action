@@ -57,8 +57,57 @@ describe('shared Action/CLI input adapter', () => {
         'INPUT_PROJECT-NAME': 'runner',
         INPUT_PROJECT_NAME: 'normalized'
       } as NodeJS.ProcessEnv)
-    ).toThrow(/Conflicting values for project-name/);
+    ).toThrow(
+      /Conflicting values for project-name: INPUT_PROJECT_NAME and INPUT_PROJECT-NAME differ\. Remove one alias or make both values identical\./
+    );
   });
+
+  it.each([
+    {
+      name: 'postman-access-token',
+      runnerKey: 'INPUT_POSTMAN-ACCESS-TOKEN',
+      normalizedKey: 'INPUT_POSTMAN_ACCESS_TOKEN',
+      runnerSecret: 'PMAK-runner-secret-access-token-value',
+      normalizedSecret: 'PMAK-normalized-secret-access-token-value'
+    },
+    {
+      name: 'postman-api-key',
+      runnerKey: 'INPUT_POSTMAN-API-KEY',
+      normalizedKey: 'INPUT_POSTMAN_API_KEY',
+      runnerSecret: 'PMAK-runner-secret-api-key-value',
+      normalizedSecret: 'PMAK-normalized-secret-api-key-value'
+    },
+    {
+      name: 'github-token',
+      runnerKey: 'INPUT_GITHUB-TOKEN',
+      normalizedKey: 'INPUT_GITHUB_TOKEN',
+      runnerSecret: 'ghp_runnerSecretGitHubTokenValue0001',
+      normalizedSecret: 'ghp_normalizedSecretGitHubTokenValue02'
+    }
+  ] as const)(
+    'rejects conflicting aliases for $name without disclosing either value',
+    ({ name, runnerKey, normalizedKey, runnerSecret, normalizedSecret }) => {
+      let thrown: Error | undefined;
+      try {
+        getInput(name, {
+          [runnerKey]: runnerSecret,
+          [normalizedKey]: normalizedSecret
+        } as NodeJS.ProcessEnv);
+      } catch (error) {
+        thrown = error as Error;
+      }
+
+      expect(thrown).toBeInstanceOf(Error);
+      const message = thrown!.message;
+      expect(message).toContain(`Conflicting values for ${name}`);
+      expect(message).toContain(normalizedKey);
+      expect(message).toContain(runnerKey);
+      expect(message).toContain('differ');
+      expect(message).toMatch(/Remove one alias or make both values identical/);
+      expect(message).not.toContain(runnerSecret);
+      expect(message).not.toContain(normalizedSecret);
+    }
+  );
 
   it('lets resolveInputs consume either alias form', () => {
     expect(

@@ -186,4 +186,27 @@ describe('error advice', () => {
     expect(fromBody?.message).toContain(REDACTED);
     expect(fromBody?.message).not.toContain('fake-token-abc123');
   });
+
+  it('collapses multiline operation/team context to one masked line and keeps remediation', () => {
+    const secret = 'advice-secret-token-xyz';
+    const mask = createSecretMasker([secret]);
+    const advised = adviseFromHttpError(
+      bifrostHttpError(403, 'You are not authorized to perform this action'),
+      createContext({
+        operation: `git onboarding\nfor repo`,
+        sessionTeamId: `1334\r7347`,
+        sessionRoles: [`role\n${secret}`],
+        workspaceTeamId: `132\n109`,
+        mask
+      })
+    );
+
+    expect(advised).toBeDefined();
+    expect(advised!.message).not.toMatch(/[\r\n]/);
+    expect(advised!.message).not.toContain(secret);
+    expect(advised!.message).toContain(REDACTED);
+    expect(advised!.message).toContain('403');
+    expect(advised!.message).toContain('GET https://api.getpostman.com/teams');
+    expect(advised!.message).toContain('git onboarding');
+  });
 });
