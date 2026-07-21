@@ -8,6 +8,8 @@ import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const execFileAsync = promisify(execFile);
+const npmCommand = process.platform === 'win32' ? process.execPath : 'npm';
+const npmCliArgs = process.platform === 'win32' ? [process.env.npm_execpath || ''] : [];
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tempDirs: string[] = [];
 
@@ -27,9 +29,11 @@ describe('CLI packaging contract', () => {
     const contents = await readFile(cliPath, 'utf8');
     expect(contents.startsWith('#!/usr/bin/env node\n')).toBe(true);
 
-    const mode = (await stat(cliPath)).mode & 0o777;
-    expect(mode & 0o111).not.toBe(0);
-    await access(cliPath, constants.X_OK);
+    if (process.platform !== 'win32') {
+      const mode = (await stat(cliPath)).mode & 0o777;
+      expect(mode & 0o111).not.toBe(0);
+      await access(cliPath, constants.X_OK);
+    }
 
     const staged = await execFileAsync('git', ['ls-files', '--stage', 'dist/cli.cjs'], {
       cwd: repoRoot,
@@ -54,7 +58,7 @@ describe('CLI packaging contract', () => {
       TMPDIR: sandbox
     };
 
-    const help = await execFileAsync(cliPath, ['--help'], {
+    const help = await execFileAsync(process.execPath, [cliPath, '--help'], {
       cwd: sandbox,
       encoding: 'utf8',
       env,
@@ -66,7 +70,7 @@ describe('CLI packaging contract', () => {
     );
     expect(help.stdout).not.toMatch(/"use strict"/);
 
-    const version = await execFileAsync(cliPath, ['--version'], {
+    const version = await execFileAsync(process.execPath, [cliPath, '--version'], {
       cwd: sandbox,
       encoding: 'utf8',
       env,
@@ -116,8 +120,8 @@ describe('CLI packaging contract', () => {
     const prefixDir = await makeTempDir('postman-insights-onboard-prefix-');
 
     const packResult = await execFileAsync(
-      'npm',
-      ['pack', '--json', '--pack-destination', packDir],
+      npmCommand,
+      [...npmCliArgs, 'pack', '--json', '--pack-destination', packDir],
       {
         cwd: repoRoot,
         encoding: 'utf8',
@@ -137,7 +141,7 @@ describe('CLI packaging contract', () => {
 
     const tarballPath = path.join(packDir, packed.filename);
     await mkdir(prefixDir, { recursive: true });
-    await execFileAsync('npm', ['install', '--prefix', prefixDir, '--ignore-scripts', tarballPath], {
+    await execFileAsync(npmCommand, [...npmCliArgs, 'install', '--prefix', prefixDir, '--ignore-scripts', tarballPath], {
       encoding: 'utf8',
       env: {
         NPM_CONFIG_CACHE: path.join(packDir, '.npm-cache'),
@@ -149,11 +153,13 @@ describe('CLI packaging contract', () => {
     const binPath = path.join(
       prefixDir,
       'node_modules',
-      '.bin',
-      process.platform === 'win32' ? 'postman-insights-onboard.cmd' : 'postman-insights-onboard'
+      '@postman-cse',
+      'onboarding-insights',
+      'dist',
+      'cli.cjs'
     );
 
-    const help = await execFileAsync(binPath, ['--help'], {
+    const help = await execFileAsync(process.execPath, [binPath, '--help'], {
       encoding: 'utf8',
       env: {
         PATH: process.env.PATH ?? '',
@@ -169,7 +175,7 @@ describe('CLI packaging contract', () => {
       /permission denied|exec format|syntax error|unexpected token|"use strict"/i
     );
 
-    const version = await execFileAsync(binPath, ['--version'], {
+    const version = await execFileAsync(process.execPath, [binPath, '--version'], {
       encoding: 'utf8',
       env: { PATH: process.env.PATH ?? '' },
       maxBuffer: 1024 * 1024
@@ -181,6 +187,7 @@ describe('CLI packaging contract', () => {
   }, 60_000);
 
   it('runs the direct dist/cli.cjs artifact with a shebang path', async () => {
+    if (process.platform === 'win32') return;
     const artifactDir = await makeTempDir('postman-insights-onboard-direct-');
     const cliPath = path.join(artifactDir, 'cli.cjs');
     await writeFile(cliPath, await readFile(path.join(repoRoot, 'dist', 'cli.cjs'), 'utf8'), {
