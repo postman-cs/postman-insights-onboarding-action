@@ -65,9 +65,9 @@ describe('action contract', () => {
     expect(packageManifest.scripts.bundle).toContain('--outfile=dist/index.cjs');
     expect(packageManifest.scripts.bundle).toContain('src/main.ts --bundle');
     expect(packageManifest.scripts.bundle).toContain('--outfile=dist/action.cjs');
-    expect(packageManifest.scripts.bundle).toContain("--banner:js='#!/usr/bin/env node'");
-    expect(packageManifest.scripts.bundle).toContain('chmod 755 dist/cli.cjs');
-    expect(packageManifest.scripts.bundle).not.toContain('chmod +x dist/cli.cjs');
+    expect(packageManifest.scripts.bundle).toContain('--banner:js="#!/usr/bin/env node"');
+    expect(packageManifest.scripts.bundle).toContain("process.platform!=='win32'");
+    expect(packageManifest.scripts.bundle).toContain("chmodSync('dist/cli.cjs',0o755)");
     expect(packageManifest.scripts.build).toMatch(/typecheck.*&&.*bundle|bundle.*typecheck/);
     expect(packageManifest.scripts['verify:dist:assert']).toBe(
       'git diff --ignore-space-at-eol --text --exit-code -- dist && node scripts/verify-dist-artifact.mjs'
