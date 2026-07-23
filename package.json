@@ -1,6 +1,6 @@
 {
   "name": "@postman-cse/onboarding-insights",
-  "version": "2.1.4",
+  "version": "2.1.5",
   "description": "GitHub Action to link Postman Insights services with human-user PMAK and session credentials.",
   "type": "module",
   "main": "dist/index.cjs",
