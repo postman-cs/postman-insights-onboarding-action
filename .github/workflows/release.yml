@@ -170,16 +170,16 @@ jobs:
           NODE
       - name: Verify staged release artifacts
         run: |
-          PACKAGE_NAME=$(tar -xOf release/release.tgz package/package.json | node -p "let data='';process.stdin.on('data', chunk => data += chunk).on('end', () => console.log(JSON.parse(data).name))")
-          PACKAGE_VERSION=$(tar -xOf release/release.tgz package/package.json | node -p "let data='';process.stdin.on('data', chunk => data += chunk).on('end', () => console.log(JSON.parse(data).version))")
+          PACKAGE_NAME=$(tar -xOf release/release.tgz package/package.json | node -e "let data='';process.stdin.on('data', chunk => data += chunk).on('end', () => console.log(JSON.parse(data).name))")
+          PACKAGE_VERSION=$(tar -xOf release/release.tgz package/package.json | node -e "let data='';process.stdin.on('data', chunk => data += chunk).on('end', () => console.log(JSON.parse(data).version))")
           tar -xOf release/release.tgz package/scripts/verify-release-artifacts.mjs > /tmp/verify-release-artifacts.mjs
           node /tmp/verify-release-artifacts.mjs release "$PACKAGE_NAME" "$PACKAGE_VERSION"
       - name: Publish or verify npm package identity
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          PKG_NAME=$(tar -xOf release/release.tgz package/package.json | node -p "let data='';process.stdin.on('data', chunk => data += chunk).on('end', () => console.log(JSON.parse(data).name))")
-          PKG_VERSION=$(tar -xOf release/release.tgz package/package.json | node -p "let data='';process.stdin.on('data', chunk => data += chunk).on('end', () => console.log(JSON.parse(data).version))")
+          PKG_NAME=$(tar -xOf release/release.tgz package/package.json | node -e "let data='';process.stdin.on('data', chunk => data += chunk).on('end', () => console.log(JSON.parse(data).name))")
+          PKG_VERSION=$(tar -xOf release/release.tgz package/package.json | node -e "let data='';process.stdin.on('data', chunk => data += chunk).on('end', () => console.log(JSON.parse(data).version))")
           set +e
           npm view "$PKG_NAME@$PKG_VERSION" dist.integrity >/tmp/npm-integrity 2>/tmp/npm-view.err
           export NPM_VIEW_STATUS=$?
