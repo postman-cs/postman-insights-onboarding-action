@@ -11,23 +11,23 @@ The binary is built and smoke-tested natively in CI on every release (`.github/w
 
 ## Get the binary
 
-Download the release asset and mark it executable. Pin an explicit version:
+Download the release asset and its checksum, verify, then mark it executable. Pin an explicit version:
 
 ```bash
 VERSION=2.1.8   # set to the release that carries the binary
-curl -fsSL -o postman-insights-onboard \
-  "https://github.com/postman-cs/postman-insights-onboarding-action/releases/download/v${VERSION}/postman-insights-onboard-${VERSION}-linux-x64"
-chmod +x postman-insights-onboard
+BASE="https://github.com/postman-cs/postman-insights-onboarding-action/releases/download/v${VERSION}"
 
+# Download under the versioned asset name. The .sha256 records that exact name,
+# so `shasum -c` (which opens the filename embedded in the checksum file) only
+# resolves if the binary is saved under it.
+curl -fsSL -O "${BASE}/postman-insights-onboard-${VERSION}-linux-x64"
+curl -fsSL -O "${BASE}/postman-insights-onboard-${VERSION}-linux-x64.sha256"
+shasum -a 256 -c "postman-insights-onboard-${VERSION}-linux-x64.sha256"
+
+# Make it executable; rename to the short name used in the examples below.
+chmod +x "postman-insights-onboard-${VERSION}-linux-x64"
+mv "postman-insights-onboard-${VERSION}-linux-x64" postman-insights-onboard
 ./postman-insights-onboard --version   # -> matches ${VERSION}
-```
-
-A `.sha256` companion is attached alongside the binary; verify it before use:
-
-```bash
-curl -fsSL -o postman-insights-onboard.sha256 \
-  "https://github.com/postman-cs/postman-insights-onboarding-action/releases/download/v${VERSION}/postman-insights-onboard-${VERSION}-linux-x64.sha256"
-shasum -a 256 -c postman-insights-onboard.sha256
 ```
 
 If the repository or release is private, the browser-style URL above returns an HTML login page instead of the binary. Fetch it through the GitHub API with a token that has `contents:read`, or — recommended for locked-down environments — **mirror the asset once into your own artifact store** (Artifactory, Nexus, S3) and have CI pull it from there. That keeps the build offline from GitHub entirely and gives you a stable internal URL.

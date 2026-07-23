@@ -129,7 +129,7 @@ jobs:
             release-manifest.json
 
   publish:
-    needs: [classify-release, verify-package]
+    needs: [classify-release, verify-package, build-sea]
     if: needs.classify-release.outputs.release_kind == 'immutable'
     runs-on: ubuntu-latest
     permissions:
@@ -210,6 +210,16 @@ jobs:
           );
           process.exit(publish.status === 0 ? 0 : (publish.status ?? 1));
           NODE
+      - name: Download prebuilt SEA binary
+        uses: actions/download-artifact@v8
+        with:
+          name: sea-binary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: sea
+      - name: Verify SEA binary checksum
+        # The binary was built and smoke-tested in build-sea before this
+        # irreversible publish; re-verify its checksum sidecar across the
+        # artifact boundary before attaching it as a release asset.
+        run: ( cd sea && shasum -a 256 -c ./*.sha256 )
       - name: Publish GitHub release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
@@ -217,6 +227,8 @@ jobs:
           files: |
             release/release.tgz
             release/release-manifest.json
+            sea/postman-insights-onboard-*-linux-x64
+            sea/postman-insights-onboard-*-linux-x64.sha256
 
   advance-major-alias:
     needs: [classify-release, publish]
@@ -234,17 +246,19 @@ jobs:
       - name: Advance rolling major alias without regression
         run: node scripts/advance-release-alias.mjs
 
-  sea-binary:
-    # Build, smoke, and attach the self-contained SEA binary as a release asset.
-    # This repo's publish job is deliberately artifact-only (no checkout/npm), so
-    # the binary cannot be built there. It is built in this dedicated job instead,
-    # which needs `publish` so the GitHub release already exists before upload --
-    # no cross-job race. Immutable-only, matching the npm publish gate.
-    needs: [classify-release, publish]
+  build-sea:
+    # Build AND smoke the self-contained SEA binary BEFORE the irreversible
+    # publish. `publish` needs this job, so a transient Node download / postject /
+    # smoke failure blocks the npm publish and GitHub release entirely -- nothing
+    # ships without a verified binary. The checked artifact is handed to `publish`,
+    # which downloads, re-verifies its checksum, and attaches it to the release.
+    # (This repo's publish job is deliberately artifact-only -- no checkout/npm --
+    # so the binary cannot be built there.)
+    needs: classify-release
     if: needs.classify-release.outputs.release_kind == 'immutable'
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -257,10 +271,8 @@ jobs:
       - name: Build self-contained SEA binary
         run: bash scripts/build-sea.sh
       - name: Smoke test SEA binary with an empty environment
-        # Tag releases do not trigger sea-binary.yml, so smoke the artifact here
-        # before uploading -- we never ship a binary we have not executed. A SEA
-        # embeds its runtime and never consults PATH for node, so an empty env with
-        # a bogus PATH proves self-containment (no base image to pull).
+        # A SEA embeds its runtime and never consults PATH for node, so an empty
+        # env with a bogus PATH proves self-containment (no base image to pull).
         run: |
           VERSION="$(node -p "require('./package.json').version")"
           BIN="$PWD/build/sea/postman-insights-onboard-${VERSION}-linux-x64"
@@ -287,12 +299,11 @@ jobs:
             echo "::error::SEA honored ambient NODE_OPTIONS; expected execArgvExtension=none to ignore it"
             exit 1
           fi
-      - name: Attach SEA binary to the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          VERSION="$(node -p "require('./package.json').version")"
-          gh release upload "$GITHUB_REF_NAME" \
-            "build/sea/postman-insights-onboard-${VERSION}-linux-x64" \
-            "build/sea/postman-insights-onboard-${VERSION}-linux-x64.sha256" \
-            --clobber
+      - name: Upload prebuilt SEA binary for the publish job
+        uses: actions/upload-artifact@v7
+        with:
+          name: sea-binary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build/sea/postman-insights-onboard-*-linux-x64
+            build/sea/postman-insights-onboard-*-linux-x64.sha256
+          if-no-files-found: error

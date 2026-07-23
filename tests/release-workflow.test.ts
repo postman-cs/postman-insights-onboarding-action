@@ -69,7 +69,7 @@ describe('release workflow publishing contract', () => {
     assertTokenOrder('name: Classify release tag', '- run: npm ci');
 
     const immutableGuard = "needs.classify-release.outputs.release_kind == 'immutable'";
-    for (const jobName of ['verify-package', 'publish', 'advance-major-alias', 'sea-binary'] as const) {
+    for (const jobName of ['verify-package', 'publish', 'advance-major-alias', 'build-sea'] as const) {
       const job = requireJob(jobName);
       expect(job.if, `expected job ${jobName} to have an immutable if guard`).toBe(immutableGuard);
     }
@@ -218,7 +218,7 @@ describe('release workflow publishing contract', () => {
   it('advances the rolling major alias via the semantic script with scoped fetches only', () => {
     const alias = releaseWorkflow.slice(
       releaseWorkflow.indexOf('  advance-major-alias:'),
-      releaseWorkflow.indexOf('  sea-binary:'),
+      releaseWorkflow.indexOf('  build-sea:'),
     );
     expect(alias).toMatch(/^ {2}advance-major-alias:/m);
     expect(alias).toContain('Advance rolling major alias without regression');
@@ -256,26 +256,41 @@ describe('release workflow publishing contract', () => {
     expect(publish).not.toContain('actions/checkout');
   });
 
-  it('builds, smoke-tests, and attaches the self-contained SEA binary on immutable releases', () => {
-    const seaJob = requireJob('sea-binary');
-    expect(seaJob.if).toBe("needs.classify-release.outputs.release_kind == 'immutable'");
-    expect(permissionMap(seaJob.permissions)).toEqual({ contents: 'write' });
+  it('builds and smoke-tests the SEA binary before publish, then attaches the checked artifact', () => {
+    const buildJob = requireJob('build-sea');
+    expect(buildJob.if).toBe("needs.classify-release.outputs.release_kind == 'immutable'");
+    // Build-only job stays unprivileged; it hands the artifact to publish.
+    expect(permissionMap(buildJob.permissions)).toEqual({ contents: 'read' });
 
-    const sea = releaseWorkflow.slice(releaseWorkflow.indexOf('  sea-binary:'));
-    // Runs after publish so the GitHub release already exists -> no upload race.
-    expect(sea).toContain('needs: [classify-release, publish]');
-    expect(sea).toContain('actions/checkout@v7');
-    expect(sea).toContain('bash scripts/build-sea.sh');
-    // Smoke the binary before uploading it.
-    expect(sea).toContain('postman-insights-onboard-${VERSION}-linux-x64');
-    expect(sea).toContain('env -i PATH=/nonexistent');
-    expect(sea).toContain('project-name is required');
-    expect(sea).toContain("NODE_OPTIONS='--this-flag-does-not-exist'");
-    // Attach via gh release upload (publish is artifact-only and cannot build).
-    expect(sea).toContain('gh release upload "$GITHUB_REF_NAME"');
-    expect(sea).toContain('--clobber');
-    expect(sea).toContain('build/sea/postman-insights-onboard-${VERSION}-linux-x64.sha256');
-    assertTokenOrder('bash scripts/build-sea.sh', 'gh release upload', sea);
+    // build-sea gates publish, so a SEA build/smoke failure blocks the
+    // irreversible npm + GitHub release entirely -- nothing ships unverified.
+    const publishJob = requireJob('publish');
+    expect(publishJob.if).toBeDefined();
+    expect(releaseWorkflow).toContain('needs: [classify-release, verify-package, build-sea]');
+
+    const build = releaseWorkflow.slice(releaseWorkflow.indexOf('  build-sea:'));
+    expect(build).toContain('needs: classify-release');
+    expect(build).toContain('actions/checkout@v7');
+    expect(build).toContain('bash scripts/build-sea.sh');
+    // Smoke happens here, before publish.
+    expect(build).toContain('postman-insights-onboard-${VERSION}-linux-x64');
+    expect(build).toContain('env -i PATH=/nonexistent');
+    expect(build).toContain('project-name is required');
+    expect(build).toContain("NODE_OPTIONS='--this-flag-does-not-exist'");
+    // Hands the checked binary + checksum to publish as an artifact.
+    expect(build).toContain('actions/upload-artifact@v7');
+    expect(build).toContain('sea-binary-${{ github.run_id }}-${{ github.run_attempt }}');
+    expect(build).toContain('build/sea/postman-insights-onboard-*-linux-x64.sha256');
+    assertTokenOrder('bash scripts/build-sea.sh', 'actions/upload-artifact@v7', build);
+
+    // Publish downloads the prebuilt binary, re-verifies its checksum, and
+    // attaches it -- no build or checkout in the artifact-only publish job.
+    const publish = section('  publish:', '  advance-major-alias:');
+    expect(publish).toContain('name: sea-binary-${{ github.run_id }}-${{ github.run_attempt }}');
+    expect(publish).toContain('shasum -a 256 -c ./*.sha256');
+    expect(publish).toContain('sea/postman-insights-onboard-*-linux-x64');
+    expect(publish).toContain('sea/postman-insights-onboard-*-linux-x64.sha256');
+    assertTokenOrder('Verify SEA binary checksum', 'Publish GitHub release', publish);
   });
 
   it('keeps the SEA build script and config hermetic and checksum-verified', () => {
