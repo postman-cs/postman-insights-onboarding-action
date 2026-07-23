@@ -30771,6 +30771,9 @@ function createTelemetryContext(options) {
 var import_node_fs2 = require("node:fs");
 var import_node_path = require("node:path");
 function resolveActionVersion2() {
+  if (false) {
+    return void 0;
+  }
   try {
     const raw = (0, import_node_fs2.readFileSync)((0, import_node_path.join)(__dirname, "..", "package.json"), "utf8");
     return JSON.parse(raw).version ?? "unknown";
@@ -30914,8 +30917,8 @@ function resolveInputs(env = process.env, allowGatedMissing = false) {
   const get = (name, fallback = "") => getInput2(name, env) || fallback;
   const projectName = get("project-name");
   if (!projectName) throw new Error("project-name is required");
-  const postmanAccessToken = get("postman-access-token");
-  const postmanApiKey = get("postman-api-key");
+  const postmanAccessToken = get("postman-access-token") || env.POSTMAN_ACCESS_TOKEN?.trim() || "";
+  const postmanApiKey = get("postman-api-key") || env.POSTMAN_API_KEY?.trim() || "";
   const postmanTeamId = get("postman-team-id") || env.POSTMAN_TEAM_ID?.trim() || "";
   const workspaceId = get("workspace-id") || env.POSTMAN_WORKSPACE_ID?.trim() || "";
   if (!allowGatedMissing && !workspaceId) {

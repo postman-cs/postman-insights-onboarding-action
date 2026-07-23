@@ -249,8 +249,11 @@ export function resolveInputs(
   const projectName = get('project-name');
   if (!projectName) throw new Error('project-name is required');
 
-  const postmanAccessToken = get('postman-access-token');
-  const postmanApiKey = get('postman-api-key');
+  // Plain-env fallback (mirrors postman-team-id/workspace-id below) so Jenkins
+  // withCredentials -- which exports bare POSTMAN_ACCESS_TOKEN / POSTMAN_API_KEY,
+  // not INPUT_-prefixed vars -- works with no flags. INPUT_/flag wins.
+  const postmanAccessToken = get('postman-access-token') || env.POSTMAN_ACCESS_TOKEN?.trim() || '';
+  const postmanApiKey = get('postman-api-key') || env.POSTMAN_API_KEY?.trim() || '';
   // Read postman-team-id from action input, falling back to POSTMAN_TEAM_ID env.
   // Never infer team from PMAK /teams or /me.
   const postmanTeamId = get('postman-team-id') || env.POSTMAN_TEAM_ID?.trim() || '';

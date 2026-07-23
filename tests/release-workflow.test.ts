@@ -69,12 +69,12 @@ describe('release workflow publishing contract', () => {
     assertTokenOrder('name: Classify release tag', '- run: npm ci');
 
     const immutableGuard = "needs.classify-release.outputs.release_kind == 'immutable'";
-    for (const jobName of ['verify-package', 'publish', 'advance-major-alias'] as const) {
+    for (const jobName of ['verify-package', 'publish', 'advance-major-alias', 'sea-binary'] as const) {
       const job = requireJob(jobName);
       expect(job.if, `expected job ${jobName} to have an immutable if guard`).toBe(immutableGuard);
     }
-    // Supplemental: exactly three global copies of the immutable expression.
-    expect(releaseWorkflow.match(/needs\.classify-release\.outputs\.release_kind == 'immutable'/g) ?? []).toHaveLength(3);
+    // Supplemental: exactly four global copies of the immutable expression.
+    expect(releaseWorkflow.match(/needs\.classify-release\.outputs\.release_kind == 'immutable'/g) ?? []).toHaveLength(4);
   });
 
   it('keeps validation unprivileged and publishing artifact-only with trusted hash auth before tar/verifier', () => {
@@ -216,7 +216,10 @@ describe('release workflow publishing contract', () => {
   });
 
   it('advances the rolling major alias via the semantic script with scoped fetches only', () => {
-    const alias = releaseWorkflow.slice(releaseWorkflow.indexOf('  advance-major-alias:'));
+    const alias = releaseWorkflow.slice(
+      releaseWorkflow.indexOf('  advance-major-alias:'),
+      releaseWorkflow.indexOf('  sea-binary:'),
+    );
     expect(alias).toMatch(/^ {2}advance-major-alias:/m);
     expect(alias).toContain('Advance rolling major alias without regression');
     expect(alias).toContain('node scripts/advance-release-alias.mjs');
@@ -251,5 +254,36 @@ describe('release workflow publishing contract', () => {
     expect(publish).toContain('actions/setup-node@v7');
     expect(publish).not.toContain('cache:');
     expect(publish).not.toContain('actions/checkout');
+  });
+
+  it('builds, smoke-tests, and attaches the self-contained SEA binary on immutable releases', () => {
+    const seaJob = requireJob('sea-binary');
+    expect(seaJob.if).toBe("needs.classify-release.outputs.release_kind == 'immutable'");
+    expect(permissionMap(seaJob.permissions)).toEqual({ contents: 'write' });
+
+    const sea = releaseWorkflow.slice(releaseWorkflow.indexOf('  sea-binary:'));
+    // Runs after publish so the GitHub release already exists -> no upload race.
+    expect(sea).toContain('needs: [classify-release, publish]');
+    expect(sea).toContain('actions/checkout@v7');
+    expect(sea).toContain('bash scripts/build-sea.sh');
+    // Smoke the binary before uploading it.
+    expect(sea).toContain('postman-insights-onboard-${VERSION}-linux-x64');
+    expect(sea).toContain('env -i PATH=/nonexistent');
+    expect(sea).toContain('project-name is required');
+    expect(sea).toContain("NODE_OPTIONS='--this-flag-does-not-exist'");
+    // Attach via gh release upload (publish is artifact-only and cannot build).
+    expect(sea).toContain('gh release upload "$GITHUB_REF_NAME"');
+    expect(sea).toContain('--clobber');
+    expect(sea).toContain('build/sea/postman-insights-onboard-${VERSION}-linux-x64.sha256');
+    assertTokenOrder('bash scripts/build-sea.sh', 'gh release upload', sea);
+  });
+
+  it('keeps the SEA build script and config hermetic and checksum-verified', () => {
+    const seaConfig = readFileSync(join(process.cwd(), 'sea-config.json'), 'utf8');
+    expect(seaConfig).toContain('"execArgvExtension": "none"');
+    const seaBuild = readFileSync(join(process.cwd(), 'scripts/build-sea.sh'), 'utf8');
+    expect(seaBuild).toContain('shasum -a 256 -c');
+    expect(seaBuild).toContain('--define:__SEA_VERSION__=');
+    expect(seaBuild).toContain('postman-insights-onboard-${VERSION}-linux-x64');
   });
 });

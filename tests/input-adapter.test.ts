@@ -151,6 +151,34 @@ describe('shared Action/CLI input adapter', () => {
     ).not.toThrow();
   });
 
+  it('honors bare POSTMAN_ACCESS_TOKEN / POSTMAN_API_KEY as a credential fallback', () => {
+    // Jenkins withCredentials exports bare env vars (no INPUT_ prefix); the
+    // fallback lets the self-contained binary pick them up with no flags.
+    const inputs = resolveInputs({
+      INPUT_PROJECT_NAME: 'svc',
+      INPUT_WORKSPACE_ID: 'ws',
+      INPUT_ENVIRONMENT_ID: 'env',
+      POSTMAN_ACCESS_TOKEN: 'bare-token',
+      POSTMAN_API_KEY: 'bare-key'
+    });
+    expect(inputs.postmanAccessToken).toBe('bare-token');
+    expect(inputs.postmanApiKey).toBe('bare-key');
+  });
+
+  it('prefers INPUT_ credentials over the bare-env fallback', () => {
+    const inputs = resolveInputs({
+      INPUT_PROJECT_NAME: 'svc',
+      INPUT_WORKSPACE_ID: 'ws',
+      INPUT_ENVIRONMENT_ID: 'env',
+      INPUT_POSTMAN_ACCESS_TOKEN: 'input-token',
+      INPUT_POSTMAN_API_KEY: 'input-key',
+      POSTMAN_ACCESS_TOKEN: 'bare-token',
+      POSTMAN_API_KEY: 'bare-key'
+    });
+    expect(inputs.postmanAccessToken).toBe('input-token');
+    expect(inputs.postmanApiKey).toBe('input-key');
+  });
+
   it('fails resolveInputs when the two alias forms disagree', () => {
     expect(() =>
       resolveInputs({

@@ -97,7 +97,15 @@ export function normalizeCliFlag(name: string): string {
   return normalizedInputEnvName(name);
 }
 
+// Embedded at SEA build time via esbuild --define (scripts/build-sea.sh); the
+// standalone binary ships no package.json. The npm/Action bundles define this as
+// a constant undefined, so the guard below is inert there.
+declare const __SEA_VERSION__: string | undefined;
+
 function resolvePackageVersion(): string {
+  if (typeof __SEA_VERSION__ === 'string' && __SEA_VERSION__) {
+    return __SEA_VERSION__;
+  }
   const candidates: string[] = [];
   if (typeof __filename === 'string') {
     // Present in the esbuild CJS bundle (dist/cli.cjs -> ../package.json).
