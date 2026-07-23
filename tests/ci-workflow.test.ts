@@ -138,12 +138,12 @@ describe('CI workflow contract', () => {
     expect(windows.match(/npm ci --prefer-offline --no-audit --no-fund/g) ?? []).toHaveLength(1);
   });
 
-  it('runs unconditional direct unfiltered npm test on Windows with no queue or ownership gates', () => {
-    expect(windows.match(/^\s*- run: npm test\s*$/gm) ?? []).toHaveLength(1);
+  it('runs unconditional direct unfiltered node --run test on Windows with no queue or ownership gates', () => {
+    expect(windows.match(/^\s*- run: node --run test\s*$/gm) ?? []).toHaveLength(1);
 
     const cacheIdx = windows.indexOf('id: windows-node-modules');
     const missInstallIdx = windows.indexOf('npm ci --prefer-offline --no-audit --no-fund');
-    const testIdx = windows.indexOf('- run: npm test');
+    const testIdx = windows.indexOf('- run: node --run test');
     expect(cacheIdx).toBeGreaterThanOrEqual(0);
     expect(missInstallIdx).toBeGreaterThan(cacheIdx);
     expect(testIdx).toBeGreaterThan(missInstallIdx);
