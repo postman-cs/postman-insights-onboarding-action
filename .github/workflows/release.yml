@@ -129,7 +129,7 @@ jobs:
             release-manifest.json
 
   publish:
-    needs: [classify-release, verify-package]
+    needs: [classify-release, verify-package, build-sea]
     if: needs.classify-release.outputs.release_kind == 'immutable'
     runs-on: ubuntu-latest
     permissions:
@@ -210,6 +210,16 @@ jobs:
           );
           process.exit(publish.status === 0 ? 0 : (publish.status ?? 1));
           NODE
+      - name: Download prebuilt SEA binary
+        uses: actions/download-artifact@v8
+        with:
+          name: sea-binary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: sea
+      - name: Verify SEA binary checksum
+        # The binary was built and smoke-tested in build-sea before this
+        # irreversible publish; re-verify its checksum sidecar across the
+        # artifact boundary before attaching it as a release asset.
+        run: ( cd sea && shasum -a 256 -c ./*.sha256 )
       - name: Publish GitHub release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
@@ -217,6 +227,8 @@ jobs:
           files: |
             release/release.tgz
             release/release-manifest.json
+            sea/postman-insights-onboard-*-linux-x64
+            sea/postman-insights-onboard-*-linux-x64.sha256
 
   advance-major-alias:
     needs: [classify-release, publish]
@@ -233,3 +245,65 @@ jobs:
           node-version: '24'
       - name: Advance rolling major alias without regression
         run: node scripts/advance-release-alias.mjs
+
+  build-sea:
+    # Build AND smoke the self-contained SEA binary BEFORE the irreversible
+    # publish. `publish` needs this job, so a transient Node download / postject /
+    # smoke failure blocks the npm publish and GitHub release entirely -- nothing
+    # ships without a verified binary. The checked artifact is handed to `publish`,
+    # which downloads, re-verifies its checksum, and attaches it to the release.
+    # (This repo's publish job is deliberately artifact-only -- no checkout/npm --
+    # so the binary cannot be built there.)
+    needs: classify-release
+    if: needs.classify-release.outputs.release_kind == 'immutable'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+      - run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Build self-contained SEA binary
+        run: bash scripts/build-sea.sh
+      - name: Smoke test SEA binary with an empty environment
+        # A SEA embeds its runtime and never consults PATH for node, so an empty
+        # env with a bogus PATH proves self-containment (no base image to pull).
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          BIN="$PWD/build/sea/postman-insights-onboard-${VERSION}-linux-x64"
+          out="$(env -i PATH=/nonexistent "$BIN" 2>&1 || true)"
+          echo "$out"
+          # insights validates project-name first; either substring proves the
+          # binary reached its own input validation.
+          if ! echo "$out" | grep -qE "project-name is required|is required"; then
+            echo "::error::SEA binary did not reach input validation with an empty environment"
+            exit 1
+          fi
+          ver="$(env -i PATH=/nonexistent "$BIN" --version 2>/dev/null || true)"
+          echo "--version -> $ver"
+          if [ "$ver" != "$VERSION" ]; then
+            echo "::error::SEA --version reported '$ver', expected '$VERSION' (version not embedded)"
+            exit 1
+          fi
+          # Hermetic runtime: sea-config.json sets execArgvExtension=none, so the
+          # binary must ignore ambient NODE_OPTIONS. A bogus flag node would reject
+          # at startup must NOT reach the runtime -- --version still prints cleanly.
+          hardened="$(NODE_OPTIONS='--this-flag-does-not-exist' "$BIN" --version 2>/dev/null || true)"
+          echo "hardened --version -> $hardened"
+          if [ "$hardened" != "$VERSION" ]; then
+            echo "::error::SEA honored ambient NODE_OPTIONS; expected execArgvExtension=none to ignore it"
+            exit 1
+          fi
+      - name: Upload prebuilt SEA binary for the publish job
+        uses: actions/upload-artifact@v7
+        with:
+          name: sea-binary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build/sea/postman-insights-onboard-*-linux-x64
+            build/sea/postman-insights-onboard-*-linux-x64.sha256
+          if-no-files-found: error

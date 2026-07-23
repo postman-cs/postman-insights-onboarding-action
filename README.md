@@ -177,6 +177,20 @@ postman-insights-onboard \
 
 See [CLI Usage](docs/cli.md) for provider auto-detection, output formats, and GitLab/Bitbucket/Azure pipeline examples.
 
+### Self-contained binary (no npm / no Node)
+
+For locked-down CI (Jenkins, Bitbucket Pipelines on a bare agent) that cannot install npm or Node, the action also ships as a single self-contained executable — the Node runtime and bundle baked into one file, so the target needs no npm, no Node, and no package-registry access. It is built and smoke-tested natively in CI and attached as a GitHub Release asset (`postman-insights-onboard-<version>-linux-x64`, currently linux-x64 only).
+
+```bash
+VERSION=2.1.8   # set to the release that carries the binary
+curl -fsSL -o postman-insights-onboard \
+  "https://github.com/postman-cs/postman-insights-onboarding-action/releases/download/v${VERSION}/postman-insights-onboard-${VERSION}-linux-x64"
+chmod +x postman-insights-onboard
+./postman-insights-onboard --version
+```
+
+Credentials resolve from a flag, the `INPUT_*` env var, or a plain `POSTMAN_ACCESS_TOKEN` / `POSTMAN_API_KEY` env var (in that order), so Jenkins `withCredentials` works with no flags. Both are **human-user** credentials and both are required: the access token is a session token that **cannot be minted from a PMAK**, and the PMAK binds the observability application. "Self-contained" means the runtime is bundled, not that the run is network-isolated — it still needs outbound access to the Postman API, Bifrost, iapub, and observability hosts. See [Self-contained binary](docs/self-contained-binary.md) for the full runbook, network allowlist, and a Jenkins pipeline example.
+
 ## Inputs
 
 <!-- inputs-table:start -->
