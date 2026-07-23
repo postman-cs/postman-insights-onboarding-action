@@ -14,6 +14,7 @@ import {
   type CredentialIdentity
 } from '../src/lib/credential-identity.js';
 import { adviseFromHttpError } from '../src/lib/error-advice.js';
+import { validateApiKey } from '../src/index.js';
 
 const API_BASE = 'https://api.getpostman.com';
 const IAPUB_BASE = 'https://iapub.postman.co';
@@ -44,7 +45,7 @@ function sessionPayload(team: unknown = 13347347): Record<string, unknown> {
         role: 'member'
       }
     },
-    consumerType: 'service_account',
+    consumerType: 'user',
     token: 'session-token-must-never-copy'
   };
 }
@@ -67,7 +68,7 @@ function sessionIdentity(overrides: Partial<CredentialIdentity> = {}): Credentia
     teamId: '13347347',
     teamDomain: 'field-services-v12-demo',
     roles: ['collection-editor'],
-    consumerType: 'service_account',
+    consumerType: 'user',
     ...overrides
   };
 }
@@ -129,6 +130,26 @@ describe('credential identity', () => {
     );
   });
 
+  it('accepts only a human-user PMAK shape and never mints', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () =>
+      jsonResponse({ user: { username: 'human-user', email: 'human@example.test', teamId: 10490519 } })
+    );
+    vi.stubGlobal('fetch', fetchImpl);
+
+    await expect(validateApiKey('human-pmak')).resolves.toEqual({ valid: true, teamId: '10490519' });
+    expect(fetchImpl.mock.calls.map(([url]) => String(url))).not.toContain(`${API_BASE}/service-account-tokens`);
+    vi.unstubAllGlobals();
+  });
+
+  it('rejects service-account PMAK shape before writes without mint diagnosis text', async () => {
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () =>
+      jsonResponse({ user: { username: null, email: null, teamId: 10490519 } })
+    ));
+
+    await expect(validateApiKey('service-pmak')).rejects.toThrow('Insights requires a human-user PMAK');
+    vi.unstubAllGlobals();
+  });
+
   it('resolvePmakIdentity tolerates missing user.teamId (returns identity without teamId)', async () => {
     const identity = await resolvePmakIdentity({
       apiBaseUrl: API_BASE,
@@ -179,7 +200,7 @@ describe('credential identity', () => {
       teamId: '13347347',
       teamDomain: 'field-services-v12-demo',
       roles: ['collection-editor'],
-      consumerType: 'service_account'
+      consumerType: 'user'
     });
     const [url, init] = fetchImpl.mock.calls[0];
     expect(url).toBe(`${IAPUB_BASE}/api/sessions/current`);
@@ -197,7 +218,7 @@ describe('credential identity', () => {
     const fetchImpl = sessionFetch({
       session: {
         status: 'active',
-        consumerType: 'service_account',
+        consumerType: 'user',
         identity: { user: 55363555, team: 10490519, domain: 'jared-demo' },
         data: {
           user: {
@@ -224,7 +245,7 @@ describe('credential identity', () => {
       teamName: "Jared's Demo",
       teamDomain: 'jared-demo',
       roles: ['admin', 'user'],
-      consumerType: 'service_account'
+      consumerType: 'user'
     });
     expect(JSON.stringify(identity)).not.toContain('session-token-must-never-copy');
     expect(formatIdentityLine(identity!, passthroughMask)).toBe(
@@ -290,6 +311,27 @@ describe('credential identity', () => {
       })
     });
     expect(network).toBeUndefined();
+  });
+
+  it('fails closed for a service-account access token even in warn mode', async () => {
+    const capture = createLogCapture();
+    await expect(
+      runCredentialPreflight({
+        apiBaseUrl: API_BASE,
+        iapubBaseUrl: IAPUB_BASE,
+        postmanApiKey: 'user-pmak',
+        postmanAccessToken: 'service-token',
+        mode: 'warn',
+        mask: passthroughMask,
+        log: capture.log,
+        fetchImpl: vi.fn<typeof fetch>(async (input) => {
+          if (String(input).endsWith('/me')) {
+            return jsonResponse({ user: { username: 'person', teamId: 10490519 } });
+          }
+          return jsonResponse({ identity: { team: 10490519 }, data: { user: {} }, consumerType: 'service_account' });
+        })
+      })
+    ).rejects.toThrow('consumerType=user');
   });
 
   it('crossCheckIdentities passes when pmak.teamId === session.teamId (incl. org-mode parent==parent, no getTeams needed)', () => {
@@ -360,7 +402,7 @@ describe('credential identity', () => {
     expect(result.message).toContain('jared-demo');
     expect(result.message).toContain('13347347');
     expect(result.message).toContain('field-services-v12-demo');
-    expect(result.message).toContain('re-mint the access token');
+    expect(result.message).toContain('human-user session access token');
   });
 
   it('FAIL never fires when either teamId is undefined or empty', () => {
@@ -478,7 +520,7 @@ describe('credential identity', () => {
 
   });
 
-  it('warns when postman-access-token is a user/session token instead of a service-account token', async () => {
+  it('accepts a user session token for Insights writes', async () => {
     const capture = createLogCapture();
     const fetchImpl = vi.fn<typeof fetch>(async (input) => {
       const url = String(input);
@@ -503,13 +545,7 @@ describe('credential identity', () => {
       fetchImpl
     });
 
-    expect(
-      capture.warnings.some((entry) =>
-        entry.includes('deprecation warning') &&
-        entry.includes('consumerType user') &&
-        entry.includes('postman-cs/postman-resolve-service-token-action')
-      )
-    ).toBe(true);
+    expect(capture.warnings).toEqual([]);
   });
 
   it('runCredentialPreflight accepts a pre-resolved pmak identity (validateApiKey reuse) and skips the /me probe', async () => {
@@ -732,10 +768,10 @@ describe('event-based session retry', () => {
         fetchImpl,
         sleepImpl: async () => undefined
       })
-    ).rejects.toThrow(/enforce requires a resolvable session identity/);
+    ).rejects.toThrow(/human-user session access token/);
   });
 
-  it('runCredentialPreflight warn continues when the session stays unresolved (unavailable)', async () => {
+  it('runCredentialPreflight warn still fails when the user token session is unavailable', async () => {
     const capture = createLogCapture();
     const fetchImpl = vi.fn<typeof fetch>(async (input) => {
       const url = String(input);
@@ -757,9 +793,6 @@ describe('event-based session retry', () => {
         sleepImpl: async () => undefined,
         randomImpl: () => 0
       })
-    ).resolves.toBeUndefined();
-    expect(
-      capture.warnings.some((entry) => entry.includes('iapub was unreachable after retries'))
-    ).toBe(true);
+    ).rejects.toThrow(/Insights requires a human-user session access token/);
   });
 });

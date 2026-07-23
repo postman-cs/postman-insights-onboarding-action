@@ -25,9 +25,8 @@ export const WORKSPACE_PERSONAL_ONLY_ADVICE =
 function expiryAdvice(code: 'UNAUTHENTICATED' | 'authenticationError'): string {
   return (
     `postman: Bifrost rejected the access token (${code}). ` +
-    'Service-account access tokens expire after about 1 to 1.5 hours; this run likely outlived its token. ' +
-    'Re-mint a fresh token (postman-resolve-service-token-action, or POST https://api.getpostman.com/service-account-tokens) and re-run. ' +
-    'If it was just minted, confirm postman-access-token is the token for the same parent org as postman-api-key.'
+    'Provide a fresh human-user session access token; it cannot be minted from a PMAK. ' +
+    'Confirm postman-access-token belongs to the same parent org as postman-api-key and re-run.'
   );
 }
 

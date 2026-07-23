@@ -3,7 +3,6 @@ import { realpathSync, readFileSync } from 'node:fs';
 import { mkdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { AccessTokenProvider, mintAccessTokenIfNeeded } from './lib/postman/token-provider.js';
 import {
   createInsightsBifrostClient,
   createInsightsTokenProvider,
@@ -339,16 +338,6 @@ export async function runCli(
   }
   assertWritingInputs(inputs);
 
-  // PMAK-only runs: mint the access token up front (mirrors runAction) so
-  // dist/cli.cjs behaves exactly like dist/index.cjs.
-  const mintHolder = {
-    postmanAccessToken: inputs.postmanAccessToken,
-    postmanApiKey: inputs.postmanApiKey,
-    postmanApiBase: inputs.postmanApiBase
-  };
-  await mintAccessTokenIfNeeded(mintHolder, reporter, (secret) => reporter.setSecret(secret));
-  inputs.postmanAccessToken = mintHolder.postmanAccessToken;
-
   if (inputs.postmanAccessToken) reporter.setSecret(inputs.postmanAccessToken);
   if (inputs.postmanApiKey) {
     reporter.setSecret(inputs.postmanApiKey);
@@ -400,15 +389,7 @@ export async function runCli(
     telemetry.setTeamId(inputs.postmanTeamId || pmakIdentity?.teamId);
     reporter.setSecret(apiKey);
 
-    const activeTokenProvider =
-      apiKey !== inputs.postmanApiKey
-        ? new AccessTokenProvider({
-            accessToken: tokenProvider.current(),
-            apiKey,
-            apiBaseUrl: inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE,
-            onToken: (token) => reporter.setSecret(token)
-          })
-        : tokenProvider;
+    const activeTokenProvider = tokenProvider;
 
     if (pmakIdentity?.teamId !== preflightPmakIdentity?.teamId) {
       await runCredentialPreflightForInputs(

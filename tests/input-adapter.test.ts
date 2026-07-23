@@ -148,7 +148,7 @@ describe('shared Action/CLI input adapter', () => {
         POSTMAN_ACCESS_TOKEN: 'bare-token',
         POSTMAN_API_KEY: 'bare-key'
       })
-    ).toThrow(/postman-access-token is required/);
+    ).not.toThrow();
   });
 
   it('fails resolveInputs when the two alias forms disagree', () => {

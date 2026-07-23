@@ -440,9 +440,7 @@ export function crossCheckIdentities(args: CrossCheckIdentitiesArgs): CrossCheck
     const lead = level === 'fail' ? 'credential preflight FAILED' : 'credential preflight note';
     const fix =
       level === 'fail'
-        ? 'Use one credential pair from a single parent org: re-mint the access token from the same parent org as postman-api-key ' +
-          "(postman-resolve-service-token-action, or POST https://api.getpostman.com/service-account-tokens with that team's PMAK), " +
-          'or set postman-api-key to the matching parent org.'
+        ? 'Use a human-user PMAK and human-user session access token from the same parent org, or set postman-api-key to the matching parent org.'
         : 'Use one credential pair from a single parent org. Set credential-preflight: enforce to fail the run on this condition.';
     return {
       ok: false,
@@ -549,12 +547,12 @@ export async function runCredentialPreflight(args: RunCredentialPreflightArgs): 
   }
   if (session) {
     args.log.info(formatIdentityLine(session, mask));
-    const consumerType = session.consumerType?.trim();
-    if (consumerType && consumerType.toLowerCase() !== 'service_account') {
-      args.log.warning(
+    const consumerType = session.consumerType?.trim().toLowerCase();
+    if (consumerType !== 'user') {
+      throw new Error(
         emitSafe(
           mask,
-          `postman: deprecation warning - postman-access-token resolved to consumerType ${consumerType}. postman-cs/postman-resolve-service-token-action is the primary CI path for service-account access tokens. The Postman CLI credential store populated by \`postman login\` is a legacy fallback for migration only.`
+          'Insights requires a human-user session access token with consumerType=user; service-account and inconclusive tokens cannot be used for Insights writes.'
         )
       );
     }
@@ -568,26 +566,12 @@ export async function runCredentialPreflight(args: RunCredentialPreflightArgs): 
     const failure = getSessionResolutionFailure();
     const detail =
       failure === 'auth'
-        ? 'the access token was rejected by iapub (401/403), so it is invalid or expired. Re-mint it with postman-resolve-service-token-action (or POST https://api.getpostman.com/service-account-tokens) and re-run.'
+        ? 'the access token was rejected by iapub (401/403), so it is invalid or expired. Provide a fresh human-user session access token; it cannot be minted from a PMAK.'
         : 'iapub was unreachable after retries (network or 5xx). This is usually transient; re-run the job.';
     const base =
       'postman: credential preflight could not resolve the access-token session identity from iapub: ' +
       detail;
-    if (args.mode === 'enforce') {
-      throw new Error(
-        emitSafe(
-          mask,
-          `${base} (credential-preflight: enforce requires a resolvable session identity; use credential-preflight: warn to continue with reactive error guidance only.)`
-        )
-      );
-    }
-    args.log.warning(
-      emitSafe(
-        mask,
-        `${base} Continuing with reactive error guidance only (credential-preflight: warn).`
-      )
-    );
-    return;
+    throw new Error(emitSafe(mask, `${base} Insights requires a human-user session access token and cannot continue.`));
   }
 
   const result = crossCheckIdentities({

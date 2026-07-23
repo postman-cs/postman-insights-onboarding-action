@@ -1,7 +1,7 @@
 {
   "name": "@postman-cse/onboarding-insights",
   "version": "2.1.4",
-  "description": "GitHub Action to onboard Postman Insights discovered services to API Catalog workspaces.",
+  "description": "GitHub Action to link Postman Insights services with human-user PMAK and session credentials.",
   "type": "module",
   "main": "dist/index.cjs",
   "bin": {
@@ -9,7 +9,8 @@
   },
   "files": [
     "action.yml",
-    "dist"
+    "dist",
+    "scripts/verify-release-artifacts.mjs"
   ],
   "engines": {
     "node": ">=24"

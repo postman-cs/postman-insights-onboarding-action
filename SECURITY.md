@@ -15,7 +15,7 @@ You should receive an acknowledgement within five business days. Please include 
 
 ## Scope Notes
 
-- This action handles Postman API keys, service-account access tokens, and team verification tokens. These values are masked in logs by the action itself; never echo them in your own workflow steps.
-- Prefer service-account tokens minted by `postman-resolve-service-token-action`. User/session tokens can expire and trigger credential-preflight warnings.
+- This action handles a human-user PMAK, a human-user session access token, and team verification tokens. These values are masked in logs by the action itself; never echo them in your own workflow steps.
+- Insights requires a human-user PMAK and matching human-user session token. It never mints or refreshes tokens from a PMAK; rotate expired user sessions outside the action.
 - Reports about secrets you exposed in your own workflow configuration are out of scope; rotate the credential in Postman immediately.
 - Include only redacted workflow logs in reports.

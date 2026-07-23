@@ -29,16 +29,15 @@ function bifrostHttpError(status: number, responseBody: string): HttpError {
 }
 
 describe('error advice', () => {
-  it('UNAUTHENTICATED bare body -> "access token rejected ... re-mint via postman-resolve-service-token-action or POST /service-account-tokens"', () => {
+  it('UNAUTHENTICATED bare body requires a fresh human-user session token', () => {
     const httpErr = bifrostHttpError(401, '{"error":{"code":"UNAUTHENTICATED"}}');
     const advised = adviseFromHttpError(httpErr, createContext());
 
     expect(advised).toBeDefined();
     expect(advised?.message).toBe(
       'postman: Bifrost rejected the access token (UNAUTHENTICATED). ' +
-        'Service-account access tokens expire after about 1 to 1.5 hours; this run likely outlived its token. ' +
-        'Re-mint a fresh token (postman-resolve-service-token-action, or POST https://api.getpostman.com/service-account-tokens) and re-run. ' +
-        'If it was just minted, confirm postman-access-token is the token for the same parent org as postman-api-key.'
+        'Provide a fresh human-user session access token; it cannot be minted from a PMAK. ' +
+        'Confirm postman-access-token belongs to the same parent org as postman-api-key and re-run.'
     );
     expect(advised?.cause).toBe(httpErr);
 
@@ -59,9 +58,8 @@ describe('error advice', () => {
 
     expect(advised).toBeDefined();
     expect(advised?.message).toContain('postman: Bifrost rejected the access token (authenticationError).');
-    expect(advised?.message).toContain('expire after about 1 to 1.5 hours');
-    expect(advised?.message).toContain('postman-resolve-service-token-action');
-    expect(advised?.message).toContain('POST https://api.getpostman.com/service-account-tokens');
+    expect(advised?.message).toContain('human-user session access token');
+    expect(advised?.message).toContain('cannot be minted from a PMAK');
   });
 
   it('403 "You are not authorized to perform this action" with workspace-team-id context -> "...GET https://api.getpostman.com/teams lists valid sub-team ids..."', () => {

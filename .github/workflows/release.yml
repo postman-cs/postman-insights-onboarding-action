@@ -7,14 +7,56 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
 
 jobs:
-  release:
+  classify-release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
-      npm_publish: ${{ steps.release_tag.outputs.npm_publish }}
+      release_kind: ${{ steps.classify.outputs.release_kind }}
+      npm_publish: ${{ steps.classify.outputs.npm_publish }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Classify release tag
+        id: classify
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          IFS='.' read -r MAJOR MINOR PATCH _ <<< "$PKG_VERSION"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
+            echo "::error::Release workflow must run from an accepted immutable tag; got $GITHUB_REF; expected v$PKG_VERSION, v$MAJOR.$MINOR when patch is zero, or v$MAJOR"
+            exit 1
+          fi
+          if [ "$TAG_VERSION" = "$PKG_VERSION" ] || { [ "$PATCH" = 0 ] && [ "$TAG_VERSION" = "$MAJOR.$MINOR" ]; }; then
+            echo 'release_kind=immutable' >> "$GITHUB_OUTPUT"
+            echo 'npm_publish=true' >> "$GITHUB_OUTPUT"
+          elif [ "$TAG_VERSION" = "$MAJOR" ]; then
+            echo 'release_kind=alias' >> "$GITHUB_OUTPUT"
+            echo 'npm_publish=false' >> "$GITHUB_OUTPUT"
+            echo "::notice::Rolling alias $GITHUB_REF_NAME does not publish."
+          else
+            echo "::error::Release workflow must run from an accepted immutable tag; got $GITHUB_REF_NAME; expected v$PKG_VERSION, v$MAJOR.$MINOR when patch is zero, or v$MAJOR"
+            exit 1
+          fi
+
+  verify-package:
+    needs: classify-release
+    if: needs.classify-release.outputs.release_kind == 'immutable'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      release_tgz_sha256: ${{ steps.artifact-digests.outputs.release_tgz_sha256 }}
+      release_manifest_sha256: ${{ steps.artifact-digests.outputs.release_manifest_sha256 }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -22,106 +64,172 @@ jobs:
           node-version: '24'
           cache: npm
           registry-url: 'https://registry.npmjs.org'
-      - uses: actions/setup-go@v6
-        with:
-          go-version: '1.24'
       - run: npm ci
+      - name: Install actionlint
+        run: |
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) 1.7.11 "$RUNNER_TEMP"
+          echo "ACTIONLINT_BIN=$RUNNER_TEMP/actionlint" >> "$GITHUB_ENV"
+      - run: npm run bundle
+      - name: Run gates
+        run: |
+          set -uo pipefail
+          declare -A pid=() result=()
+          declare -a names=()
+          MAX_PARALLEL_GATES=2
+          finish_one() {
+            local finished_pid status n
+            if wait -n -p finished_pid "${pid[@]}"; then status=0; else status=$?; fi
+            for n in "${!pid[@]}"; do
+              if [ "${pid[$n]}" = "$finished_pid" ]; then result[$n]=$status; unset 'pid[$n]'; return; fi
+            done
+          }
+          run() {
+            while [ "${#pid[@]}" -ge "$MAX_PARALLEL_GATES" ]; do finish_one; done
+            local n=$1; shift; names+=("$n")
+            ( "$@" ) >"$n.log" 2>&1 & pid[$n]=$!
+          }
+          run lint npm run lint
+          run typecheck npm run typecheck
+          run test npm test
+          run dist npm run verify:dist:assert
+          run actionlint "$ACTIONLINT_BIN"
+          while [ "${#pid[@]}" -gt 0 ]; do finish_one; done
+          fail=0
+          for n in "${names[@]}"; do
+            if [ "${result[$n]}" -eq 0 ]; then echo "gate:$n=pass"; else echo "gate:$n=fail"; fail=1; fi
+          done
+          for n in "${names[@]}"; do echo "::group::$n"; cat "$n.log"; echo '::endgroup::'; done
+          exit $fail
+      - name: Package release artifact
+        run: |
+          npm pack --pack-destination .
+          mv ./*.tgz release.tgz
+          node -e "const fs=require('fs'),crypto=require('crypto');const sha256=p=>crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');const pkg=require('./package.json');fs.writeFileSync('release-manifest.json',JSON.stringify({schema_version:1,repository:process.env.GITHUB_REPOSITORY,commit_sha:process.env.GITHUB_SHA,tag:process.env.GITHUB_REF_NAME,package_name:pkg.name,package_version:pkg.version,artifacts:[{path:'release.tgz',sha256:sha256('release.tgz')}]},null,2))"
+      - name: Record trusted artifact digests
+        id: artifact-digests
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          const digest = (path) => crypto.createHash('sha256').update(fs.readFileSync(path)).digest('hex');
+          const tgz = digest('release.tgz');
+          const manifest = digest('release-manifest.json');
+          if (!/^[a-f0-9]{64}$/.test(tgz) || !/^[a-f0-9]{64}$/.test(manifest)) {
+            console.error('::error::failed to compute trusted artifact digests');
+            process.exit(1);
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `release_tgz_sha256=${tgz}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `release_manifest_sha256=${manifest}\n`);
+          NODE
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            release.tgz
+            release-manifest.json
+
+  publish:
+    needs: [classify-release, verify-package]
+    if: needs.classify-release.outputs.release_kind == 'immutable'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Authenticate transferred release bytes
+        env:
+          EXPECTED_RELEASE_TGZ_SHA256: ${{ needs.verify-package.outputs.release_tgz_sha256 }}
+          EXPECTED_RELEASE_MANIFEST_SHA256: ${{ needs.verify-package.outputs.release_manifest_sha256 }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          const hex = (path) => crypto.createHash('sha256').update(fs.readFileSync(path)).digest('hex');
+          const expectedTgz = process.env.EXPECTED_RELEASE_TGZ_SHA256;
+          const expectedManifest = process.env.EXPECTED_RELEASE_MANIFEST_SHA256;
+          if (!/^[a-f0-9]{64}$/.test(expectedTgz ?? '') || !/^[a-f0-9]{64}$/.test(expectedManifest ?? '')) {
+            console.error('::error::trusted artifact hashes are missing or malformed');
+            process.exit(1);
+          }
+          if (hex('release/release.tgz') !== expectedTgz) {
+            console.error('::error::release.tgz hash does not match trusted verify-package output');
+            process.exit(1);
+          }
+          if (hex('release/release-manifest.json') !== expectedManifest) {
+            console.error('::error::release-manifest.json hash does not match trusted verify-package output');
+            process.exit(1);
+          }
+          NODE
+      - name: Verify staged release artifacts
+        run: |
+          PACKAGE_NAME=$(tar -xOf release/release.tgz package/package.json | node -p "let data='';process.stdin.on('data', chunk => data += chunk).on('end', () => console.log(JSON.parse(data).name))")
+          PACKAGE_VERSION=$(tar -xOf release/release.tgz package/package.json | node -p "let data='';process.stdin.on('data', chunk => data += chunk).on('end', () => console.log(JSON.parse(data).version))")
+          tar -xOf release/release.tgz package/scripts/verify-release-artifacts.mjs > /tmp/verify-release-artifacts.mjs
+          node /tmp/verify-release-artifacts.mjs release "$PACKAGE_NAME" "$PACKAGE_VERSION"
+      - name: Publish or verify npm package identity
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - run: npm test
-      - run: npm run typecheck
-      - run: npm run verify:dist
-      - name: Install actionlint
-        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
-      - name: Run actionlint
         run: |
-          ACTIONLINT_BIN="$(go env GOPATH)/bin/actionlint"
-          "$ACTIONLINT_BIN"
-      - name: Verify release tag matches package version
-        id: release_tag
-        run: |
-          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
-            echo "::error::Release workflow must run from a v* tag; got $GITHUB_REF"
-            exit 1
-          fi
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          PKG_VERSION=$(node -p "require('./package.json').version")
-          IFS='.' read -r MAJOR MINOR PATCH _ <<< "$PKG_VERSION"
-          PUBLISH_TAGS=("$PKG_VERSION")
-          if [ "${PATCH:-}" = "0" ] && [ -n "${MINOR:-}" ]; then
-            PUBLISH_TAGS+=("$MAJOR.$MINOR")
-          fi
-          for PUBLISH_TAG in "${PUBLISH_TAGS[@]}"; do
-            if [ "$TAG_VERSION" = "$PUBLISH_TAG" ]; then
-              echo "npm_publish=true" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          done
-          if [ "$TAG_VERSION" = "$MAJOR" ]; then
-            echo "npm_publish=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Tag v$TAG_VERSION is the rolling v1 alias for package version $PKG_VERSION; skipping npm publish."
-            exit 0
-          fi
-          if [ "${#PUBLISH_TAGS[@]}" -eq 2 ]; then
-            EXPECTED="v${PUBLISH_TAGS[0]}, v${PUBLISH_TAGS[1]}, or v$MAJOR"
-          else
-            EXPECTED="v${PUBLISH_TAGS[0]} or v$MAJOR"
-          fi
-          echo "::error::Tag v$TAG_VERSION does not match package.json version $PKG_VERSION; expected $EXPECTED"
-          exit 1
+          PKG_NAME=$(tar -xOf release/release.tgz package/package.json | node -p "let data='';process.stdin.on('data', chunk => data += chunk).on('end', () => console.log(JSON.parse(data).name))")
+          PKG_VERSION=$(tar -xOf release/release.tgz package/package.json | node -p "let data='';process.stdin.on('data', chunk => data += chunk).on('end', () => console.log(JSON.parse(data).version))")
+          set +e
+          npm view "$PKG_NAME@$PKG_VERSION" dist.integrity >/tmp/npm-integrity 2>/tmp/npm-view.err
+          export NPM_VIEW_STATUS=$?
+          set -e
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { spawnSync } from 'node:child_process';
+          import { pathToFileURL } from 'node:url';
+
+          const status = Number(process.env.NPM_VIEW_STATUS);
+          const errText = fs.readFileSync('/tmp/npm-view.err', 'utf8');
+          const m = await import(pathToFileURL('/tmp/verify-release-artifacts.mjs').href);
+          if (status === 0) {
+            const published = fs.readFileSync('/tmp/npm-integrity', 'utf8').trim();
+            m.verifySha512Sri('release/release.tgz', published);
+            console.log('::notice::npm version already published with matching integrity');
+            process.exit(0);
+          }
+          if (!m.isExplicitNpmE404(errText)) {
+            console.error('::error::npm view failed with a non-E404 error; refusing to publish or mutate GitHub');
+            console.error(errText.trim() || `npm view exit ${status}`);
+            process.exit(1);
+          }
+          const publish = spawnSync(
+            'npm',
+            ['publish', './release/release.tgz', '--provenance', '--access', 'public'],
+            { stdio: 'inherit', env: process.env }
+          );
+          process.exit(publish.status === 0 ? 0 : (publish.status ?? 1));
+          NODE
       - name: Publish GitHub release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           generate_release_notes: true
-      - uses: actions/setup-node@v7
-        if: steps.release_tag.outputs.npm_publish == 'true'
-        with:
-          node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
-      - name: Check npm package version
-        id: npm_package
-        if: steps.release_tag.outputs.npm_publish == 'true'
-        run: |
-          PKG_NAME=$(node -p "require('./package.json').name")
-          PKG_VERSION=$(node -p "require('./package.json').version")
-          if npm view "$PKG_NAME@$PKG_VERSION" version >/dev/null 2>&1; then
-            echo "already_published=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::$PKG_NAME@$PKG_VERSION is already published; skipping npm publish."
-          else
-            echo "already_published=false" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Publish to npm
-        if: steps.release_tag.outputs.npm_publish == 'true' && steps.npm_package.outputs.already_published != 'true'
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Attach npm tarball to release
-        run: |
-          npm pack
-          mv ./*.tgz release.tgz
-      - name: Upload tarball
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
-        with:
-          files: release.tgz
+          files: |
+            release/release.tgz
+            release/release-manifest.json
 
   advance-major-alias:
-    # Keep the rolling major alias pointed at the newest published release.
-    # GITHUB_TOKEN tag pushes do not start another run, so this cannot recurse.
-    needs: release
-    if: ${{ needs.release.outputs.npm_publish == 'true' }}
+    needs: [classify-release, publish]
+    if: needs.classify-release.outputs.release_kind == 'immutable'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
-      - name: Force-move rolling major alias tag
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          MAJOR="v${VERSION%%.*}"
-          if [ "$MAJOR" = "v$VERSION" ]; then
-            echo "::notice::Tag $GITHUB_REF_NAME is already a major alias; nothing to move."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          COMMIT="$(git rev-parse "HEAD^{commit}")"
-          git tag -fa "$MAJOR" -m "Rolling $MAJOR alias -> $GITHUB_REF_NAME" "$COMMIT"
-          git push origin "$MAJOR" --force
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Advance rolling major alias without regression
+        run: node scripts/advance-release-alias.mjs

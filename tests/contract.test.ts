@@ -8,7 +8,7 @@ import {
   contractInputNames,
   contractOutputNames
 } from '../src/contracts.js';
-import { resolveInputs, createPlannedOutputs } from '../src/index.js';
+import { assertWritingInputs, resolveInputs, createPlannedOutputs } from '../src/index.js';
 import { parsePostmanRegion, parsePostmanStack } from '../src/lib/postman/base-urls.js';
 
 const repoRoot = resolve(import.meta.dirname, '..');
@@ -146,23 +146,21 @@ describe('action contract', () => {
 
   it('throws when required inputs are missing', () => {
     expect(() => resolveInputs({})).toThrow('project-name is required');
+    expect(() => assertWritingInputs(resolveInputs({
+      INPUT_PROJECT_NAME: 'svc', INPUT_WORKSPACE_ID: 'ws-123', INPUT_ENVIRONMENT_ID: 'env-456'
+    }))).toThrow('human-user PMAK and a human-user session access token');
+    // Insights requires both explicit human-user credentials and never mints a session token.
     expect(() =>
-      resolveInputs({ INPUT_PROJECT_NAME: 'svc' })
-    ).toThrow(
-      'postman-access-token is required (or provide a service-account postman-api-key so the action can mint one).'
-    );
-    // A PMAK alone satisfies the credential guard: the action mints the token.
-    expect(() =>
-      resolveInputs({
+      assertWritingInputs(resolveInputs({
         INPUT_PROJECT_NAME: 'svc',
         INPUT_WORKSPACE_ID: 'ws-123',
         INPUT_ENVIRONMENT_ID: 'env-456',
         INPUT_POSTMAN_API_KEY: 'PMAK-svc',
-      })
-    ).not.toThrow();
+      }))
+    ).toThrow('human-user PMAK and a human-user session access token');
   });
 
-  it('does not throw when postman-api-key is omitted', () => {
+  it('retains an omitted postman-api-key for the write guard to reject before writes', () => {
     const inputs = resolveInputs({
       INPUT_PROJECT_NAME: 'svc',
       INPUT_WORKSPACE_ID: 'ws-123',
@@ -328,18 +326,18 @@ describe('action contract', () => {
 });
 
 describe('marketplace readiness docs', () => {
-  it('keeps prerequisites, action boundaries, service-token auth, and region visible before examples', () => {
+  it('keeps prerequisites, action boundaries, human-user credentials, and region visible before examples', () => {
     const firstExampleIndex = readme.indexOf('## Examples');
     const firstExampleIntro = readme.slice(0, firstExampleIndex);
-    const serviceTokenIndex = readme.indexOf('postman-resolve-service-token-action@v2');
+    const humanCredentialIndex = readme.indexOf('human-user PMAK');
     const insightsIndex = readme.indexOf('postman-insights-onboarding-action@v2');
     const regionIndex = readme.indexOf('postman-region: us');
 
     expect(firstExampleIntro).toContain('does **not** deploy the Insights agent');
     expect(firstExampleIntro).toContain('action-picker table');
-    expect(serviceTokenIndex).toBeGreaterThan(-1);
+    expect(humanCredentialIndex).toBeGreaterThan(-1);
     expect(insightsIndex).toBeGreaterThan(-1);
-    expect(serviceTokenIndex).toBeLessThan(insightsIndex);
+    expect(humanCredentialIndex).toBeLessThan(insightsIndex);
     expect(regionIndex).toBeGreaterThan(-1);
     expect(regionIndex).toBeLessThan(firstExampleIndex);
     expect(readme).toContain(
@@ -347,10 +345,10 @@ describe('marketplace readiness docs', () => {
     );
   });
 
-  it('documents service-token credentials without preview wording or a public off mode', () => {
-    expect(credentialsDoc).toContain('postman-resolve-service-token-action');
-    expect(credentialsDoc).toContain('Legacy fallback');
-    expect(credentialsDoc).toContain('non-service-account');
+  it('documents human-user credentials without preview wording or a public off mode', () => {
+    expect(credentialsDoc).toContain('human-user PMAK');
+    expect(credentialsDoc).toContain('consumerType=user');
+    expect(credentialsDoc).toContain('does not mint or refresh');
     expect(credentialsDoc).not.toContain('Customer Preview');
     expect(credentialsDoc).not.toContain('off: skips');
     expect(readme).not.toContain('credential-preflight: off');

@@ -185,7 +185,7 @@ describe('omitted team header / no PMAK team inference', () => {
   it('does not infer team id from PMAK /teams or /me', async () => {
     globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
       if (String(url).endsWith('/me')) {
-        return { ok: true, json: async () => ({ user: { teamId: 99999 } }) };
+        return { ok: true, json: async () => ({ user: { teamId: 99999, username: 'ada' } }) };
       }
       if (String(url).endsWith('/teams')) {
         return {
@@ -254,7 +254,7 @@ describe('no ordinary timestamp API-key orphan creation', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ user: { teamId: 14103640 } })
+        json: async () => ({ user: { teamId: 14103640, username: 'ada' } })
       }) as unknown as typeof fetch;
 
     const client = {
@@ -294,7 +294,7 @@ describe('no ordinary timestamp API-key orphan creation', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ user: { teamId: 14103640 } })
+        json: async () => ({ user: { teamId: 14103640, username: 'ada' } })
       }) as unknown as typeof fetch;
 
     const client = {
