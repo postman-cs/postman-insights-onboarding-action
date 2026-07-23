@@ -111,7 +111,7 @@ describe('release workflow publishing contract', () => {
     expect(uploadPaths).toEqual(['release.tgz', 'release-manifest.json']);
     expect(uploadPaths).toHaveLength(2);
 
-    expect(publish).toContain('actions/download-artifact@v7');
+    expect(publish).toContain('actions/download-artifact@v8');
     expect(publish).toContain('EXPECTED_RELEASE_TGZ_SHA256');
     expect(publish).toContain('EXPECTED_RELEASE_MANIFEST_SHA256');
     expect(publish).toContain('Authenticate transferred release bytes');
