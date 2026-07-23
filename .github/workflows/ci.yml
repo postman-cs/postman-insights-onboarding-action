@@ -34,7 +34,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Install actionlint
         run: |
-          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) 1.7.11 "$RUNNER_TEMP"
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/393031adb9afb225ee52ae2ccd7a5af5525e03e8/scripts/download-actionlint.bash) 1.7.11 "$RUNNER_TEMP"
           echo "ACTIONLINT_BIN=$RUNNER_TEMP/actionlint" >> "$GITHUB_ENV"
       # Bundle once before fan-out. Typecheck runs exactly once in the queue.
       - run: npm run bundle
@@ -94,59 +94,14 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
-          cache: npm
           registry-url: 'https://registry.npmjs.org'
-      - run: npm ci
+      - uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        id: windows-node-modules
+        with:
+          path: node_modules
+          key: Windows/node-24/${{ hashFiles('package-lock.json') }}
+      - if: steps.windows-node-modules.outputs.cache-hit != 'true'
+        run: npm ci --prefer-offline --no-audit --no-fund
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - run: npm run bundle
-      - name: Run gates
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Continue'
-          $MAX_PARALLEL_GATES = 2
-          $gates = @(
-            @{ Name = 'lint' },
-            @{ Name = 'test' },
-            @{ Name = 'typecheck' },
-            @{ Name = 'dist' }
-          )
-          $running = @()
-          $results = @{}
-          foreach ($gate in $gates) {
-            while ($running.Count -ge $MAX_PARALLEL_GATES) {
-              $completed = Wait-Job -Job $running -Any
-              Receive-Job $completed | Write-Output
-              $results[$completed.Name] = if ($completed.State -eq 'Completed') { 0 } else { 1 }
-              Remove-Job $completed
-              $running = @($running | Where-Object Id -ne $completed.Id)
-            }
-            $running += Start-Job -Name $gate.Name -ScriptBlock {
-              param($name)
-              switch ($name) {
-                'lint' { npm run lint }
-                'test' { npm test }
-                'typecheck' { npm run typecheck }
-                'dist' { npm run verify:dist:assert }
-                default { throw "unknown gate: $name" }
-              }
-              if ($LASTEXITCODE -ne 0) { throw "gate $name failed: $LASTEXITCODE" }
-            } -ArgumentList $gate.Name
-          }
-          foreach ($job in $running) {
-            Wait-Job $job | Out-Null
-            Receive-Job $job | Write-Output
-            $results[$job.Name] = if ($job.State -eq 'Completed') { 0 } else { 1 }
-            Remove-Job $job
-          }
-          $failed = $false
-          foreach ($gate in $gates) {
-            if ($results[$gate.Name] -eq 0) { Write-Output "gate:$($gate.Name)=pass" } else { Write-Output "gate:$($gate.Name)=fail"; $failed = $true }
-          }
-          if ($failed) { exit 1 }
-      - name: Upload expected dist on mismatch
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: expected-dist
-          path: dist/
+      - run: npm test
