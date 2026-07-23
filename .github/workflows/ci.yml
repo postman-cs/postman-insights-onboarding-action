@@ -104,4 +104,4 @@ jobs:
         run: npm ci --prefer-offline --no-audit --no-fund
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - run: npm test
+      - run: node --run test
