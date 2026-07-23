@@ -1,4 +1,5 @@
 import { execFile, spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import {
   access,
   constants,
@@ -19,8 +20,6 @@ import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const execFileAsync = promisify(execFile);
-const npmCommand = process.platform === 'win32' ? process.execPath : 'npm';
-const npmCliArgs = process.platform === 'win32' ? [process.env.npm_execpath || ''] : [];
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tempDirs: string[] = [];
 
@@ -52,6 +51,29 @@ function resolvePackStrategy(platform: NodeJS.Platform = process.platform): Pack
 }
 
 type PlannedCommand = Readonly<{ file: string; args: readonly string[] }>;
+
+function resolveNpmInvocation(
+  platform: NodeJS.Platform = process.platform,
+  execPath = process.execPath,
+  npmExecPath = process.env.npm_execpath,
+  isFile = existsSync
+): PlannedCommand {
+  if (platform !== 'win32') return { file: 'npm', args: [] };
+
+  const suppliedNpmCli = npmExecPath?.trim();
+  const fallbackNpmCli = path.win32.join(
+    path.win32.dirname(execPath),
+    'node_modules',
+    'npm',
+    'bin',
+    'npm-cli.js'
+  );
+  const npmCli = suppliedNpmCli && isFile(suppliedNpmCli) ? suppliedNpmCli : fallbackNpmCli;
+  if (!isFile(npmCli)) {
+    throw new Error(`Unable to resolve npm CLI from npm_execpath or Node-adjacent fallback: ${npmCli}`);
+  }
+  return { file: execPath, args: [npmCli] };
+}
 
 type PackedPackageMeta = {
   name: string;
@@ -185,9 +207,10 @@ function resolveBinEntry(
 }
 
 async function npmPackJson(packDir: string): Promise<{ filename: string; name: string; files: Array<{ path: string }> }> {
+  const npm = resolveNpmInvocation();
   const packResult = await execFileAsync(
-    npmCommand,
-    [...npmCliArgs, 'pack', '--json', '--pack-destination', packDir],
+    npm.file,
+    [...npm.args, 'pack', '--json', '--pack-destination', packDir],
     {
       cwd: repoRoot,
       encoding: 'utf8',
@@ -245,6 +268,7 @@ function planWin32NativeShim(args: {
   tarballPath: string;
   meta: PackedPackageMeta;
 }): Win32NativeShimPlan {
+  const npm = resolveNpmInvocation();
   assertSafePackageName(args.meta.name);
   assertSafeBinName(args.meta.binName);
   assertSafeBinTarget(args.meta.binTarget);
@@ -266,7 +290,7 @@ function planWin32NativeShim(args: {
   assertNoCmdMetacharacters(cliPath, 'cliPath');
 
   const plannedCommands: PlannedCommand[] = [
-    { file: npmCommand, args: [...npmCliArgs, 'pack', '--json', '--pack-destination', path.dirname(args.tarballPath)] },
+    { file: npm.file, args: [...npm.args, 'pack', '--json', '--pack-destination', path.dirname(args.tarballPath)] },
     { file: 'tar', args: ['-xzf', args.tarballPath, '-C', args.extractRoot] },
     planNativeCmdInvocation(cmdShimPath, ['--help']),
     planNativeCmdInvocation(cmdShimPath, ['--version'])
@@ -335,7 +359,8 @@ async function runPosixInstallPackaging(): Promise<void> {
 
   const tarballPath = path.join(packDir, packed.filename);
   await mkdir(prefixDir, { recursive: true });
-  await execFileAsync(npmCommand, [...npmCliArgs, 'install', '--prefix', prefixDir, '--ignore-scripts', tarballPath], {
+  const npm = resolveNpmInvocation();
+  await execFileAsync(npm.file, [...npm.args, 'install', '--prefix', prefixDir, '--ignore-scripts', tarballPath], {
     encoding: 'utf8',
     env: {
       NPM_CONFIG_CACHE: path.join(packDir, '.npm-cache'),
@@ -513,6 +538,27 @@ describe('CLI packaging contract', () => {
     expect(resolvePackStrategy('darwin')).toBe('posix-install');
     expect(resolvePackStrategy('win32')).toBe('win32-native-shim');
     expect(resolvePackStrategy()).toBe(process.platform === 'win32' ? 'win32-native-shim' : 'posix-install');
+  });
+
+  it('resolves a supplied Windows npm CLI without an empty script argument', () => {
+    expect(resolveNpmInvocation('win32', 'C:\\node\\node.exe', 'C:\\npm\\npm-cli.js', () => true)).toEqual({
+      file: 'C:\\node\\node.exe',
+      args: ['C:\\npm\\npm-cli.js']
+    });
+  });
+
+  it('falls back to the Node-adjacent npm CLI when Windows npm_execpath is missing', () => {
+    expect(resolveNpmInvocation('win32', 'C:\\node\\node.exe', '', () => true)).toEqual({
+      file: 'C:\\node\\node.exe',
+      args: ['C:\\node\\node_modules\\npm\\bin\\npm-cli.js']
+    });
+  });
+
+  it('uses the npm executable directly off Windows', () => {
+    expect(resolveNpmInvocation('linux', '/opt/node/bin/node', undefined)).toEqual({
+      file: 'npm',
+      args: []
+    });
   });
 
   it(
