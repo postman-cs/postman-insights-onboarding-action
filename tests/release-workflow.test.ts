@@ -117,6 +117,8 @@ describe('release workflow publishing contract', () => {
     expect(publish).toContain('Authenticate transferred release bytes');
     expect(publish).toContain('actions/setup-node@v7');
     expect(publish).toContain('npm view');
+    expect(publish.match(/\| node -e "let data=/g) ?? []).toHaveLength(4);
+    expect(publish).not.toContain('| node -p "let data=');
     expect(publish).toContain("['publish', './release/release.tgz', '--provenance', '--access', 'public']");
     expect(publish).toContain('node <<\'NODE\'');
     expect(publish).toContain('node --input-type=module <<\'NODE\'');
