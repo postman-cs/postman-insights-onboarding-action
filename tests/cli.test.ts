@@ -257,13 +257,13 @@ describe('runCli result-json opt-in', () => {
       const url = String(input);
       if (url.endsWith('/me')) {
         return new Response(
-          JSON.stringify({ user: { id: 1, teamId: meTeamId, teamName: 'jared-demo' } }),
+          JSON.stringify({ user: { id: 1, username: 'ada', teamId: meTeamId, teamName: 'jared-demo' } }),
           { status: 200 }
         );
       }
       if (url.includes('/api/sessions/current')) {
         return new Response(
-          JSON.stringify({ identity: { team: sessionTeamId, domain: 'other-org' } }),
+          JSON.stringify({ identity: { team: sessionTeamId, domain: 'other-org' }, consumerType: 'user' }),
           { status: 200 }
         );
       }
@@ -477,13 +477,13 @@ describe('runCli credential preflight', () => {
       const url = String(input);
       if (url.endsWith('/me')) {
         return new Response(
-          JSON.stringify({ user: { id: 1, teamId: meTeamId, teamName: 'jared-demo' } }),
+          JSON.stringify({ user: { id: 1, username: 'ada', teamId: meTeamId, teamName: 'jared-demo' } }),
           { status: 200 }
         );
       }
       if (url.includes('/api/sessions/current')) {
         return new Response(
-          JSON.stringify({ identity: { team: sessionTeamId, domain: 'other-org' } }),
+          JSON.stringify({ identity: { team: sessionTeamId, domain: 'other-org' }, consumerType: 'user' }),
           { status: 200 }
         );
       }

@@ -128,8 +128,7 @@ export class BifrostCatalogClient {
     this.tokenProvider =
       options.tokenProvider ??
       new AccessTokenProvider({
-        accessToken: options.accessToken,
-        apiKey: options.apiKey
+        accessToken: options.accessToken
       });
     this.teamId = options.teamId;
     this.apiKey = options.apiKey;

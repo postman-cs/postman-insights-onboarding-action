@@ -235,12 +235,12 @@ async function collectDiagnosticLines(mask: SecretMasker): Promise<string[]> {
   const happyFetch = (async (input: RequestInfo | URL) =>
     String(input).endsWith('/me')
       ? preflightJson({
-          user: { id: 1, fullName: 'Ada Lovelace', teamId: 10490519, teamName: 'jared-demo' }
+          user: { id: 1, username: 'ada', fullName: 'Ada Lovelace', teamId: 10490519, teamName: 'jared-demo' }
         })
       : preflightJson({
           identity: { team: 13347347, domain: 'field-services-v12-demo' },
           data: { user: { id: 2, roles: ['collection-editor'] } },
-          consumerType: 'service_account'
+          consumerType: 'user'
         })) as typeof fetch;
   const failingFetch = (async () => preflightJson({ error: 'denied' }, 404)) as typeof fetch;
 
@@ -256,16 +256,20 @@ async function collectDiagnosticLines(mask: SecretMasker): Promise<string[]> {
     fetchImpl: happyFetch
   });
   __resetIdentityMemo();
-  await runCredentialPreflight({
-    apiBaseUrl: API_BASE,
-    iapubBaseUrl: IAPUB_BASE,
-    postmanApiKey: 'pmak-style-2',
-    postmanAccessToken: 'token-style-2',
-    mode: 'warn',
-    mask,
-    log,
-    fetchImpl: failingFetch
-  });
+  try {
+    await runCredentialPreflight({
+      apiBaseUrl: API_BASE,
+      iapubBaseUrl: IAPUB_BASE,
+      postmanApiKey: 'pmak-style-2',
+      postmanAccessToken: 'token-style-2',
+      mode: 'warn',
+      mask,
+      log,
+      fetchImpl: failingFetch
+    });
+  } catch (error) {
+    lines.push(error instanceof Error ? error.message : String(error));
+  }
   __resetIdentityMemo();
   await runCredentialPreflight({
     apiBaseUrl: API_BASE,
@@ -398,13 +402,13 @@ describe('CLI ConsoleReporter masking path (AC7)', () => {
         const url = String(input);
         if (url.endsWith('/me')) {
           return preflightJson({
-            user: { id: 1, teamId: 10490519, teamName: 'jared-demo' }
+            user: { id: 1, username: 'ada', teamId: 10490519, teamName: 'jared-demo' }
           });
         }
         return preflightJson({
           identity: { team: 10490519, domain: 'jared-demo' },
           data: { user: { id: 2, roles: ['admin'], token: FAKE_TOKEN } },
-          consumerType: 'service_account',
+          consumerType: 'user',
           token: FAKE_TOKEN
         });
       }) as typeof fetch;

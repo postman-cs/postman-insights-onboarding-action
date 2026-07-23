@@ -288,7 +288,7 @@ describe('resolveApiKeyAndTeamId', () => {
   it('validates existing API key and derives team ID', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ user: { teamId: 99999 } }),
+      json: async () => ({ user: { teamId: 99999, username: 'ada' } }),
     }) as unknown as typeof fetch;
 
     const client = makeClient();
@@ -321,7 +321,7 @@ describe('resolveApiKeyAndTeamId', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ user: { teamId: 13347347 } }),
+        json: async () => ({ user: { teamId: 13347347, username: 'ada' } }),
       }) as unknown as typeof fetch;
 
     const client = makeClient();
@@ -348,7 +348,7 @@ describe('resolveApiKeyAndTeamId', () => {
   it('does not require a derived team ID when none is provided', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ user: {} }),
+      json: async () => ({ user: { username: 'ada' } }),
     }) as unknown as typeof fetch;
 
     const client = makeClient();
@@ -362,7 +362,7 @@ describe('resolveApiKeyAndTeamId', () => {
   it('uses explicit postman-team-id when provided', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ user: { teamId: 11111 } }),
+      json: async () => ({ user: { teamId: 11111, username: 'ada' } }),
     }) as unknown as typeof fetch;
 
     const client = makeClient();
@@ -452,7 +452,7 @@ describe('validateApiKey', () => {
   it('returns valid=true with teamId for a good key', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ user: { teamId: 12345 } }),
+       json: async () => ({ user: { teamId: 12345, username: 'ada' } }),
     }) as unknown as typeof fetch;
 
     const result = await validateApiKey('PMAK-good');
@@ -463,7 +463,7 @@ describe('validateApiKey', () => {
   it('defaults to prod /me when no base URL is provided', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ user: { teamId: 12345 } }),
+       json: async () => ({ user: { teamId: 12345, username: 'ada' } }),
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
@@ -474,7 +474,7 @@ describe('validateApiKey', () => {
   it('routes /me through a custom api base URL when provided', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ user: { teamId: 12345 } }),
+       json: async () => ({ user: { teamId: 12345, username: 'ada' } }),
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
@@ -550,74 +550,6 @@ describe('validateApiKey', () => {
   });
 });
 
-describe('getTeams', () => {
-  let originalFetch: typeof globalThis.fetch;
-
-  beforeEach(() => {
-    originalFetch = globalThis.fetch;
-  });
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
-  it('returns parsed teams from API', async () => {
-    const { getTeams } = await import('../src/index.js');
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        data: [
-          { id: 1, name: 'Team Alpha', organizationId: 100 },
-          { id: 2, name: 'Team Beta', organizationId: 100 }
-        ]
-      }),
-    }) as unknown as typeof fetch;
-
-    const result = await getTeams('PMAK-test');
-    expect(result).toEqual([
-      { id: 1, name: 'Team Alpha', organizationId: 100 },
-      { id: 2, name: 'Team Beta', organizationId: 100 },
-    ]);
-  });
-
-  it('returns empty array on API error', async () => {
-    const { getTeams } = await import('../src/index.js');
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 500,
-    }) as unknown as typeof fetch;
-
-    const result = await getTeams('PMAK-test');
-    expect(result).toEqual([]);
-  });
-
-  it('returns empty array on network error', async () => {
-    const { getTeams } = await import('../src/index.js');
-    globalThis.fetch = vi.fn().mockRejectedValue(new Error('network')) as unknown as typeof fetch;
-
-    const result = await getTeams('PMAK-test');
-    expect(result).toEqual([]);
-  });
-
-  it('filters out teams without id or name', async () => {
-    const { getTeams } = await import('../src/index.js');
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        data: [
-          { id: 1, name: 'Valid Team' },
-          { id: null, name: 'Missing ID' },
-          { id: 2, name: '' },
-          { id: undefined, name: 'Undefined ID' },
-        ]
-      }),
-    }) as unknown as typeof fetch;
-
-    const result = await getTeams('PMAK-test');
-    expect(result).toEqual([{ id: 1, name: 'Valid Team' }]);
-  });
-});
-
 describe('resolveInputs env var fallbacks', () => {
   it('uses POSTMAN_WORKSPACE_ID env var when input is empty', () => {
     const env = {
@@ -678,7 +610,7 @@ describe('resolveApiKeyAndTeamId never infers team from PMAK', () => {
   it('leaves team id empty even when /teams returns org-mode sub-teams', async () => {
     globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
       if (String(url).endsWith('/me')) {
-        return { ok: true, json: async () => ({ user: { teamId: 10 } }) };
+        return { ok: true, json: async () => ({ user: { teamId: 10, username: 'ada' } }) };
       }
       if (String(url).endsWith('/teams')) {
         return {
@@ -707,7 +639,7 @@ describe('resolveApiKeyAndTeamId never infers team from PMAK', () => {
   it('does not auto-pick a single org-mode sub-team from PMAK', async () => {
     globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
       if (String(url).endsWith('/me')) {
-        return { ok: true, json: async () => ({ user: { teamId: 10 } }) };
+        return { ok: true, json: async () => ({ user: { teamId: 10, username: 'ada' } }) };
       }
       if (String(url).endsWith('/teams')) {
         return {
@@ -766,7 +698,7 @@ describe('credential preflight seam', () => {
       json: async () => ({
         identity: { team, domain: 'session-domain' },
         data: { user: { id: 2, roles: ['admin'] } },
-        consumerType: 'service_account',
+        consumerType: 'user',
       }),
     };
   }
@@ -774,7 +706,7 @@ describe('credential preflight seam', () => {
   it('resolveApiKeyAndTeamId surfaces the validated /me identity for preflight reuse', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ user: { teamId: 13347347 } }),
+      json: async () => ({ user: { teamId: 13347347, username: 'ada' } }),
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
@@ -789,7 +721,7 @@ describe('credential preflight seam', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ user: { teamId: 13347347 } })
+        json: async () => ({ user: { teamId: 13347347, username: 'ada' } })
       }) as unknown as typeof fetch;
     const resolved = await resolveApiKeyAndTeamId(
       makeInputs({ postmanTeamId: '55555', createApiKey: true }),

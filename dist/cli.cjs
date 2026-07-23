@@ -26416,455 +26416,6 @@ var import_node_fs3 = require("node:fs");
 var import_promises = require("node:fs/promises");
 var import_node_path2 = __toESM(require("node:path"), 1);
 
-// src/lib/secrets.ts
-var REDACTED = "[REDACTED]";
-var SENSITIVE_HEADER_NAMES = /* @__PURE__ */ new Set([
-  "authorization",
-  "cookie",
-  "proxy-authorization",
-  "set-cookie",
-  "x-access-token",
-  "x-api-key"
-]);
-function toOneLine(value) {
-  const source = String(value ?? "");
-  const parts = [];
-  let pendingSpace = false;
-  for (let index = 0; index < source.length; index += 1) {
-    const code = source.charCodeAt(index);
-    if (code <= 31 || code === 127 || code === 32) {
-      pendingSpace = parts.length > 0;
-      continue;
-    }
-    if (pendingSpace) {
-      parts.push(" ");
-      pendingSpace = false;
-    }
-    parts.push(source.charAt(index));
-  }
-  return parts.join("");
-}
-function isIterable(value) {
-  return value !== null && value !== void 0 && typeof value !== "string" && typeof value[Symbol.iterator] === "function";
-}
-function appendSecretValues(value, results) {
-  if (value === null || value === void 0) {
-    return;
-  }
-  if (typeof value === "string") {
-    const normalized = value.trim();
-    if (normalized) {
-      results.push(normalized);
-    }
-    return;
-  }
-  if (typeof value === "number" || typeof value === "boolean") {
-    results.push(String(value));
-    return;
-  }
-  if (Array.isArray(value) || isIterable(value)) {
-    for (const entry of value) {
-      appendSecretValues(entry, results);
-    }
-  }
-}
-function normalizeSecretValues(secretValues) {
-  const values = [];
-  appendSecretValues(secretValues, values);
-  return [...new Set(values)].sort((left, right) => right.length - left.length);
-}
-function redactSecrets(input, secretValues, replacement = REDACTED) {
-  const source = String(input ?? "");
-  const secrets = normalizeSecretValues(secretValues);
-  if (!source || secrets.length === 0) {
-    return source;
-  }
-  return secrets.reduce((sanitized, secret) => {
-    if (!secret) {
-      return sanitized;
-    }
-    return sanitized.split(secret).join(replacement);
-  }, source);
-}
-function createSecretMasker(secretValues, replacement = REDACTED) {
-  return (input) => redactSecrets(input, secretValues, replacement);
-}
-function headerEntries(headers) {
-  if (headers instanceof Headers) {
-    return Array.from(headers.entries());
-  }
-  if (Array.isArray(headers)) {
-    return headers.map(([name, value]) => [name, String(value)]);
-  }
-  return Object.entries(headers).map(([name, value]) => [name, String(value)]);
-}
-function sanitizeHeaders(headers, secretValues) {
-  if (!headers) {
-    return {};
-  }
-  const sanitized = {};
-  for (const [name, value] of headerEntries(headers)) {
-    const normalizedName = name.toLowerCase();
-    sanitized[normalizedName] = SENSITIVE_HEADER_NAMES.has(normalizedName) ? REDACTED : redactSecrets(value, secretValues);
-  }
-  return sanitized;
-}
-
-// src/lib/http-error.ts
-function truncate(value, limit) {
-  if (value.length <= limit) {
-    return value;
-  }
-  return `${value.slice(0, limit)}...[truncated]`;
-}
-function buildMessage(init) {
-  const method = String(init.method || "GET").toUpperCase();
-  const status = `${init.status}${init.statusText ? ` ${init.statusText}` : ""}`;
-  const url = toOneLine(redactSecrets(init.url, init.secretValues));
-  const body = toOneLine(
-    truncate(
-      redactSecrets(init.responseBody || "", init.secretValues),
-      Math.max(0, init.bodyLimit ?? 800)
-    )
-  );
-  return body ? `${method} ${url} failed: ${status} - ${body}` : `${method} ${url} failed: ${status}`;
-}
-var HttpError = class _HttpError extends Error {
-  method;
-  requestHeaders;
-  responseBody;
-  secretValues;
-  status;
-  statusText;
-  url;
-  constructor(init) {
-    super(buildMessage(init));
-    this.name = "HttpError";
-    this.method = String(init.method || "GET").toUpperCase();
-    this.requestHeaders = init.requestHeaders;
-    this.responseBody = init.responseBody || "";
-    this.secretValues = init.secretValues;
-    this.status = init.status;
-    this.statusText = init.statusText;
-    this.url = init.url;
-  }
-  static async fromResponse(response, init) {
-    const responseBody = init.responseBody ?? await response.text().catch(() => "");
-    return new _HttpError({
-      ...init,
-      responseBody,
-      status: response.status,
-      statusText: response.statusText
-    });
-  }
-  toJSON() {
-    return {
-      method: this.method,
-      name: this.name,
-      requestHeaders: sanitizeHeaders(this.requestHeaders, this.secretValues),
-      responseBody: redactSecrets(this.responseBody, this.secretValues),
-      status: this.status,
-      statusText: this.statusText,
-      url: redactSecrets(this.url, this.secretValues)
-    };
-  }
-};
-
-// src/lib/retry.ts
-function sleep(delayMs) {
-  return new Promise((resolve2) => {
-    setTimeout(resolve2, delayMs);
-  });
-}
-function normalizeRetryOptions(options) {
-  return {
-    maxAttempts: Math.max(1, options.maxAttempts ?? 3),
-    delayMs: Math.max(0, options.delayMs ?? 2e3),
-    backoffMultiplier: Math.max(1, options.backoffMultiplier ?? 1),
-    maxDelayMs: options.maxDelayMs === void 0 ? Number.POSITIVE_INFINITY : Math.max(0, options.maxDelayMs),
-    onRetry: options.onRetry ?? (async () => void 0),
-    shouldRetry: options.shouldRetry ?? (() => true),
-    sleep: options.sleep ?? sleep
-  };
-}
-async function retry(operation, options = {}) {
-  const normalized = normalizeRetryOptions(options);
-  let nextDelayMs = normalized.delayMs;
-  for (let attempt = 1; attempt <= normalized.maxAttempts; attempt += 1) {
-    try {
-      return await operation();
-    } catch (error2) {
-      const shouldRetry = attempt < normalized.maxAttempts && normalized.shouldRetry(error2, {
-        attempt,
-        maxAttempts: normalized.maxAttempts
-      });
-      if (!shouldRetry) {
-        throw error2;
-      }
-      await normalized.onRetry({
-        attempt,
-        maxAttempts: normalized.maxAttempts,
-        delayMs: nextDelayMs,
-        error: error2
-      });
-      await normalized.sleep(nextDelayMs);
-      nextDelayMs = Math.min(
-        normalized.maxDelayMs,
-        Math.round(nextDelayMs * normalized.backoffMultiplier)
-      );
-    }
-  }
-  throw new Error("Retry exhausted without returning or throwing");
-}
-function isTransientHttpStatus(status) {
-  return status === 408 || status === 429 || status >= 500;
-}
-function extractStatus(error2) {
-  if (error2 instanceof HttpError) {
-    return error2.status;
-  }
-  if (error2 && typeof error2 === "object" && "status" in error2) {
-    const status = error2.status;
-    return typeof status === "number" ? status : void 0;
-  }
-  if (error2 && typeof error2 === "object" && "cause" in error2) {
-    return extractStatus(error2.cause);
-  }
-  return void 0;
-}
-function shouldRetryReadError(error2) {
-  const status = extractStatus(error2);
-  if (status === void 0) {
-    return true;
-  }
-  return isTransientHttpStatus(status);
-}
-function isAmbiguousMutationFailure(error2) {
-  const status = extractStatus(error2);
-  if (status === void 0) {
-    return true;
-  }
-  return isTransientHttpStatus(status);
-}
-var SAFE_READ_RETRY = {
-  maxAttempts: 3,
-  delayMs: 2e3,
-  backoffMultiplier: 2,
-  shouldRetry: (error2) => shouldRetryReadError(error2)
-};
-
-// src/lib/postman/base-urls.ts
-var POSTMAN_ENDPOINT_PROFILES = {
-  prod: {
-    apiBaseUrl: "https://api.getpostman.com",
-    bifrostBaseUrl: "https://bifrost-premium-https-v4.gw.postman.com",
-    iapubBaseUrl: "https://iapub.postman.co",
-    observabilityBaseUrl: "https://api.observability.postman.com",
-    observabilityEnv: "production"
-  },
-  beta: {
-    apiBaseUrl: "https://api.getpostman-beta.com",
-    bifrostBaseUrl: "https://bifrost-https-v4.gw.postman-beta.com",
-    iapubBaseUrl: "https://iapub.postman.co",
-    observabilityBaseUrl: "https://api.observability.postman-beta.com",
-    observabilityEnv: "beta"
-  }
-};
-function parsePostmanRegion(value) {
-  const normalized = String(value || "us").trim().toLowerCase();
-  if (normalized === "us" || normalized === "eu") {
-    return normalized;
-  }
-  throw new Error(
-    `Unsupported postman-region "${toOneLine(value)}". Supported values: us, eu`
-  );
-}
-function parsePostmanStack(value) {
-  const normalized = String(value || "prod").trim().toLowerCase();
-  if (normalized === "prod" || normalized === "beta") {
-    return normalized;
-  }
-  throw new Error(
-    `Unsupported postman-stack "${toOneLine(value)}". Supported values: prod, beta`
-  );
-}
-function resolvePostmanEndpointProfile(stack, region = "us") {
-  if (stack === "beta" && region !== "us") {
-    throw new Error("postman-region=eu is only supported with postman-stack=prod");
-  }
-  const profile = POSTMAN_ENDPOINT_PROFILES[stack];
-  if (region === "eu") {
-    return {
-      ...profile,
-      apiBaseUrl: "https://api.eu.postman.com"
-    };
-  }
-  return profile;
-}
-
-// src/lib/postman/token-provider.ts
-var MintError = class extends Error {
-  permanent;
-  constructor(message, permanent) {
-    super(message);
-    this.name = "MintError";
-    this.permanent = permanent;
-  }
-};
-function extractAccessToken(payload) {
-  if (!payload || typeof payload !== "object") return void 0;
-  const record = payload;
-  const direct = record.access_token;
-  if (typeof direct === "string" && direct.trim()) return direct.trim();
-  const session = record.session;
-  if (session && typeof session === "object") {
-    const token = session.token;
-    if (typeof token === "string" && token.trim()) return token.trim();
-  }
-  return void 0;
-}
-var AccessTokenProvider = class {
-  token;
-  apiKey;
-  apiBaseUrl;
-  fetchImpl;
-  maxAttempts;
-  onToken;
-  sleep;
-  inflight;
-  constructor(options) {
-    this.token = String(options.accessToken || "").trim();
-    this.apiKey = String(options.apiKey || "").trim();
-    this.apiBaseUrl = String(
-      options.apiBaseUrl || POSTMAN_ENDPOINT_PROFILES.prod.apiBaseUrl
-    ).replace(/\/+$/, "");
-    this.fetchImpl = options.fetchImpl ?? fetch;
-    this.maxAttempts = Math.max(1, options.maxAttempts ?? 2);
-    this.onToken = options.onToken;
-    this.sleep = options.sleep;
-  }
-  current() {
-    return this.token;
-  }
-  /** True when a PMAK is present, so an expired token can be re-minted. */
-  canRefresh() {
-    return Boolean(this.apiKey);
-  }
-  refresh() {
-    this.inflight ??= this.mintWithRetry().finally(() => {
-      this.inflight = void 0;
-    });
-    return this.inflight;
-  }
-  async mintWithRetry() {
-    if (!this.apiKey) {
-      throw new Error(
-        "postman: the access token expired and cannot be refreshed because no postman-api-key is present. Service-account access tokens expire after about 1 to 1.5 hours. Re-mint a fresh token (postman-resolve-service-token-action) and re-run."
-      );
-    }
-    const token = await retry(() => this.mintOnce(), {
-      maxAttempts: this.maxAttempts,
-      delayMs: 1e3,
-      backoffMultiplier: 2,
-      ...this.sleep ? { sleep: this.sleep } : {},
-      shouldRetry: (error2) => !(error2 instanceof MintError && error2.permanent)
-    });
-    this.token = token;
-    this.onToken?.(token);
-    return token;
-  }
-  async mintOnce() {
-    const response = await this.fetchImpl(`${this.apiBaseUrl}/service-account-tokens`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": this.apiKey
-      },
-      body: JSON.stringify({ apiKey: this.apiKey })
-    });
-    const body = await response.text().catch(() => "");
-    if (!response.ok) {
-      const status = response.status;
-      if (status === 401 || status === 403) {
-        throw new MintError(
-          `postman: re-mint failed because the postman-api-key was rejected (PMAK rejected, HTTP ${status}); confirm it is a valid, enabled service-account PMAK for the intended team.`,
-          true
-        );
-      }
-      if (status === 400 && body.toLowerCase().includes("service accounts not enabled")) {
-        throw new MintError(
-          "postman: re-mint failed because service accounts are not enabled for this team; enable them in Team Settings or use a team where they are.",
-          true
-        );
-      }
-      throw new MintError(`postman: re-mint failed (service-account-tokens HTTP ${status}).`, false);
-    }
-    let parsed;
-    try {
-      parsed = JSON.parse(body);
-    } catch {
-      parsed = void 0;
-    }
-    const token = extractAccessToken(parsed);
-    if (!token) {
-      throw new MintError("postman: re-mint succeeded but no access token was returned.", false);
-    }
-    return token;
-  }
-};
-async function describeMintFailure(mintError, apiKey, apiBaseUrl, fetchImpl) {
-  const raw = mintError instanceof Error ? mintError.message : String(mintError);
-  const rejected = /HTTP 40[13]|PMAK rejected/.test(raw);
-  if (!rejected) {
-    return raw;
-  }
-  try {
-    const me = await fetchImpl(`${apiBaseUrl}/me`, { headers: { "x-api-key": apiKey } });
-    if (me.ok) {
-      const body = await me.json().catch(() => void 0);
-      const user = body?.user;
-      const looksPersonal = Boolean(user && (user.username || user.email));
-      if (looksPersonal) {
-        return "Personal API key detected, cannot mint a service-account access token. POST /service-account-tokens only accepts a SERVICE-ACCOUNT API key; this postman-api-key belongs to a user account" + (user?.teamId ? ` (team ${user.teamId})` : "") + ". Create a service account in Team Settings and use its PMAK, or mint the token elsewhere and pass postman-access-token.";
-      }
-      return "The postman-api-key authenticates (GET /me OK) but was rejected by POST /service-account-tokens" + (user?.teamId ? ` (team ${user.teamId})` : "") + ". The service account likely lacks permission to mint access tokens, or service accounts are restricted for this team. Check the service account role in Team Settings, or pass a pre-minted postman-access-token.";
-    }
-    return "The postman-api-key is invalid, disabled, or expired (rejected by both POST /service-account-tokens and GET /me). Generate a fresh service-account PMAK in Team Settings and update the secret.";
-  } catch {
-    return raw;
-  }
-}
-async function mintAccessTokenIfNeeded(inputs, log, setSecret2, fetchImpl = fetch) {
-  if (inputs.postmanAccessToken || !inputs.postmanApiKey) {
-    return;
-  }
-  const apiBaseUrl = String(
-    inputs.postmanApiBase || POSTMAN_ENDPOINT_PROFILES.prod.apiBaseUrl
-  ).replace(/\/+$/, "");
-  const provider = new AccessTokenProvider({
-    apiKey: inputs.postmanApiKey,
-    apiBaseUrl,
-    fetchImpl,
-    onToken: (token) => setSecret2?.(token)
-  });
-  try {
-    inputs.postmanAccessToken = await provider.refresh();
-    log.info(
-      "postman: no postman-access-token configured - minted a short-lived service-account access token from the postman-api-key."
-    );
-  } catch (error2) {
-    const diagnosis = await describeMintFailure(error2, inputs.postmanApiKey, apiBaseUrl, fetchImpl);
-    const mask = createSecretMasker([inputs.postmanApiKey, inputs.postmanAccessToken]);
-    log.warning(
-      toOneLine(
-        mask(
-          "postman: could not mint an access token from the postman-api-key. " + diagnosis + " Continuing without an access token - access-token-only functionality will be unavailable unless postman-access-token is provided."
-        )
-      )
-    );
-  }
-}
-
 // node_modules/@actions/core/lib/core.js
 var core_exports = {};
 __export(core_exports, {
@@ -29138,6 +28689,100 @@ function getIDToken(aud) {
   });
 }
 
+// src/lib/secrets.ts
+var REDACTED = "[REDACTED]";
+var SENSITIVE_HEADER_NAMES = /* @__PURE__ */ new Set([
+  "authorization",
+  "cookie",
+  "proxy-authorization",
+  "set-cookie",
+  "x-access-token",
+  "x-api-key"
+]);
+function toOneLine(value) {
+  const source = String(value ?? "");
+  const parts = [];
+  let pendingSpace = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const code = source.charCodeAt(index);
+    if (code <= 31 || code === 127 || code === 32) {
+      pendingSpace = parts.length > 0;
+      continue;
+    }
+    if (pendingSpace) {
+      parts.push(" ");
+      pendingSpace = false;
+    }
+    parts.push(source.charAt(index));
+  }
+  return parts.join("");
+}
+function isIterable(value) {
+  return value !== null && value !== void 0 && typeof value !== "string" && typeof value[Symbol.iterator] === "function";
+}
+function appendSecretValues(value, results) {
+  if (value === null || value === void 0) {
+    return;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    if (normalized) {
+      results.push(normalized);
+    }
+    return;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    results.push(String(value));
+    return;
+  }
+  if (Array.isArray(value) || isIterable(value)) {
+    for (const entry of value) {
+      appendSecretValues(entry, results);
+    }
+  }
+}
+function normalizeSecretValues(secretValues) {
+  const values = [];
+  appendSecretValues(secretValues, values);
+  return [...new Set(values)].sort((left, right) => right.length - left.length);
+}
+function redactSecrets(input, secretValues, replacement = REDACTED) {
+  const source = String(input ?? "");
+  const secrets = normalizeSecretValues(secretValues);
+  if (!source || secrets.length === 0) {
+    return source;
+  }
+  return secrets.reduce((sanitized, secret) => {
+    if (!secret) {
+      return sanitized;
+    }
+    return sanitized.split(secret).join(replacement);
+  }, source);
+}
+function createSecretMasker(secretValues, replacement = REDACTED) {
+  return (input) => redactSecrets(input, secretValues, replacement);
+}
+function headerEntries(headers) {
+  if (headers instanceof Headers) {
+    return Array.from(headers.entries());
+  }
+  if (Array.isArray(headers)) {
+    return headers.map(([name, value]) => [name, String(value)]);
+  }
+  return Object.entries(headers).map(([name, value]) => [name, String(value)]);
+}
+function sanitizeHeaders(headers, secretValues) {
+  if (!headers) {
+    return {};
+  }
+  const sanitized = {};
+  for (const [name, value] of headerEntries(headers)) {
+    const normalizedName = name.toLowerCase();
+    sanitized[normalizedName] = SENSITIVE_HEADER_NAMES.has(normalizedName) ? REDACTED : redactSecrets(value, secretValues);
+  }
+  return sanitized;
+}
+
 // src/lib/credential-identity.ts
 function emitSafe(mask, message) {
   return toOneLine(mask(message));
@@ -29374,7 +29019,7 @@ function crossCheckIdentities(args) {
   if (pmakTeamId && sessionTeamId && pmakTeamId !== sessionTeamId) {
     const level = args.mode === "enforce" ? "fail" : "note";
     const lead = level === "fail" ? "credential preflight FAILED" : "credential preflight note";
-    const fix = level === "fail" ? "Use one credential pair from a single parent org: re-mint the access token from the same parent org as postman-api-key (postman-resolve-service-token-action, or POST https://api.getpostman.com/service-account-tokens with that team's PMAK), or set postman-api-key to the matching parent org." : "Use one credential pair from a single parent org. Set credential-preflight: enforce to fail the run on this condition.";
+    const fix = level === "fail" ? "Use a human-user PMAK and human-user session access token from the same parent org, or set postman-api-key to the matching parent org." : "Use one credential pair from a single parent org. Set credential-preflight: enforce to fail the run on this condition.";
     return {
       ok: false,
       level,
@@ -29465,34 +29110,20 @@ async function runCredentialPreflight(args) {
   }
   if (session) {
     args.log.info(formatIdentityLine(session, mask));
-    const consumerType = session.consumerType?.trim();
-    if (consumerType && consumerType.toLowerCase() !== "service_account") {
-      args.log.warning(
+    const consumerType = session.consumerType?.trim().toLowerCase();
+    if (consumerType !== "user") {
+      throw new Error(
         emitSafe(
           mask,
-          `postman: deprecation warning - postman-access-token resolved to consumerType ${consumerType}. postman-cs/postman-resolve-service-token-action is the primary CI path for service-account access tokens. The Postman CLI credential store populated by \`postman login\` is a legacy fallback for migration only.`
+          "Insights requires a human-user session access token with consumerType=user; service-account and inconclusive tokens cannot be used for Insights writes."
         )
       );
     }
   } else {
     const failure = getSessionResolutionFailure();
-    const detail = failure === "auth" ? "the access token was rejected by iapub (401/403), so it is invalid or expired. Re-mint it with postman-resolve-service-token-action (or POST https://api.getpostman.com/service-account-tokens) and re-run." : "iapub was unreachable after retries (network or 5xx). This is usually transient; re-run the job.";
+    const detail = failure === "auth" ? "the access token was rejected by iapub (401/403), so it is invalid or expired. Provide a fresh human-user session access token; it cannot be minted from a PMAK." : "iapub was unreachable after retries (network or 5xx). This is usually transient; re-run the job.";
     const base = "postman: credential preflight could not resolve the access-token session identity from iapub: " + detail;
-    if (args.mode === "enforce") {
-      throw new Error(
-        emitSafe(
-          mask,
-          `${base} (credential-preflight: enforce requires a resolvable session identity; use credential-preflight: warn to continue with reactive error guidance only.)`
-        )
-      );
-    }
-    args.log.warning(
-      emitSafe(
-        mask,
-        `${base} Continuing with reactive error guidance only (credential-preflight: warn).`
-      )
-    );
-    return;
+    throw new Error(emitSafe(mask, `${base} Insights requires a human-user session access token and cannot continue.`));
   }
   const result = crossCheckIdentities({
     pmak,
@@ -29521,7 +29152,7 @@ function safeAdvice(mask, message) {
 }
 var WORKSPACE_PERSONAL_ONLY_ADVICE = "Workspace creation failed: This may be an Org-mode account that requires a workspace-team-id input. The Postman API does not allow creating team workspaces at the organization level. Use the workspace-team-id input to specify which sub-team should own this workspace.";
 function expiryAdvice(code) {
-  return `postman: Bifrost rejected the access token (${code}). Service-account access tokens expire after about 1 to 1.5 hours; this run likely outlived its token. Re-mint a fresh token (postman-resolve-service-token-action, or POST https://api.getpostman.com/service-account-tokens) and re-run. If it was just minted, confirm postman-access-token is the token for the same parent org as postman-api-key.`;
+  return `postman: Bifrost rejected the access token (${code}). Provide a fresh human-user session access token; it cannot be minted from a PMAK. Confirm postman-access-token belongs to the same parent org as postman-api-key and re-run.`;
 }
 function forbiddenAdvice(ctx) {
   const sessionDetail = ctx.sessionTeamId ? ` while the access token is valid (it resolved to team ${ctx.sessionTeamId}${ctx.sessionRoles && ctx.sessionRoles.length > 0 ? `, roles [${ctx.sessionRoles.join(", ")}]` : ""}${ctx.sessionConsumerType ? `, consumerType ${ctx.sessionConsumerType}` : ""} at preflight)` : "";
@@ -29571,6 +29202,217 @@ function adviseFromBifrostBody(status, body, ctx) {
   });
 }
 
+// src/lib/http-error.ts
+function truncate(value, limit) {
+  if (value.length <= limit) {
+    return value;
+  }
+  return `${value.slice(0, limit)}...[truncated]`;
+}
+function buildMessage(init) {
+  const method = String(init.method || "GET").toUpperCase();
+  const status = `${init.status}${init.statusText ? ` ${init.statusText}` : ""}`;
+  const url = toOneLine(redactSecrets(init.url, init.secretValues));
+  const body = toOneLine(
+    truncate(
+      redactSecrets(init.responseBody || "", init.secretValues),
+      Math.max(0, init.bodyLimit ?? 800)
+    )
+  );
+  return body ? `${method} ${url} failed: ${status} - ${body}` : `${method} ${url} failed: ${status}`;
+}
+var HttpError = class _HttpError extends Error {
+  method;
+  requestHeaders;
+  responseBody;
+  secretValues;
+  status;
+  statusText;
+  url;
+  constructor(init) {
+    super(buildMessage(init));
+    this.name = "HttpError";
+    this.method = String(init.method || "GET").toUpperCase();
+    this.requestHeaders = init.requestHeaders;
+    this.responseBody = init.responseBody || "";
+    this.secretValues = init.secretValues;
+    this.status = init.status;
+    this.statusText = init.statusText;
+    this.url = init.url;
+  }
+  static async fromResponse(response, init) {
+    const responseBody = init.responseBody ?? await response.text().catch(() => "");
+    return new _HttpError({
+      ...init,
+      responseBody,
+      status: response.status,
+      statusText: response.statusText
+    });
+  }
+  toJSON() {
+    return {
+      method: this.method,
+      name: this.name,
+      requestHeaders: sanitizeHeaders(this.requestHeaders, this.secretValues),
+      responseBody: redactSecrets(this.responseBody, this.secretValues),
+      status: this.status,
+      statusText: this.statusText,
+      url: redactSecrets(this.url, this.secretValues)
+    };
+  }
+};
+
+// src/lib/retry.ts
+function sleep(delayMs) {
+  return new Promise((resolve2) => {
+    setTimeout(resolve2, delayMs);
+  });
+}
+function normalizeRetryOptions(options) {
+  return {
+    maxAttempts: Math.max(1, options.maxAttempts ?? 3),
+    delayMs: Math.max(0, options.delayMs ?? 2e3),
+    backoffMultiplier: Math.max(1, options.backoffMultiplier ?? 1),
+    maxDelayMs: options.maxDelayMs === void 0 ? Number.POSITIVE_INFINITY : Math.max(0, options.maxDelayMs),
+    onRetry: options.onRetry ?? (async () => void 0),
+    shouldRetry: options.shouldRetry ?? (() => true),
+    sleep: options.sleep ?? sleep
+  };
+}
+async function retry(operation, options = {}) {
+  const normalized = normalizeRetryOptions(options);
+  let nextDelayMs = normalized.delayMs;
+  for (let attempt = 1; attempt <= normalized.maxAttempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error2) {
+      const shouldRetry = attempt < normalized.maxAttempts && normalized.shouldRetry(error2, {
+        attempt,
+        maxAttempts: normalized.maxAttempts
+      });
+      if (!shouldRetry) {
+        throw error2;
+      }
+      await normalized.onRetry({
+        attempt,
+        maxAttempts: normalized.maxAttempts,
+        delayMs: nextDelayMs,
+        error: error2
+      });
+      await normalized.sleep(nextDelayMs);
+      nextDelayMs = Math.min(
+        normalized.maxDelayMs,
+        Math.round(nextDelayMs * normalized.backoffMultiplier)
+      );
+    }
+  }
+  throw new Error("Retry exhausted without returning or throwing");
+}
+function isTransientHttpStatus(status) {
+  return status === 408 || status === 429 || status >= 500;
+}
+function extractStatus(error2) {
+  if (error2 instanceof HttpError) {
+    return error2.status;
+  }
+  if (error2 && typeof error2 === "object" && "status" in error2) {
+    const status = error2.status;
+    return typeof status === "number" ? status : void 0;
+  }
+  if (error2 && typeof error2 === "object" && "cause" in error2) {
+    return extractStatus(error2.cause);
+  }
+  return void 0;
+}
+function shouldRetryReadError(error2) {
+  const status = extractStatus(error2);
+  if (status === void 0) {
+    return true;
+  }
+  return isTransientHttpStatus(status);
+}
+function isAmbiguousMutationFailure(error2) {
+  const status = extractStatus(error2);
+  if (status === void 0) {
+    return true;
+  }
+  return isTransientHttpStatus(status);
+}
+var SAFE_READ_RETRY = {
+  maxAttempts: 3,
+  delayMs: 2e3,
+  backoffMultiplier: 2,
+  shouldRetry: (error2) => shouldRetryReadError(error2)
+};
+
+// src/lib/postman/base-urls.ts
+var POSTMAN_ENDPOINT_PROFILES = {
+  prod: {
+    apiBaseUrl: "https://api.getpostman.com",
+    bifrostBaseUrl: "https://bifrost-premium-https-v4.gw.postman.com",
+    iapubBaseUrl: "https://iapub.postman.co",
+    observabilityBaseUrl: "https://api.observability.postman.com",
+    observabilityEnv: "production"
+  },
+  beta: {
+    apiBaseUrl: "https://api.getpostman-beta.com",
+    bifrostBaseUrl: "https://bifrost-https-v4.gw.postman-beta.com",
+    iapubBaseUrl: "https://iapub.postman.co",
+    observabilityBaseUrl: "https://api.observability.postman-beta.com",
+    observabilityEnv: "beta"
+  }
+};
+function parsePostmanRegion(value) {
+  const normalized = String(value || "us").trim().toLowerCase();
+  if (normalized === "us" || normalized === "eu") {
+    return normalized;
+  }
+  throw new Error(
+    `Unsupported postman-region "${toOneLine(value)}". Supported values: us, eu`
+  );
+}
+function parsePostmanStack(value) {
+  const normalized = String(value || "prod").trim().toLowerCase();
+  if (normalized === "prod" || normalized === "beta") {
+    return normalized;
+  }
+  throw new Error(
+    `Unsupported postman-stack "${toOneLine(value)}". Supported values: prod, beta`
+  );
+}
+function resolvePostmanEndpointProfile(stack, region = "us") {
+  if (stack === "beta" && region !== "us") {
+    throw new Error("postman-region=eu is only supported with postman-stack=prod");
+  }
+  const profile = POSTMAN_ENDPOINT_PROFILES[stack];
+  if (region === "eu") {
+    return {
+      ...profile,
+      apiBaseUrl: "https://api.eu.postman.com"
+    };
+  }
+  return profile;
+}
+
+// src/lib/postman/token-provider.ts
+var AccessTokenProvider = class {
+  token;
+  constructor(options) {
+    this.token = String(options.accessToken || "").trim();
+  }
+  current() {
+    return this.token;
+  }
+  canRefresh() {
+    return false;
+  }
+  async refresh() {
+    throw new Error(
+      "Insights requires a human-user session access token. An expired token cannot be minted from a PMAK; provide a fresh human-user access token and rerun."
+    );
+  }
+};
+
 // src/lib/bifrost-client.ts
 var DEFAULT_BIFROST_BASE_URL = POSTMAN_ENDPOINT_PROFILES.prod.bifrostBaseUrl;
 var BIFROST_PROXY_PATH = "/ws/proxy";
@@ -29613,8 +29455,7 @@ var BifrostCatalogClient = class {
   observabilityEnv;
   constructor(options) {
     this.tokenProvider = options.tokenProvider ?? new AccessTokenProvider({
-      accessToken: options.accessToken,
-      apiKey: options.apiKey
+      accessToken: options.accessToken
     });
     this.teamId = options.teamId;
     this.apiKey = options.apiKey;
@@ -31042,7 +30883,8 @@ async function validateApiKey(apiKey, apiBase = DEFAULT_POSTMAN_API_BASE) {
   try {
     res = await fetch(meUrl, {
       method: "GET",
-      headers: { "x-api-key": apiKey }
+      headers: { "x-api-key": apiKey },
+      signal: AbortSignal.timeout(2e3)
     });
   } catch (error2) {
     throw new Error(
@@ -31066,8 +30908,19 @@ async function validateApiKey(apiKey, apiBase = DEFAULT_POSTMAN_API_BASE) {
       )
     );
   }
-  const data = await res.json();
-  const teamId = data?.user?.teamId ? String(data.user.teamId) : void 0;
+  let data;
+  try {
+    data = await res.json();
+  } catch (error2) {
+    throw new Error(mask(`Insights requires a human-user PMAK; GET ${endpointLabel} returned an inconclusive identity response.`), { cause: error2 });
+  }
+  const user = data?.user;
+  const username = typeof user?.username === "string" ? user.username.trim() : "";
+  const email = typeof user?.email === "string" ? user.email.trim() : "";
+  if (!username && !email) {
+    throw new Error("Insights requires a human-user PMAK; the supplied postman-api-key did not resolve to a human user.");
+  }
+  const teamId = user?.teamId ? String(user.teamId) : void 0;
   return { valid: true, teamId };
 }
 function clamp(value, min, max, fallback) {
@@ -31080,11 +30933,6 @@ function resolveInputs(env = process.env, allowGatedMissing = false) {
   if (!projectName) throw new Error("project-name is required");
   const postmanAccessToken = get("postman-access-token");
   const postmanApiKey = get("postman-api-key");
-  if (!allowGatedMissing && !postmanAccessToken && !postmanApiKey) {
-    throw new Error(
-      "postman-access-token is required (or provide a service-account postman-api-key so the action can mint one)."
-    );
-  }
   const postmanTeamId = get("postman-team-id") || env.POSTMAN_TEAM_ID?.trim() || "";
   const workspaceId = get("workspace-id") || env.POSTMAN_WORKSPACE_ID?.trim() || "";
   if (!allowGatedMissing && !workspaceId) {
@@ -31134,8 +30982,8 @@ function resolveInputs(env = process.env, allowGatedMissing = false) {
   };
 }
 function assertWritingInputs(inputs) {
-  if (!inputs.postmanAccessToken && !inputs.postmanApiKey) {
-    throw new Error("postman-access-token is required (or provide a service-account postman-api-key so the action can mint one).");
+  if (!inputs.postmanAccessToken || !inputs.postmanApiKey && !inputs.createApiKey) {
+    throw new Error("Insights requires both a human-user PMAK and a human-user session access token. A session access token cannot be minted from a PMAK.");
   }
   if (!inputs.workspaceId) {
     throw new Error("workspace-id is required. Provide it as an input, or set POSTMAN_WORKSPACE_ID.");
@@ -31461,12 +31309,10 @@ async function runCredentialPreflightForInputs(inputs, pmak, reporter, fetchImpl
     fetchImpl
   });
 }
-function createInsightsTokenProvider(inputs, reporter, apiKey = inputs.postmanApiKey) {
+function createInsightsTokenProvider(inputs, _reporter) {
+  void _reporter;
   return new AccessTokenProvider({
-    accessToken: inputs.postmanAccessToken,
-    apiKey,
-    apiBaseUrl: inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE,
-    onToken: (token) => reporter.setSecret(token)
+    accessToken: inputs.postmanAccessToken
   });
 }
 function createInsightsBifrostClient(inputs, tokenProvider, teamId, apiKey) {
@@ -31749,13 +31595,6 @@ async function runCli(argv = process.argv.slice(2), runtime = {}) {
     return;
   }
   assertWritingInputs(inputs);
-  const mintHolder = {
-    postmanAccessToken: inputs.postmanAccessToken,
-    postmanApiKey: inputs.postmanApiKey,
-    postmanApiBase: inputs.postmanApiBase
-  };
-  await mintAccessTokenIfNeeded(mintHolder, reporter, (secret) => reporter.setSecret(secret));
-  inputs.postmanAccessToken = mintHolder.postmanAccessToken;
   if (inputs.postmanAccessToken) reporter.setSecret(inputs.postmanAccessToken);
   if (inputs.postmanApiKey) {
     reporter.setSecret(inputs.postmanApiKey);
@@ -31802,12 +31641,7 @@ async function runCli(argv = process.argv.slice(2), runtime = {}) {
     const { apiKey, teamId, pmakIdentity } = await resolveApiKeyAndTeamId(inputs, preliminaryClient, reporter);
     telemetry.setTeamId(inputs.postmanTeamId || pmakIdentity?.teamId);
     reporter.setSecret(apiKey);
-    const activeTokenProvider = apiKey !== inputs.postmanApiKey ? new AccessTokenProvider({
-      accessToken: tokenProvider.current(),
-      apiKey,
-      apiBaseUrl: inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE,
-      onToken: (token) => reporter.setSecret(token)
-    }) : tokenProvider;
+    const activeTokenProvider = tokenProvider;
     if (pmakIdentity?.teamId !== preflightPmakIdentity?.teamId) {
       await runCredentialPreflightForInputs(
         inputs,

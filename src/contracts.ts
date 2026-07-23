@@ -45,7 +45,7 @@ export const insightsActionContract: ActionContract = {
       required: false,
     },
     'postman-access-token': {
-      description: 'Service-account Postman access token for integration API calls. Prefer minting it with postman-resolve-service-token-action. When omitted, the action mints one from postman-api-key (service-account PMAK).',
+      description: 'Required human-user session access token for Bifrost and Akita calls. It cannot be minted or refreshed from a PMAK.',
       required: false,
     },
     'postman-team-id': {
@@ -58,7 +58,7 @@ export const insightsActionContract: ActionContract = {
     },
     'postman-api-key': {
       description:
-        'Service-account Postman API key (PMAK-*) for the application binding call. Required unless create-api-key=true. Ordinary reruns never auto-create durable keys.',
+        'Human-user Postman API key (PMAK-*) for observability application binding. Service-account PMAKs are rejected.',
       required: false,
     },
     'create-api-key': {

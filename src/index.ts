@@ -20,7 +20,7 @@ import {
 } from './lib/postman/base-urls.js';
 import { sleep } from './lib/retry.js';
 import { createSecretMasker, toOneLine } from './lib/secrets.js';
-import { AccessTokenProvider, mintAccessTokenIfNeeded } from './lib/postman/token-provider.js';
+import { AccessTokenProvider } from './lib/postman/token-provider.js';
 import { getInput } from './lib/input.js';
 import {
   BRANCH_DECISION_ENV,
@@ -149,6 +149,7 @@ export async function validateApiKey(
     res = await fetch(meUrl, {
       method: 'GET',
       headers: { 'x-api-key': apiKey },
+      signal: AbortSignal.timeout(2000)
     });
   } catch (error) {
     throw new Error(
@@ -172,37 +173,20 @@ export async function validateApiKey(
       )
     );
   }
-  const data = (await res.json()) as { user?: { teamId?: number | string } };
-  const teamId = data?.user?.teamId ? String(data.user.teamId) : undefined;
-  return { valid: true, teamId };
-}
-
-/**
- * @deprecated Team selection must come from explicit postman-team-id /
- * POSTMAN_TEAM_ID only. Kept for diagnostic callers; not used to set
- * x-entity-team-id.
- */
-export async function getTeams(
-  apiKey: string,
-  apiBase: string = DEFAULT_POSTMAN_API_BASE
-): Promise<Array<{ id: number; name: string; organizationId?: number }>> {
+  let data: { user?: { teamId?: number | string; username?: unknown; email?: unknown } };
   try {
-    const res = await fetch(`${trimTrailingSlash(apiBase)}/teams`, {
-      method: 'GET',
-      headers: { 'x-api-key': apiKey },
-    });
-    if (!res.ok) return [];
-    const data = (await res.json()) as { data?: Array<{ id: number; name: string; handle?: string; organizationId?: number }> };
-    return (data?.data ?? [])
-      .filter(t => t?.id && t?.name)
-      .map(t => ({
-        id: Number(t.id),
-        name: String(t.name),
-        ...(t.organizationId != null ? { organizationId: Number(t.organizationId) } : {})
-      }));
-  } catch {
-    return [];
+    data = (await res.json()) as { user?: { teamId?: number | string; username?: unknown; email?: unknown } };
+  } catch (error) {
+    throw new Error(mask(`Insights requires a human-user PMAK; GET ${endpointLabel} returned an inconclusive identity response.`), { cause: error });
   }
+  const user = data?.user;
+  const username = typeof user?.username === 'string' ? user.username.trim() : '';
+  const email = typeof user?.email === 'string' ? user.email.trim() : '';
+  if (!username && !email) {
+    throw new Error('Insights requires a human-user PMAK; the supplied postman-api-key did not resolve to a human user.');
+  }
+  const teamId = user?.teamId ? String(user.teamId) : undefined;
+  return { valid: true, teamId };
 }
 
 export interface ActionInputs {
@@ -267,11 +251,6 @@ export function resolveInputs(
 
   const postmanAccessToken = get('postman-access-token');
   const postmanApiKey = get('postman-api-key');
-  if (!allowGatedMissing && !postmanAccessToken && !postmanApiKey) {
-    throw new Error(
-      'postman-access-token is required (or provide a service-account postman-api-key so the action can mint one).'
-    );
-  }
   // Read postman-team-id from action input, falling back to POSTMAN_TEAM_ID env.
   // Never infer team from PMAK /teams or /me.
   const postmanTeamId = get('postman-team-id') || env.POSTMAN_TEAM_ID?.trim() || '';
@@ -336,9 +315,9 @@ export function resolveInputs(
   };
 }
 
-export function assertWritingInputs(inputs: Pick<ActionInputs, 'postmanAccessToken' | 'postmanApiKey' | 'workspaceId' | 'environmentId'>): void {
-  if (!inputs.postmanAccessToken && !inputs.postmanApiKey) {
-    throw new Error('postman-access-token is required (or provide a service-account postman-api-key so the action can mint one).');
+export function assertWritingInputs(inputs: Pick<ActionInputs, 'postmanAccessToken' | 'postmanApiKey' | 'workspaceId' | 'environmentId' | 'createApiKey'>): void {
+  if (!inputs.postmanAccessToken || (!inputs.postmanApiKey && !inputs.createApiKey)) {
+    throw new Error('Insights requires both a human-user PMAK and a human-user session access token. A session access token cannot be minted from a PMAK.');
   }
   if (!inputs.workspaceId) {
     throw new Error('workspace-id is required. Provide it as an input, or set POSTMAN_WORKSPACE_ID.');
@@ -744,14 +723,11 @@ export async function runCredentialPreflightForInputs(
 
 export function createInsightsTokenProvider(
   inputs: ActionInputs,
-  reporter: Reporter,
-  apiKey = inputs.postmanApiKey
+  _reporter: Reporter
 ): AccessTokenProvider {
+  void _reporter;
   return new AccessTokenProvider({
-    accessToken: inputs.postmanAccessToken,
-    apiKey,
-    apiBaseUrl: inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE,
-    onToken: (token) => reporter.setSecret(token)
+    accessToken: inputs.postmanAccessToken
   });
 }
 
@@ -803,7 +779,7 @@ export async function runAction(): Promise<void> {
   const logDiag = (value: string | number | undefined | null): string =>
     formatOnboardingDiagnostic(value, logMask());
 
-  // Branch-aware sync: decide BEFORE any credential validation or mint.
+  // Branch-aware sync: decide BEFORE credential validation or writes.
   const branchDecision = decideBranchTier(inputs);
   if (branchDecision.tier !== 'legacy' && branchDecision.tier !== 'canonical') {
     core.info(
@@ -824,20 +800,6 @@ export async function runAction(): Promise<void> {
     core.setOutput('branch-decision', serializeBranchDecision(branchDecision));
     core.setOutput('sync-status', 'synced');
   }
-
-  // PMAK-only runs: eagerly mint the short-lived access token from the service
-  // -account PMAK so the Bifrost binding surface works exactly as when
-  // postman-access-token is supplied. Mirrors bootstrap's runAction. A failed
-  // mint warns with a live-probed diagnosis (personal key vs permission gap vs
-  // invalid key); the run then fails on the first Bifrost call with that
-  // context already logged.
-  const mintHolder = {
-    postmanAccessToken: inputs.postmanAccessToken,
-    postmanApiKey: inputs.postmanApiKey,
-    postmanApiBase: inputs.postmanApiBase
-  };
-  await mintAccessTokenIfNeeded(mintHolder, core, (secret) => core.setSecret(secret));
-  inputs.postmanAccessToken = mintHolder.postmanAccessToken;
 
   if (inputs.postmanAccessToken) core.setSecret(inputs.postmanAccessToken);
   if (inputs.postmanApiKey) core.setSecret(inputs.postmanApiKey);
@@ -905,15 +867,7 @@ export async function runAction(): Promise<void> {
       );
     }
 
-    const activeTokenProvider =
-      apiKey !== inputs.postmanApiKey
-        ? new AccessTokenProvider({
-            accessToken: tokenProvider.current(),
-            apiKey,
-            apiBaseUrl: inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE,
-            onToken: (token) => core.setSecret(token)
-          })
-        : tokenProvider;
+    const activeTokenProvider = tokenProvider;
 
     const client = createInsightsBifrostClient(inputs, activeTokenProvider, teamId, apiKey);
 

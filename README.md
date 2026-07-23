@@ -17,12 +17,12 @@ Part of the [Postman API Onboarding suite](https://github.com/postman-cs/postman
 - The [Postman Insights DaemonSet agent](https://learning.postman.com/docs/api-catalog/connect/insights/) must already be running on your cluster in discovery mode.
 - The target service must already be deployed, running, and receiving enough traffic for the agent to discover it.
 - A [Postman workspace](https://learning.postman.com/docs/collaborating-in-postman/using-workspaces/overview/) and environment must already exist for the service.
-- A [Postman service account](https://learning.postman.com/docs/administration/service-accounts/) API key must be available as a CI secret. Use [postman-resolve-service-token-action](https://github.com/postman-cs/postman-resolve-service-token-action) to mint the `postman-access-token` and `postman-team-id` at runtime.
+- A human-user PMAK and matching human-user session access token must be available as CI secrets. Service-account credentials cannot complete Insights linking.
 - Choose the Postman data residency region up front with `postman-region` (`us` or `eu`).
 
 This action does **not** deploy the Insights agent, create workspaces, create environments, upload OpenAPI specs, or sync repo artifacts. It only links a service that Insights has already discovered.
 
-> **Credential requirement for the Insights linking steps.** The service discovery and git-link calls run on the `api-catalog` service and accept a service-account access token. The Insights acknowledgment and application-binding steps run on the `akita` (Insights) service, which authenticates against a **Postman user identity** and answers `401 "Postman User not found"` for a service-account token. To complete the full link, supply a credential pair that carries a Postman user identity (a user's access token and user PMAK). A service-account-only pair from `postman-resolve-service-token-action` is sufficient for discovery and git linking but cannot finish the Insights acknowledgment.
+> **Credential requirement.** Supply a human-user PMAK and that same user's session access token. The action validates `GET /me` and `consumerType=user` before linking writes. It never mints or refreshes access tokens from a PMAK.
 
 ## Usage
 
@@ -35,21 +35,14 @@ jobs:
 
       # ... deploy your service to Kubernetes ...
 
-      - id: postman_token
-        uses: postman-cs/postman-resolve-service-token-action@v2
-        with:
-          postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
-          postman-region: us
-
       - uses: postman-cs/postman-insights-onboarding-action@v2
         with:
           project-name: core-payments
           workspace-id: ${{ vars.POSTMAN_WORKSPACE_ID }}
           environment-id: ${{ vars.POSTMAN_ENVIRONMENT_ID }}
           postman-region: us
-          postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
-          postman-access-token: ${{ steps.postman_token.outputs.token }}
-          postman-team-id: ${{ steps.postman_token.outputs.team-id }}
+          postman-api-key: ${{ secrets.POSTMAN_INSIGHTS_USER_PMAK }}
+          postman-access-token: ${{ secrets.POSTMAN_INSIGHTS_USER_ACCESS_TOKEN }}
 ```
 
 ## Examples
@@ -65,22 +58,15 @@ jobs:
 
       # ... deploy your service to Kubernetes ...
 
-      - id: postman_token
-        uses: postman-cs/postman-resolve-service-token-action@v2
-        with:
-          postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
-          postman-region: us
-
-      - uses: postman-cs/postman-insights-onboarding-action@v2
+       - uses: postman-cs/postman-insights-onboarding-action@v2
         with:
           project-name: core-payments
           workspace-id: ${{ vars.POSTMAN_WORKSPACE_ID }}
           environment-id: ${{ vars.POSTMAN_ENVIRONMENT_ID }}
           cluster-name: my-cluster
           postman-region: us
-          postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
-          postman-access-token: ${{ steps.postman_token.outputs.token }}
-          postman-team-id: ${{ steps.postman_token.outputs.team-id }}
+           postman-api-key: ${{ secrets.POSTMAN_INSIGHTS_USER_PMAK }}
+           postman-access-token: ${{ secrets.POSTMAN_INSIGHTS_USER_ACCESS_TOKEN }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           poll-timeout-seconds: 180
 ```
@@ -132,9 +118,8 @@ jobs:
           environment-id: ${{ fromJSON(steps.sync.outputs.environment-uids-json).prod }}
           cluster-name: my-cluster
           postman-region: us
-          postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
-          postman-access-token: ${{ steps.postman_token.outputs.token }}
-          postman-team-id: ${{ steps.postman_token.outputs.team-id }}
+           postman-api-key: ${{ secrets.POSTMAN_INSIGHTS_USER_PMAK }}
+           postman-access-token: ${{ secrets.POSTMAN_INSIGHTS_USER_ACCESS_TOKEN }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
@@ -149,7 +134,8 @@ The Insights agent takes time to discover services after pods start. The action 
           workspace-id: ${{ vars.POSTMAN_WORKSPACE_ID }}
           environment-id: ${{ vars.POSTMAN_ENVIRONMENT_ID }}
           postman-region: us
-          postman-access-token: ${{ steps.postman_token.outputs.token }}
+           postman-api-key: ${{ secrets.POSTMAN_INSIGHTS_USER_PMAK }}
+           postman-access-token: ${{ secrets.POSTMAN_INSIGHTS_USER_ACCESS_TOKEN }}
           poll-timeout-seconds: 300
           poll-interval-seconds: 15
 ```
@@ -166,8 +152,8 @@ Before any onboarding write, the action verifies that `postman-api-key` and `pos
           project-name: core-payments
           workspace-id: ${{ vars.POSTMAN_WORKSPACE_ID }}
           environment-id: ${{ vars.POSTMAN_ENVIRONMENT_ID }}
-          postman-access-token: ${{ steps.postman_token.outputs.token }}
-          postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
+           postman-access-token: ${{ secrets.POSTMAN_INSIGHTS_USER_ACCESS_TOKEN }}
+           postman-api-key: ${{ secrets.POSTMAN_INSIGHTS_USER_PMAK }}
           credential-preflight: enforce
 ```
 
@@ -183,9 +169,8 @@ postman-insights-onboard \
   --project-name core-payments \
   --workspace-id ws_123 \
   --environment-id env_123 \
-  --postman-access-token "$POSTMAN_ACCESS_TOKEN" \
-  --postman-team-id "$POSTMAN_TEAM_ID" \
-  --postman-api-key "$POSTMAN_API_KEY" \
+   --postman-access-token "$POSTMAN_INSIGHTS_USER_ACCESS_TOKEN" \
+   --postman-api-key "$POSTMAN_INSIGHTS_USER_PMAK" \
   --postman-region us \
   --cluster-name my-cluster
 ```
@@ -203,12 +188,12 @@ See [CLI Usage](docs/cli.md) for provider auto-detection, output formats, and Gi
 | `system-environment-id` | Postman system environment UUID for service-level Insights acknowledgment | No |  |
 | `cluster-name` | Insights cluster name. When set, matches {cluster-name}/{project-name} exactly in discovered services | No |  |
 | `repo-url` | Repository URL for Git onboarding. Auto-detected from CI context when omitted. | No |  |
-| `postman-access-token` | Postman access token (x-access-token) for the Bifrost linking calls. When omitted, the action mints a service-account token from postman-api-key. The api-catalog discovery and git-link steps accept a service-account token (mint it with postman-resolve-service-token-action); the Insights (akita) acknowledgment and application-binding steps require a token carrying a Postman user identity — a service-account token answers 401 "Postman User not found" there. | No |  |
+| `postman-access-token` | Required human-user session access token (x-access-token) for Bifrost and Akita linking calls. Service-account tokens are rejected and this action never mints or refreshes a token from a PMAK. | No |  |
 | `postman-team-id` | Explicit Postman team ID for org-mode integration request headers. When omitted, x-entity-team-id is not sent. | No |  |
 | `github-token` | Optional GitHub token passed as git_api_key when repository auth is required by onboarding/git | No |  |
-| `postman-api-key` | Service-account Postman API key (PMAK-*) for the application binding call. Required unless create-api-key=true. Ordinary reruns never auto-create durable keys. | No |  |
+| `postman-api-key` | Human-user Postman API key (PMAK-*) for observability application binding. It must resolve to the same human user as postman-access-token; service-account PMAKs are rejected. | No |  |
 | `create-api-key` | Explicit opt-in to create a durable Bifrost API key when postman-api-key is omitted or invalid. Default false — never creates timestamp-named orphan keys on ordinary runs. Supported values: true, false. | No | `false` |
-| `credential-preflight` | Credential identity preflight policy. enforce (default) fails before linking writes when postman-api-key and postman-access-token resolve to different parent orgs; warn is an explicit compatibility policy that logs and continues. Supported values are enforce and warn. | No | `enforce` |
+| `credential-preflight` | Credential identity preflight policy. Both modes require a human-user access token with consumerType=user; enforce additionally fails on parent-org mismatch. | No | `enforce` |
 | `service-not-found-policy` | Behavior when the discovered service is absent after polling. fail (default) aborts full linking; warn returns status=not-found without writes. Supported values: fail, warn. | No | `fail` |
 | `poll-timeout-seconds` | Maximum seconds to wait for the service to appear in the discovered list | No | `120` |
 | `poll-interval-seconds` | Seconds between discovery polling attempts | No | `10` |

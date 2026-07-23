@@ -10,20 +10,13 @@ type PatternId = 'newman' | 'pmak-header' | 'pmak-cli-login';
 
 /**
  * Sanctioned PMAK / Postman-CLI sites. PMAK survives ONLY for:
- *   1. minting/re-minting the service-account access token (token-provider mint POST),
- *   2. Insights linking (akita rejects service accounts — insights action only),
- *   3. `postman login --with-api-key` (the Postman CLI has no access-token login),
- * plus the user-approved read-only `GET /me` identity preflight (credential-identity)
- * and repo-sync's CI-key reuse-vs-mint /me check. Every Postman ASSET op runs on the
- * access-token gateway; a new `x-api-key:` header or `--with-api-key` outside this list
- * is a forbidden PMAK asset op. Newman is banned everywhere (never allowlisted): it
- * cannot run Collection v3, so only the Postman CLI (`postman collection run`) is allowed.
+ * Insights PMAK use is limited to human-user GET /me validation and the two
+ * observability application-binding methods. Bifrost and Akita use the user token.
  */
 const ALLOWLIST: Record<string, PatternId[]> = {
   'src/index.ts': ['pmak-header'],
   'src/lib/credential-identity.ts': ['pmak-header'],
-  'src/lib/bifrost-client.ts': ['pmak-header'],
-  'src/lib/postman/token-provider.ts': ['pmak-header']
+  'src/lib/bifrost-client.ts': ['pmak-header']
 };
 
 type Violation = { file: string; line: number; pattern: PatternId; text: string };
@@ -158,5 +151,16 @@ describe('no PMAK asset op or Newman in production src/', () => {
       ...Object.keys(pkg.devDependencies ?? {})
     ].filter((name) => /(^|[/@-])newman([/-]|$)/i.test(name));
     expect(newmanDeps, `Newman dependencies: ${newmanDeps.join(', ')}`).toEqual([]);
+  });
+
+  it('limits PMAK headers to GET /me and observability application binding', () => {
+    const indexSource = readFileSync(join(SRC_ROOT, 'index.ts'), 'utf8');
+    const bifrostSource = readFileSync(join(SRC_ROOT, 'lib', 'bifrost-client.ts'), 'utf8');
+    const pmakHeaders = [...indexSource.matchAll(/['"]x-api-key['"]\s*:/g), ...bifrostSource.matchAll(/['"]x-api-key['"]\s*:/g)];
+
+    expect(indexSource).toContain('`${trimTrailingSlash(apiBase)}/me`');
+    expect(bifrostSource).toContain('/v2/agent/api-catalog/workspaces/${workspaceId}/applications');
+    expect(pmakHeaders).toHaveLength(3);
+    expect(readFileSync(join(SRC_ROOT, 'lib', 'postman', 'token-provider.ts'), 'utf8')).not.toContain('service-account-tokens');
   });
 });

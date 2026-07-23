@@ -23,11 +23,11 @@ This repo includes `.github/workflows/contract-smoke.yml`, a scheduled live cont
 
 Configure these repository secrets before enabling the workflow:
 
-- `SMOKE_ORG_API_KEY`: a service-account PMAK used by the smoke workflow to call `/me`, `/teams`, and mint a short-lived access token at runtime.
+- `SMOKE_ORG_API_KEY`: a human-user PMAK used by the smoke workflow for bounded `/me` validation and observability application binding.
 
 Scheduled and manual smoke runs first execute a secret preflight. If `SMOKE_ORG_API_KEY` is missing, the workflow writes a notice and job summary, sets `run_smoke=false`, and skips the live API contract job without failing the repository.
 
-The smoke workflow verifies `/me`, `/teams`, mints a service-account access token, checks `iapub.postman.co/api/sessions/current`, and verifies API key creation so auth or payload drift shows up in CI before it hits onboarding runs.
+The smoke workflow verifies the human-user `/me` shape, checks `iapub.postman.co/api/sessions/current` for `consumerType=user`, and verifies API key creation so auth or payload drift shows up in CI before it hits onboarding runs.
 
 ## Release strategy
 

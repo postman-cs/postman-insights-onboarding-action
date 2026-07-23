@@ -24,7 +24,7 @@ inputs:
     description: 'Repository URL for Git onboarding. Auto-detected from CI context when omitted.'
     required: false
   postman-access-token:
-    description: 'Postman access token (x-access-token) for the Bifrost linking calls. When omitted, the action mints a service-account token from postman-api-key. The api-catalog discovery and git-link steps accept a service-account token (mint it with postman-resolve-service-token-action); the Insights (akita) acknowledgment and application-binding steps require a token carrying a Postman user identity — a service-account token answers 401 "Postman User not found" there.'
+    description: 'Required human-user session access token (x-access-token) for Bifrost and Akita linking calls. Service-account tokens are rejected and this action never mints or refreshes a token from a PMAK.'
     required: false
   postman-team-id:
     description: 'Explicit Postman team ID for org-mode integration request headers. When omitted, x-entity-team-id is not sent.'
@@ -33,14 +33,14 @@ inputs:
     description: 'Optional GitHub token passed as git_api_key when repository auth is required by onboarding/git'
     required: false
   postman-api-key:
-    description: 'Service-account Postman API key (PMAK-*) for the application binding call. Required unless create-api-key=true. Ordinary reruns never auto-create durable keys.'
+    description: 'Human-user Postman API key (PMAK-*) for observability application binding. It must resolve to the same human user as postman-access-token; service-account PMAKs are rejected.'
     required: false
   create-api-key:
     description: 'Explicit opt-in to create a durable Bifrost API key when postman-api-key is omitted or invalid. Default false — never creates timestamp-named orphan keys on ordinary runs. Supported values: true, false.'
     required: false
     default: 'false'
   credential-preflight:
-    description: 'Credential identity preflight policy. enforce (default) fails before linking writes when postman-api-key and postman-access-token resolve to different parent orgs; warn is an explicit compatibility policy that logs and continues. Supported values are enforce and warn.'
+    description: 'Credential identity preflight policy. Both modes require a human-user access token with consumerType=user; enforce additionally fails on parent-org mismatch.'
     required: false
     default: 'enforce'
   service-not-found-policy:
