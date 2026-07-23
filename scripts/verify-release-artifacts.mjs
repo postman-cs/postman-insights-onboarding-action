@@ -49,12 +49,12 @@ export function verifySha512Sri(filePath, expectedSri) {
 export function compareImmutableVersions(a, b) {
   const parse = (value) => {
     const raw = String(value ?? '').replace(/^v/, '');
-    const parts = raw.split('.').map((part) => Number(part));
-    if (parts.length === 2) parts.push(0);
-    if (parts.length !== 3 || parts.some((n) => !Number.isInteger(n) || n < 0 || Number.isNaN(n))) {
+    const parts = raw.split('.');
+    if (parts.length === 2) parts.push('0');
+    if (parts.length !== 3 || parts.some((part) => !/^\d+$/.test(part))) {
       throw new Error(`invalid immutable version: ${value}`);
     }
-    return parts;
+    return parts.map((part) => BigInt(part));
   };
   const [aMajor, aMinor, aPatch] = parse(a);
   const [bMajor, bMinor, bPatch] = parse(b);
@@ -114,19 +114,21 @@ export function verifyReleaseArtifacts({ directory, repository, commitSha, tag, 
   }
   assertInsightsImmutableTagVersionBinding(tag, packageVersion);
   assertInsightsImmutableTagVersionBinding(manifest.tag, manifest.package_version);
-  if (!Array.isArray(manifest.artifacts) || manifest.artifacts.length === 0) fail('missing artifacts');
-  for (const artifact of manifest.artifacts) {
-    if (typeof artifact.path !== 'string' || !/^[a-zA-Z0-9._-]+$/.test(artifact.path)) fail('invalid artifact path');
-    if (!/^[a-f0-9]{64}$/.test(artifact.sha256 ?? '')) fail(`invalid checksum for ${artifact.path}`);
+  if (!Array.isArray(manifest.artifacts) || manifest.artifacts.length !== 1) {
+    fail('manifest must declare exactly one release.tgz artifact');
   }
-  const expectedPaths = new Set(['release-manifest.json', ...manifest.artifacts.map((artifact) => artifact.path)]);
+  const artifact = manifest.artifacts[0];
+  if (typeof artifact?.path !== 'string' || !/^[a-zA-Z0-9._-]+$/.test(artifact.path)) fail('invalid artifact path');
+  if (artifact.path !== 'release.tgz') fail('manifest artifact path must be exactly release.tgz');
+  if (!/^[a-f0-9]{64}$/.test(artifact.sha256 ?? '')) fail(`invalid checksum for ${artifact.path}`);
+  const expectedPaths = new Set(['release-manifest.json', 'release.tgz']);
   const actualPaths = readdirSync(directory);
-  if (actualPaths.some((path) => !expectedPaths.has(path)) || expectedPaths.size !== actualPaths.length) fail('artifact allowlist mismatch');
-  for (const artifact of manifest.artifacts) {
-    const path = join(directory, artifact.path);
-    if (!existsSync(path)) fail(`missing ${artifact.path}`);
-    if (sha256(path) !== artifact.sha256) fail(`checksum mismatch for ${artifact.path}`);
+  if (actualPaths.some((path) => !expectedPaths.has(path)) || expectedPaths.size !== actualPaths.length) {
+    fail('artifact allowlist mismatch');
   }
+  const path = join(directory, artifact.path);
+  if (!existsSync(path)) fail(`missing ${artifact.path}`);
+  if (sha256(path) !== artifact.sha256) fail(`checksum mismatch for ${artifact.path}`);
   return manifest;
 }
 

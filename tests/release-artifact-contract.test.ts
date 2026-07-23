@@ -18,6 +18,9 @@ import {
   // @ts-expect-error The release verifier is deliberately dependency-free ESM.
 } from '../scripts/verify-release-artifacts.mjs';
 import {
+  createSpawnGit,
+  GIT_COMMAND_MAX_BUFFER,
+  GIT_COMMAND_TIMEOUT_MS,
   runMajorAliasAdvance
   // @ts-expect-error The alias advance script is deliberately dependency-free ESM.
 } from '../scripts/advance-release-alias.mjs';
@@ -90,6 +93,38 @@ describe('release artifact verifier', () => {
     expect(() => verify(invalidPath)).toThrow(/invalid artifact path/i);
     rmSync(invalidPath, { recursive: true, force: true });
   });
+
+  it('rejects any manifest artifact set other than exactly one release.tgz', () => {
+    const extraSha = createHash('sha256').update('extra').digest('hex');
+    const declaredExtra = fixture(
+      {
+        artifacts: [
+          { path: 'release.tgz', sha256: SHA },
+          { path: 'extra.bin', sha256: extraSha }
+        ]
+      },
+      { extraFile: 'extra.bin' }
+    );
+    expect(() => verify(declaredExtra)).toThrow(/exactly one release\.tgz/i);
+    rmSync(declaredExtra, { recursive: true, force: true });
+
+    const duplicate = fixture({
+      artifacts: [
+        { path: 'release.tgz', sha256: SHA },
+        { path: 'release.tgz', sha256: SHA }
+      ]
+    });
+    expect(() => verify(duplicate)).toThrow(/exactly one release\.tgz/i);
+    rmSync(duplicate, { recursive: true, force: true });
+
+    const wrongOnly = fixture({ artifacts: [{ path: 'other.tgz', sha256: SHA }] });
+    expect(() => verify(wrongOnly)).toThrow(/exactly release\.tgz/i);
+    rmSync(wrongOnly, { recursive: true, force: true });
+
+    const empty = fixture({ artifacts: [] });
+    expect(() => verify(empty)).toThrow(/exactly one release\.tgz/i);
+    rmSync(empty, { recursive: true, force: true });
+  });
 });
 
 describe('insights immutable tag/version binding', () => {
@@ -137,8 +172,8 @@ describe('npm E404 and SRI helpers', () => {
 
 describe('semantic rolling major alias helpers', () => {
   it('compares immutable versions and decides advance/skip/fail for annotated and lightweight records', () => {
-    expect(compareImmutableVersions('2.1.4', '2.1.5')).toBeLessThan(0);
-    expect(compareImmutableVersions('2.2.0', '2.1.9')).toBeGreaterThan(0);
+    expect(compareImmutableVersions('2.1.4', '2.1.5')).toBe(-1);
+    expect(compareImmutableVersions('2.2.0', '2.1.9')).toBe(1);
     expect(compareImmutableVersions('2.1', '2.1.0')).toBe(0);
 
     const aliasCommit = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -181,6 +216,28 @@ describe('semantic rolling major alias helpers', () => {
       action: 'fail',
       reason: 'untied'
     });
+  });
+
+  it('orders components above Number.MAX_SAFE_INTEGER exactly and skips a newer huge alias', () => {
+    const olderHuge = '2.9007199254740992.0';
+    const newerHuge = '2.9007199254740993.0';
+    expect(Number('9007199254740992')).toBe(Number('9007199254740993'));
+    expect(compareImmutableVersions(olderHuge, newerHuge)).toBe(-1);
+    expect(compareImmutableVersions(newerHuge, olderHuge)).toBe(1);
+    expect(compareImmutableVersions(olderHuge, olderHuge)).toBe(0);
+    expect(compareImmutableVersions('2.9007199254740992', olderHuge)).toBe(0);
+    expect(
+      decideRollingMajorAlias({
+        candidateVersion: olderHuge,
+        immutableVersionsAtAlias: [newerHuge]
+      })
+    ).toEqual({ action: 'skip', reason: 'newer', version: newerHuge });
+    expect(
+      decideRollingMajorAlias({
+        candidateVersion: newerHuge,
+        immutableVersionsAtAlias: [olderHuge]
+      })
+    ).toEqual({ action: 'advance', reason: 'same-or-older' });
   });
 });
 
@@ -284,6 +341,9 @@ function createFakeGit(options: FakeGitOptions = {}) {
       return { status: 0, stdout: `${aliasCommit}\n`, stderr: '', error: null };
     }
     if (args[0] === 'for-each-ref') {
+      if (!args.includes('refs/tags/v2.*')) {
+        throw new Error(`unexpected for-each-ref pattern: ${key}`);
+      }
       return { status: 0, stdout: forEachRefStdout, stderr: '', error: null };
     }
     if (args[0] === 'config' || args[0] === 'tag' || args[0] === 'push') {
@@ -541,7 +601,6 @@ describe('runMajorAliasAdvance orchestration', () => {
   it('parses mixed annotated and lightweight for-each-ref records before deciding', () => {
     const tagObject = 'dddddddddddddddddddddddddddddddddddddddd';
     const forEachRefStdout = [
-      `tag\tv2\t${tagObject}\t${ALIAS_COMMIT}`,
       `commit\tv2.0.1\t${ALIAS_COMMIT}\t`,
       `tag\tv2.1.0\t${tagObject}\t${ALIAS_COMMIT}`,
       `commit\tv2.9.9\t${CANDIDATE_COMMIT}\t`
@@ -554,17 +613,196 @@ describe('runMajorAliasAdvance orchestration', () => {
       logger: MUTE_LOGGER
     });
     expect(plan.records).toEqual([
-      { name: 'v2', commit: ALIAS_COMMIT, type: 'annotated' },
       { name: 'v2.0.1', commit: ALIAS_COMMIT, type: 'lightweight' },
       { name: 'v2.1.0', commit: ALIAS_COMMIT, type: 'annotated' }
     ]);
     expect(plan.immutableVersionsAtAlias).toEqual(['2.0.1', '2.1.0']);
     expect(plan).toMatchObject({ action: 'advance', reason: 'same-or-older' });
+    const forEachCall = calls.find((args) => args[0] === 'for-each-ref');
+    expect(forEachCall).toEqual([
+      'for-each-ref',
+      '--format=%(objecttype)\t%(refname:short)\t%(objectname)\t%(*objectname)',
+      'refs/tags/v2.*'
+    ]);
     const forEachIdx = calls.findIndex((args) => args[0] === 'for-each-ref');
     const pushIdx = calls.findIndex((args) => args[0] === 'push');
     expect(forEachIdx).toBeGreaterThanOrEqual(0);
     expect(forEachIdx).toBeLessThan(pushIdx);
     assertOnlyMajorAliasForcePushed(calls);
+    expect(process.exitCode).toBe(priorExitCode);
+  });
+});
+
+describe('createSpawnGit local timeout and bounded spawn options', () => {
+  const priorExitCode = process.exitCode;
+
+  type FakeSpawnResult = {
+    status: number | null;
+    stdout: string;
+    stderr: string;
+    error: Error | null;
+    signal: NodeJS.Signals | null;
+    pid: number;
+    output: [null, string, string];
+  };
+
+  afterEach(() => {
+    process.exitCode = priorExitCode;
+  });
+
+  function assertBoundedSpawnOptions(options: Record<string, unknown>): void {
+    expect(options).toMatchObject({
+      encoding: 'utf8',
+      timeout: GIT_COMMAND_TIMEOUT_MS,
+      killSignal: 'SIGTERM',
+      maxBuffer: GIT_COMMAND_MAX_BUFFER,
+      shell: false
+    });
+    expect(GIT_COMMAND_TIMEOUT_MS).toBe(120_000);
+    expect(GIT_COMMAND_MAX_BUFFER).toBeLessThanOrEqual(16 * 1024 * 1024);
+  }
+
+  it('passes timeout, killSignal, maxBuffer, encoding, and no shell on every spawn', () => {
+    const captured: Array<{ cmd: string; args: string[]; options: Record<string, unknown> }> = [];
+    const runGit = createSpawnGit((cmd: string, args: string[], options: Record<string, unknown>): FakeSpawnResult => {
+      captured.push({ cmd, args: [...args], options: { ...options } });
+      // Absent alias (ls-remote status 2) advances without comparison fetches.
+      const status = args[0] === 'ls-remote' ? 2 : 0;
+      return {
+        status,
+        stdout: '',
+        stderr: '',
+        error: null,
+        signal: null,
+        pid: 0,
+        output: [null, '', '']
+      };
+    });
+    runMajorAliasAdvance({
+      candidateTag: 'v2.1.4',
+      candidateCommit: CANDIDATE_COMMIT,
+      runGit,
+      logger: MUTE_LOGGER
+    });
+    expect(captured.length).toBeGreaterThan(0);
+    expect(captured.some((call) => call.args[0] === 'ls-remote')).toBe(true);
+    expect(captured.some((call) => call.args[0] === 'config')).toBe(true);
+    expect(captured.some((call) => call.args[0] === 'tag')).toBe(true);
+    expect(captured.some((call) => call.args[0] === 'push')).toBe(true);
+    for (const call of captured) {
+      expect(call.cmd).toBe('git');
+      assertBoundedSpawnOptions(call.options);
+    }
+    expect(process.exitCode).toBe(priorExitCode);
+  });
+
+  it('throws clearly on ETIMEDOUT during ls-remote and never mutates config/tag/push', () => {
+    const captured: Array<{ args: string[]; options: Record<string, unknown> }> = [];
+    const runGit = createSpawnGit((_cmd: string, args: string[], options: Record<string, unknown>): FakeSpawnResult => {
+      captured.push({ args: [...args], options: { ...options } });
+      const error = Object.assign(new Error('spawnSync ETIMEDOUT'), { code: 'ETIMEDOUT' });
+      return {
+        status: null,
+        stdout: '',
+        stderr: '',
+        error,
+        signal: 'SIGTERM',
+        pid: 0,
+        output: [null, '', '']
+      };
+    });
+    expect(() =>
+      runMajorAliasAdvance({
+        candidateTag: 'v2.1.4',
+        candidateCommit: CANDIDATE_COMMIT,
+        runGit,
+        logger: MUTE_LOGGER
+      })
+    ).toThrow(new RegExp(`timed out after ${GIT_COMMAND_TIMEOUT_MS}ms`));
+    expect(captured).toHaveLength(1);
+    expect(captured[0].args[0]).toBe('ls-remote');
+    assertBoundedSpawnOptions(captured[0].options);
+    expect(captured.some((call) => call.args[0] === 'config')).toBe(false);
+    expect(captured.some((call) => call.args[0] === 'tag')).toBe(false);
+    expect(captured.some((call) => call.args[0] === 'push')).toBe(false);
+    expect(captured.some((call) => call.args[0] === 'fetch')).toBe(false);
+    expect(process.exitCode).toBe(priorExitCode);
+  });
+
+  it('throws clearly on ETIMEDOUT during fetch after a present probe and never mutates', () => {
+    const captured: Array<{ args: string[]; options: Record<string, unknown> }> = [];
+    const runGit = createSpawnGit((_cmd: string, args: string[], options: Record<string, unknown>): FakeSpawnResult => {
+      captured.push({ args: [...args], options: { ...options } });
+      assertBoundedSpawnOptions(options);
+      if (args[0] === 'ls-remote') {
+        return {
+          status: 0,
+          stdout: `${ALIAS_COMMIT}\trefs/tags/v2\n`,
+          stderr: '',
+          error: null,
+          signal: null,
+          pid: 0,
+          output: [null, `${ALIAS_COMMIT}\trefs/tags/v2\n`, '']
+        };
+      }
+      if (args[0] === 'fetch') {
+        const error = Object.assign(new Error('spawnSync ETIMEDOUT'), { code: 'ETIMEDOUT' });
+        return {
+          status: null,
+          stdout: '',
+          stderr: '',
+          error,
+          signal: 'SIGTERM',
+          pid: 0,
+          output: [null, '', '']
+        };
+      }
+      throw new Error(`unexpected git invocation after timeout path: ${args.join(' ')}`);
+    });
+    expect(() =>
+      runMajorAliasAdvance({
+        candidateTag: 'v2.1.4',
+        candidateCommit: CANDIDATE_COMMIT,
+        runGit,
+        logger: MUTE_LOGGER
+      })
+    ).toThrow(new RegExp(`timed out after ${GIT_COMMAND_TIMEOUT_MS}ms`));
+    expect(captured.some((call) => call.args[0] === 'ls-remote')).toBe(true);
+    expect(captured.some((call) => call.args[0] === 'fetch')).toBe(true);
+    expect(captured.some((call) => call.args[0] === 'config')).toBe(false);
+    expect(captured.some((call) => call.args[0] === 'tag')).toBe(false);
+    expect(captured.some((call) => call.args[0] === 'push')).toBe(false);
+    expect(process.exitCode).toBe(priorExitCode);
+  });
+
+  it('throws clearly on null status without error and never mutates', () => {
+    const captured: Array<{ args: string[] }> = [];
+    const runGit = createSpawnGit((_cmd: string, args: string[], options: Record<string, unknown>): FakeSpawnResult => {
+      captured.push({ args: [...args] });
+      assertBoundedSpawnOptions(options);
+      return {
+        status: null,
+        stdout: '',
+        stderr: '',
+        error: null,
+        signal: 'SIGKILL',
+        pid: 0,
+        output: [null, '', '']
+      };
+    });
+    expect(() =>
+      runMajorAliasAdvance({
+        candidateTag: 'v2.1.4',
+        candidateCommit: CANDIDATE_COMMIT,
+        runGit,
+        logger: MUTE_LOGGER
+      })
+    ).toThrow(/terminated without exit status.*SIGKILL/i);
+    expect(captured).toHaveLength(1);
+    expect(captured[0].args[0]).toBe('ls-remote');
+    expect(captured.some((call) => call.args[0] === 'config')).toBe(false);
+    expect(captured.some((call) => call.args[0] === 'tag')).toBe(false);
+    expect(captured.some((call) => call.args[0] === 'push')).toBe(false);
     expect(process.exitCode).toBe(priorExitCode);
   });
 });

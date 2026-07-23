@@ -9,6 +9,12 @@ import {
   decideRollingMajorAlias
 } from './verify-release-artifacts.mjs';
 
+/** Local finite timeout for every production Git child (ms). */
+export const GIT_COMMAND_TIMEOUT_MS = 120_000;
+
+/** Bounded stdout/stderr capture for every production Git child (bytes). */
+export const GIT_COMMAND_MAX_BUFFER = 1024 * 1024;
+
 /** Throw-only helper failures: never log or set process.exitCode (main owns that). */
 function abort(message) {
   throw new Error(message);
@@ -71,11 +77,12 @@ function resolveAliasCommit(runGit, majorAlias) {
   return peeled.stdout.trim();
 }
 
-function tagRecordsAtCommit(runGit, aliasCommit) {
+function tagRecordsAtCommit(runGit, aliasCommit, majorAlias) {
+  // Enumerate only this major's immutable tag namespace (vN.*), not all local tags.
   const listed = runGit([
     'for-each-ref',
     '--format=%(objecttype)\t%(refname:short)\t%(objectname)\t%(*objectname)',
-    'refs/tags'
+    `refs/tags/${majorAlias}.*`
   ]);
   const records = [];
   for (const line of listed.stdout.split('\n')) {
@@ -123,7 +130,7 @@ export function planMajorAliasAdvance({ candidateTag, candidateCommit, runGit })
       `remote ${majorAlias} alias was reported present but could not be resolved locally after fetch`
     );
   }
-  const records = tagRecordsAtCommit(runGit, aliasCommit);
+  const records = tagRecordsAtCommit(runGit, aliasCommit, majorAlias);
   const immutableVersionsAtAlias = collectImmutableVersionsFromTagRecords(records, {
     major,
     aliasCommit
@@ -182,10 +189,33 @@ export function runMajorAliasAdvance({ candidateTag, candidateCommit, runGit, lo
   return plan;
 }
 
-function createSpawnGit() {
+/**
+ * Production Git adapter: fixed argv, no shell, local timeout + bounded buffer.
+ * `spawnImpl` is injectable for unit tests; production main uses spawnSync.
+ * Timeout/error/null status always fail closed (even when allowFailure is set);
+ * allowFailure only permits a handled nonzero status (ls-remote status 2 absent).
+ */
+export function createSpawnGit(spawnImpl = spawnSync) {
   return function runGit(args, { allowFailure = false } = {}) {
-    const result = spawnSync('git', args, { encoding: 'utf8' });
-    if (result.error) throw result.error;
+    const result = spawnImpl('git', args, {
+      encoding: 'utf8',
+      timeout: GIT_COMMAND_TIMEOUT_MS,
+      killSignal: 'SIGTERM',
+      maxBuffer: GIT_COMMAND_MAX_BUFFER,
+      shell: false
+    });
+    if (result.error) {
+      if (result.error.code === 'ETIMEDOUT') {
+        abort(`git ${args.join(' ')} timed out after ${GIT_COMMAND_TIMEOUT_MS}ms`);
+      }
+      abort(`git ${args.join(' ')} failed: ${result.error.message}`);
+    }
+    if (result.status === null) {
+      abort(
+        `git ${args.join(' ')} terminated without exit status` +
+          (result.signal ? ` (signal ${result.signal})` : '')
+      );
+    }
     if (result.status !== 0 && !allowFailure) {
       const detail = [result.stderr, result.stdout].filter(Boolean).join('\n').trim();
       abort(`git ${args.join(' ')} failed${detail ? `: ${detail}` : ''}`);
