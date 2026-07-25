@@ -45,6 +45,17 @@ npm run verify:dist         # rebuild + git diff + assert
 
 See workspace `../../docs/CI.md` for shared rationale.
 
+## Releases
+
+Tags are an **output** of passing run, never input. Never push release tags by hand; `.githooks/pre-push` rejects them.
+
+- `.github/workflows/auto-release.yml` runs on every push to `main` and drives `scripts/release-cut.mjs`.
+- `node scripts/release-cut.mjs --plan` reports pending cut (fetch tags first). `--execute` bumps, rebuilds `dist/`, runs typecheck/lint/test, commits, re-verifies committed bytes, then tags last.
+- Version comes from highest tag ever cut, not `package.json`. Existing tags are burnt and skipped, so failed cut never reuses or rewinds version.
+- Conventional-commit type picks bump; `chore`/`ci`/`build`/`test`/`style` alone cut nothing.
+- Release commit lives only on tag. `main` requires pull requests; release commit is reachable from tag, which is ref `release.yml` reads.
+- `RELEASE_POLICY.md` holds full contract.
+
 ## Anti-Patterns
 
 - Never hardcode secrets, tokens, or absolute paths in durable memory
