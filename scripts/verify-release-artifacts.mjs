@@ -1,4 +1,3 @@
-/* global console, process */
 
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
