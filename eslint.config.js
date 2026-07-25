@@ -7,4 +7,13 @@ export default tseslint.config(
   {
     ignores: ['dist/', 'node_modules/', '.worktrees/'],
   },
+  {
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+      },
+    },
+  },
 );
