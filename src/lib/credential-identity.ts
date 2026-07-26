@@ -320,6 +320,7 @@ async function parseSessionResponse(response: Response): Promise<CredentialIdent
     : [];
   const singleRole = coerceText(user?.role);
   const roles = roleEntries.length > 0 ? roleEntries : singleRole ? [singleRole] : undefined;
+  const userType = coerceText(user?.user_type)?.toLowerCase();
   return {
     source: 'iapub/sessions',
     userId: coerceId(identity?.user) ?? coerceId(user?.id),
@@ -332,7 +333,8 @@ async function parseSessionResponse(response: Response): Promise<CredentialIdent
     consumerType:
       coerceText(root.consumerType) ??
       coerceText(data?.consumerType) ??
-      coerceText(user?.consumerType)
+      coerceText(user?.consumerType) ??
+      (userType === 'human' ? 'user' : userType)
   };
 }
 

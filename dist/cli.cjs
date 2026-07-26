@@ -28941,6 +28941,7 @@ async function parseSessionResponse(response) {
   const roleEntries = Array.isArray(user?.roles) ? user.roles.map((entry) => coerceText(entry) ?? coerceId(entry)).filter((entry) => Boolean(entry)) : [];
   const singleRole = coerceText(user?.role);
   const roles = roleEntries.length > 0 ? roleEntries : singleRole ? [singleRole] : void 0;
+  const userType = coerceText(user?.user_type)?.toLowerCase();
   return {
     source: "iapub/sessions",
     userId: coerceId(identity?.user) ?? coerceId(user?.id),
@@ -28949,7 +28950,7 @@ async function parseSessionResponse(response) {
     teamName: coerceText(user?.teamName),
     teamDomain: coerceText(identity?.domain),
     ...roles ? { roles } : {},
-    consumerType: coerceText(root.consumerType) ?? coerceText(data?.consumerType) ?? coerceText(user?.consumerType)
+    consumerType: coerceText(root.consumerType) ?? coerceText(data?.consumerType) ?? coerceText(user?.consumerType) ?? (userType === "human" ? "user" : userType)
   };
 }
 async function probeSessionIdentity(baseUrl, accessToken, fetchImpl, maxAttempts, sleepImpl, random) {
