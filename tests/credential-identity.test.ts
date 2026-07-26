@@ -253,6 +253,54 @@ describe('credential identity', () => {
     );
   });
 
+  it('normalizes the live human user_type when iapub omits consumerType', async () => {
+    const identity = await resolveSessionIdentity({
+      iapubBaseUrl: IAPUB_BASE,
+      accessToken: 'access-token-human-user-type',
+      fetchImpl: sessionFetch({
+        session: {
+          status: 'active',
+          consumerType: null,
+          identity: { user: 52358261, team: 13347347, domain: 'field-services-v12-demo' },
+          data: {
+            user: {
+              user_type: 'human',
+              name: 'Jared Boynton',
+              teamName: 'Field Services v12 Demo',
+              roles: ['admin', 'api-governance-manager', 'api-catalog-manager'],
+              role: 'admin'
+            }
+          },
+          token: 'session-token-must-never-copy'
+        }
+      })
+    });
+
+    expect(identity).toMatchObject({
+      source: 'iapub/sessions',
+      userId: '52358261',
+      teamId: '13347347',
+      teamDomain: 'field-services-v12-demo',
+      consumerType: 'user'
+    });
+    expect(JSON.stringify(identity)).not.toContain('session-token-must-never-copy');
+  });
+
+  it('preserves a service-account user_type when iapub omits consumerType', async () => {
+    const identity = await resolveSessionIdentity({
+      iapubBaseUrl: IAPUB_BASE,
+      accessToken: 'access-token-service-user-type',
+      fetchImpl: sessionFetch({
+        session: {
+          identity: { user: 55002873, team: 13347347, domain: 'field-services-v12-demo' },
+          data: { user: { user_type: 'service_account' } }
+        }
+      })
+    });
+
+    expect(identity?.consumerType).toBe('service_account');
+  });
+
   it('resolveSessionIdentity coerces a numeric identity.team to a string (raw ? String(raw) : undefined)', async () => {
     const identity = await resolveSessionIdentity({
       iapubBaseUrl: IAPUB_BASE,

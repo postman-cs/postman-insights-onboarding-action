@@ -3,7 +3,7 @@
 Insights linking requires two credentials for the same workspace-admin human user:
 
 - `postman-api-key`: a human-user PMAK. The action validates it with bounded `GET /me` and uses it only for observability application lookup/create.
-- `postman-access-token`: a human-user session access token. The action validates that iapub reports `consumerType=user` and uses it for Bifrost and Akita calls.
+- `postman-access-token`: a human-user session access token. The action validates that iapub reports `consumerType=user`, or the equivalent live `data.user.user_type=human` shape, and uses it for Bifrost and Akita calls.
 
 Service-account PMAKs and access tokens fail before any linking write. A missing or expired user token also fails: this action does not mint or refresh access tokens from a PMAK.
 
