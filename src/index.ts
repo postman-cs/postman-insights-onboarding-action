@@ -30,7 +30,7 @@ import {
   serializeBranchDecision,
   type BranchStrategy
 } from './lib/repo-branch-decision.js';
-import { createTelemetryContext } from '@postman-cse/automation-core';
+import { actionSink, createLogger, createTelemetryContext, type Logger } from '@postman-cse/automation-core';
 import { resolveActionVersion } from './action-version.js';
 
 export { getInput } from './lib/input.js';
@@ -766,8 +766,25 @@ export function decideBranchTier(
   );
 }
 
-export async function runAction(): Promise<void> {
+export async function runAction(injectedLogger?: Logger): Promise<void> {
   const inputs = resolveInputs(process.env, true);
+  const logger =
+    injectedLogger ??
+    createLogger({
+      sink: actionSink(core),
+      fields: { action: 'postman-insights-onboarding-action', action_version: resolveActionVersion() }
+    });
+  // Register before anything can print: a credential that reaches the logger
+  // after the first line is a credential that already leaked once.
+  logger.addSecret(inputs.postmanApiKey);
+  logger.addSecret(inputs.postmanAccessToken);
+  logger.addSecret(inputs.githubToken);
+  logger.debug('resolved inputs', {
+    project_name: inputs.projectName || undefined,
+    workspace_id: inputs.workspaceId || undefined,
+    cluster_name: inputs.clusterName || undefined,
+    create_api_key: inputs.createApiKey
+  });
   const planned = createPlannedOutputs(inputs);
   for (const [key, value] of Object.entries(planned)) {
     core.setOutput(key, value);
@@ -832,7 +849,9 @@ export async function runAction(): Promise<void> {
     const apiBase = inputs.postmanApiBase || DEFAULT_POSTMAN_API_BASE;
 
     if (apiKey) {
-      const validated = await validateApiKey(apiKey, apiBase);
+      const validated = await logger.phase('validate-api-key', async () =>
+        validateApiKey(apiKey!, apiBase)
+      );
       if (validated.valid) {
         pmakIdentity = { source: 'pmak/me', teamId: validated.teamId };
       } else if (!inputs.createApiKey) {
@@ -874,8 +893,12 @@ export async function runAction(): Promise<void> {
 
     const client = createInsightsBifrostClient(inputs, activeTokenProvider, teamId, apiKey);
 
-    result = await runOnboarding(inputs, client, sleep, core);
+    result = await logger.phase('onboard-insights-service', async () =>
+      runOnboarding(inputs, client, sleep, core)
+    );
   } catch (error: unknown) {
+    // The action reports failure through setFailed rather than throwing, so the
+    // phase line above is the only place the failing operation is named.
     const message = logDiag(error instanceof Error ? error.message : String(error));
     core.setOutput('status', 'error');
     core.setFailed(`Insights onboarding failed: ${message}`);
