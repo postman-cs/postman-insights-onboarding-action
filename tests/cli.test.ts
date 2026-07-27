@@ -21,7 +21,7 @@ const telemetrySpies = vi.hoisted(() => ({
   setAccountType: vi.fn()
 }));
 
-vi.mock('@postman-cse/automation-telemetry-core', () => ({
+vi.mock('@postman-cse/automation-core', () => ({
   createTelemetryContext: vi.fn(() => ({
     setTeamId: telemetrySpies.setTeamId,
     setAccountType: telemetrySpies.setAccountType,

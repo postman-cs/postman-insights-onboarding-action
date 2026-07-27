@@ -20,7 +20,7 @@ import { serializeBranchDecision } from './lib/repo-branch-decision.js';
 import { sleep } from './lib/retry.js';
 import { getMemoizedSessionIdentity } from './lib/credential-identity.js';
 import { normalizedInputEnvName, runnerInputEnvName } from './lib/input.js';
-import { createTelemetryContext } from '@postman-cse/automation-telemetry-core';
+import { createTelemetryContext } from '@postman-cse/automation-core';
 import { resolveActionVersion } from './action-version.js';
 import { toOneLine } from './lib/secrets.js';
 
