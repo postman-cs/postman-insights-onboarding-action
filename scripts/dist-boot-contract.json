@@ -8,5 +8,9 @@
   "outputIncludes": [
     "gated run",
     "skipping insights linking"
+  ],
+  "githubOutputIncludes": [
+    "sync-status",
+    "skipped-branch-gate"
   ]
 }
