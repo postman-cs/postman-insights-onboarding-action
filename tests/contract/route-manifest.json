@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "routes": [
+    {
+      "id": "api-catalog.discovered-services.list",
+      "service": "api-catalog",
+      "method": "GET",
+      "path": "/api/v1/onboarding/discovered-services",
+      "classification": "live-only",
+      "reason": "Cursor-paginated Insights discovery listing, called both with status=discovered and unfiltered for link reconciliation. No committed cassette: Insights rejects service-account credentials, and the WS3 recorder mints from a PMAK in a gitignored .env, so this route cannot be captured by the existing local recording path."
+    },
+    {
+      "id": "api-catalog.prepare-collection",
+      "service": "api-catalog",
+      "method": "POST",
+      "path": "/api/v1/onboarding/prepare-collection",
+      "classification": "live-only",
+      "reason": "Creates the catalog collection for a discovered service. Mutating and non-idempotent at the wire level (guarded in-process by mutateOnceThenReconcile), so it is proven live rather than replayed until WS5 models the reconcile state machine."
+    },
+    {
+      "id": "api-catalog.onboard-git",
+      "service": "api-catalog",
+      "method": "POST",
+      "path": "/api/v1/onboarding/git",
+      "classification": "live-only",
+      "reason": "Associates a service with its originating git repository. Requires a real workspace/environment/service triple that only exists after live discovery, so there is no committed cassette."
+    },
+    {
+      "id": "akita.services.list",
+      "service": "akita",
+      "method": "GET",
+      "path": "/v2/api-catalog/services",
+      "classification": "live-only",
+      "reason": "Page-numbered provider-service listing used to resolve the canonical Insights service id. The akita surface returns 401 'Postman User not found' for service-account identities, so it needs a human-user session token that cannot be minted in CI or by the WS3 recorder."
+    },
+    {
+      "id": "akita.services.onboard",
+      "service": "akita",
+      "method": "POST",
+      "path": "/v2/api-catalog/services/onboard",
+      "classification": "live-only",
+      "reason": "Acknowledges provider-service onboarding. Same human-user-session requirement as the akita listing route, and mutating, so it is not replayed offline."
+    },
+    {
+      "id": "akita.workspace.acknowledge.read",
+      "service": "akita",
+      "method": "GET",
+      "path": "/v2/workspaces/{workspaceId}/onboarding/acknowledge",
+      "classification": "live-only",
+      "reason": "Reads workspace onboarding acknowledgment state to decide whether the write is needed. Human-user session token required; no committed cassette."
+    },
+    {
+      "id": "akita.workspace.acknowledge.write",
+      "service": "akita",
+      "method": "POST",
+      "path": "/v2/workspaces/{workspaceId}/onboarding/acknowledge",
+      "classification": "live-only",
+      "reason": "Writes the workspace onboarding acknowledgment. Human-user session token required; mutating, so it is proven live."
+    },
+    {
+      "id": "akita.workspace.team-verification-token",
+      "service": "akita",
+      "method": "GET",
+      "path": "/v2/workspaces/{workspaceId}/team-verification-token",
+      "classification": "live-only",
+      "reason": "Fetches the workspace team-verification token surfaced to the operator for agent install. Human-user session token required; the response is credential material, which is a further reason not to hold it in a committed fixture."
+    },
+    {
+      "id": "identity.api-keys.create",
+      "service": "identity",
+      "method": "POST",
+      "path": "/api/keys",
+      "classification": "intentionally-unsimulated",
+      "reason": "Mints a real Postman API key through the Bifrost identity service. Deliberately never simulated: a cassette of this route would either carry live key material or teach the suite to assert against a fabricated credential shape. The call site is covered by unit tests with an injected fetch double instead."
+    },
+    {
+      "id": "observability.applications.list",
+      "service": "observability",
+      "method": "GET",
+      "path": "/v2/agent/api-catalog/workspaces/{workspaceId}/applications",
+      "classification": "live-only",
+      "reason": "Lists application bindings to reconcile before creating one. Direct call to the observability host (not the Bifrost proxy) and PMAK-authenticated; no committed cassette."
+    },
+    {
+      "id": "observability.applications.create",
+      "service": "observability",
+      "method": "POST",
+      "path": "/v2/agent/api-catalog/workspaces/{workspaceId}/applications",
+      "classification": "live-only",
+      "reason": "Creates the application binding. A live probe showed this route rejects both x-access-token and x-api-key for service-account identities with 401 'Postman User not found', so it stays PMAK-primary and is proven only against a human-user credential."
+    },
+    {
+      "id": "iapub.sessions.current",
+      "service": "iapub",
+      "method": "GET",
+      "path": "/api/sessions/current",
+      "classification": "live-only",
+      "reason": "Resolves the access-token session identity that gates org mode and the consumerType=user requirement. Response is session identity material; no committed cassette."
+    },
+    {
+      "id": "postman-api.me",
+      "service": "postman-api",
+      "method": "GET",
+      "path": "/me",
+      "classification": "live-only",
+      "reason": "PMAK validation and PMAK-identity preflight probe. Called from the API-key validator and the credential preflight; not used to choose Bifrost team headers. No committed cassette."
+    }
+  ]
+}
