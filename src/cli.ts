@@ -17,7 +17,7 @@ import {
   type Reporter
 } from './index.js';
 import { serializeBranchDecision } from './lib/repo-branch-decision.js';
-import { sleep } from './lib/retry.js';
+import { sleep } from '@postman-cse/automation-core';
 import { getMemoizedSessionIdentity } from './lib/credential-identity.js';
 import { normalizedInputEnvName, runnerInputEnvName } from './lib/input.js';
 import { createTelemetryContext } from '@postman-cse/automation-core';

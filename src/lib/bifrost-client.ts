@@ -1,11 +1,11 @@
 import { getMemoizedSessionIdentity } from './credential-identity.js';
 import { adviseFromBifrostBody, adviseFromHttpError, type ErrorAdviceContext } from './error-advice.js';
-import { HttpError } from './http-error.js';
 import {
+  HttpError,
   isAmbiguousMutationFailure,
   retry,
   SAFE_READ_RETRY
-} from './retry.js';
+} from '@postman-cse/automation-core';
 import { createSecretMasker } from './secrets.js';
 import { POSTMAN_ENDPOINT_PROFILES } from './postman/base-urls.js';
 import { AccessTokenProvider } from './postman/token-provider.js';
@@ -220,7 +220,8 @@ export class BifrostCatalogClient {
             {
               method: 'POST',
               url: `bifrost:api-catalog:${method} ${path}`,
-              secretValues: this.secretValues
+              secretValues: this.secretValues,
+              oneLine: true
             }
           );
           const advised = adviseFromHttpError(httpErr, this.adviceContext(operation));
@@ -232,7 +233,8 @@ export class BifrostCatalogClient {
           {
             method: 'POST',
             url: `bifrost:api-catalog:${method} ${path}`,
-            secretValues: this.secretValues
+            secretValues: this.secretValues,
+            oneLine: true
           }
         );
         const advised = adviseFromHttpError(httpErr, this.adviceContext(operation));
@@ -244,7 +246,8 @@ export class BifrostCatalogClient {
       const httpErr = await HttpError.fromResponse(response, {
         method: 'POST',
         url: `bifrost:api-catalog:${method} ${path}`,
-        secretValues: this.secretValues
+        secretValues: this.secretValues,
+        oneLine: true
       });
       const advised = adviseFromHttpError(httpErr, this.adviceContext(operation));
       throw advised ?? httpErr;
@@ -326,7 +329,8 @@ export class BifrostCatalogClient {
       status,
       statusText: status >= 500 ? 'Error' : 'Client Error',
       responseBody: errorText,
-      secretValues: this.secretValues
+      secretValues: this.secretValues,
+      oneLine: true
     });
     const advised = adviseFromHttpError(httpErr, this.adviceContext(operation));
     throw advised ?? httpErr;
@@ -693,6 +697,7 @@ export class BifrostCatalogClient {
         method: 'GET',
         url: `observability:listApplications(${workspaceId})`,
         secretValues: this.secretValues,
+        oneLine: true
       });
       const advised = adviseFromHttpError(httpErr, this.adviceContext('application binding lookup'));
       throw advised ?? httpErr;
@@ -759,6 +764,7 @@ export class BifrostCatalogClient {
             method: 'POST',
             url: `observability:createApplication(${workspaceId})`,
             secretValues: this.secretValues,
+            oneLine: true
           });
           const advised = adviseFromHttpError(httpErr, this.adviceContext('application binding'));
           throw advised ?? httpErr;
@@ -791,7 +797,8 @@ export class BifrostCatalogClient {
             status: page.status,
             statusText: 'Error',
             responseBody: page.errorText,
-            secretValues: this.secretValues
+            secretValues: this.secretValues,
+            oneLine: true
           });
         }
         return page;
@@ -819,6 +826,7 @@ export class BifrostCatalogClient {
         method: 'POST',
         url: 'bifrost:identity:POST /api/keys',
         secretValues: this.secretValues,
+        oneLine: true
       });
       const advised = adviseFromHttpError(httpErr, this.adviceContext('API key creation'));
       throw advised ?? httpErr;

@@ -21,13 +21,17 @@ const telemetrySpies = vi.hoisted(() => ({
   setAccountType: vi.fn()
 }));
 
-vi.mock('@postman-cse/automation-core', () => ({
-  createTelemetryContext: vi.fn(() => ({
-    setTeamId: telemetrySpies.setTeamId,
-    setAccountType: telemetrySpies.setAccountType,
-    emitCompletion: telemetrySpies.emitCompletion
-  }))
-}));
+vi.mock('@postman-cse/automation-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@postman-cse/automation-core')>();
+  return {
+    ...actual,
+    createTelemetryContext: vi.fn(() => ({
+      setTeamId: telemetrySpies.setTeamId,
+      setAccountType: telemetrySpies.setAccountType,
+      emitCompletion: telemetrySpies.emitCompletion
+    }))
+  };
+});
 
 describe('parseCliArgs', () => {
   it('maps CLI flags into INPUT_* env keys', () => {

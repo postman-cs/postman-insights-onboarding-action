@@ -11,12 +11,12 @@ import {
   findDiscoveredService,
   type DiscoveredService
 } from '../src/lib/bifrost-client.js';
-import { HttpError } from '../src/lib/http-error.js';
 import {
+  HttpError,
   isAmbiguousMutationFailure,
   isTransientHttpStatus,
   shouldRetryReadError
-} from '../src/lib/retry.js';
+} from '@postman-cse/automation-core';
 
 function makeInputs(overrides: Partial<ActionInputs> = {}): ActionInputs {
   return {

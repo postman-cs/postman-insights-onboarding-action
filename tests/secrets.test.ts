@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ConsoleReporter } from '../src/cli.js';
-import { HttpError } from '../src/lib/http-error.js';
+import { HttpError } from '@postman-cse/automation-core';
 import {
   __resetIdentityMemo,
   crossCheckIdentities,
@@ -98,7 +98,8 @@ describe('secret safety rails', () => {
       status: 502,
       statusText: 'Bad Gateway',
       responseBody: 'upstream failed:\nline-two\rcause=token-123',
-      secretValues: ['token-123']
+      secretValues: ['token-123'],
+      oneLine: true
     });
 
     expect(error.message).not.toContain('\r');
