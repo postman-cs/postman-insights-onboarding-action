@@ -8,8 +8,7 @@
  * name cassette files that exist. Unreadable HTTP call sites fail closed rather
  * than disappearing from the surface.
  *
- * The extractor/validator import is the shared WS4 contract; it moves to
- * `@postman-cse/automation-core/route-manifest` when that subpath publishes.
+ * The extractor/validator is the shared WS4 contract published by automation-core.
  */
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -24,7 +23,7 @@ import {
   validateRouteManifest,
   type RouteManifest,
   type RouteManifestRoute
-} from './route-manifest-contract.js';
+} from '@postman-cse/automation-core/route-manifest';
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
 const sourceRoot = path.join(repoRoot, 'src');
@@ -142,7 +141,7 @@ describe('route manifest contract', () => {
     expect(ids).toContain('identity POST /api/keys'); // inline envelope literal
     expect(ids).toContain('api-catalog POST /api/v1/onboarding/prepare-collection'); // proxyRequest helper
     expect(ids).toContain('akita GET /v2/api-catalog/services'); // helper behind a multi-line generic
-    expect(ids).toContain('observability POST /v2/agent/api-catalog/workspaces/{workspaceId}/applications');
+    expect(ids).toContain('observability POST /v2/agent/api-catalog/workspaces/{param}/applications');
     expect(ids).toContain('iapub GET /api/sessions/current'); // function-scoped alias + const path
     expect(ids).toContain('postman-api GET /me');
 
@@ -166,10 +165,10 @@ describe('route manifest contract', () => {
       '/api/v1/onboarding/discovered-services'
     );
     expect(normalizePath('/v2/workspaces/${workspaceId}/onboarding/acknowledge')).toBe(
-      '/v2/workspaces/{workspaceId}/onboarding/acknowledge'
+      '/v2/workspaces/{param}/onboarding/acknowledge'
     );
     expect(normalizePath('/v2/agent/workspaces/${this.workspace.id}/applications')).toBe(
-      '/v2/agent/workspaces/{id}/applications'
+      '/v2/agent/workspaces/{param}/applications'
     );
   });
 });

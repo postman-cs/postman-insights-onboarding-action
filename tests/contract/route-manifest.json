@@ -45,7 +45,7 @@
       "id": "akita.workspace.acknowledge.read",
       "service": "akita",
       "method": "GET",
-      "path": "/v2/workspaces/{workspaceId}/onboarding/acknowledge",
+      "path": "/v2/workspaces/{param}/onboarding/acknowledge",
       "classification": "live-only",
       "reason": "Reads workspace onboarding acknowledgment state to decide whether the write is needed. Human-user session token required; no committed cassette."
     },
@@ -53,7 +53,7 @@
       "id": "akita.workspace.acknowledge.write",
       "service": "akita",
       "method": "POST",
-      "path": "/v2/workspaces/{workspaceId}/onboarding/acknowledge",
+      "path": "/v2/workspaces/{param}/onboarding/acknowledge",
       "classification": "live-only",
       "reason": "Writes the workspace onboarding acknowledgment. Human-user session token required; mutating, so it is proven live."
     },
@@ -61,7 +61,7 @@
       "id": "akita.workspace.team-verification-token",
       "service": "akita",
       "method": "GET",
-      "path": "/v2/workspaces/{workspaceId}/team-verification-token",
+      "path": "/v2/workspaces/{param}/team-verification-token",
       "classification": "live-only",
       "reason": "Fetches the workspace team-verification token surfaced to the operator for agent install. Human-user session token required; the response is credential material, which is a further reason not to hold it in a committed fixture."
     },
@@ -77,7 +77,7 @@
       "id": "observability.applications.list",
       "service": "observability",
       "method": "GET",
-      "path": "/v2/agent/api-catalog/workspaces/{workspaceId}/applications",
+      "path": "/v2/agent/api-catalog/workspaces/{param}/applications",
       "classification": "live-only",
       "reason": "Lists application bindings to reconcile before creating one. Direct call to the observability host (not the Bifrost proxy) and PMAK-authenticated; no committed cassette."
     },
@@ -85,7 +85,7 @@
       "id": "observability.applications.create",
       "service": "observability",
       "method": "POST",
-      "path": "/v2/agent/api-catalog/workspaces/{workspaceId}/applications",
+      "path": "/v2/agent/api-catalog/workspaces/{param}/applications",
       "classification": "live-only",
       "reason": "Creates the application binding. A live probe showed this route rejects both x-access-token and x-api-key for service-account identities with 401 'Postman User not found', so it stays PMAK-primary and is proven only against a human-user credential."
     },
