@@ -293,6 +293,31 @@ describe('release workflow publishing contract', () => {
     assertTokenOrder('Verify SEA binary checksum', 'Publish GitHub release', publish);
   });
 
+  it('smoke-tests SEA proxy routing before publish in both SEA lanes', () => {
+    // The proxy smoke proves the SEA's first live call (GET /me PMAK validation
+    // on api.getpostman.com) honors HTTP_PROXY, as egress-proxied runners
+    // require. It must run in the release build-sea job (gating publish) and in
+    // the standalone sea-binary workflow, with identical arguments.
+    const proxyCommand =
+      'node scripts/assert-sea-proxy.mjs "$BIN" api.getpostman.com:443';
+    const build = releaseWorkflow.slice(releaseWorkflow.indexOf('  build-sea:'));
+    const seaWorkflow = readFileSync(
+      join(process.cwd(), '.github/workflows/sea-binary.yml'),
+      'utf8'
+    ).replace(/\r\n/g, '\n');
+    for (const haystack of [build, seaWorkflow]) {
+      expect(haystack).toContain(proxyCommand);
+      expect(haystack).toContain('--project-name sea-proxy-smoke');
+      expect(haystack).toContain('--workspace-id 00000000-0000-4000-8000-000000000000');
+      expect(haystack).toContain('--environment-id 00000000-0000-4000-8000-000000000001');
+      expect(haystack).toContain('--postman-access-token sea-proxy-smoke-token');
+      expect(haystack).toContain('--postman-api-key PMAK-sea-proxy-smoke');
+    }
+    // The proxy smoke gates the artifact upload in both lanes.
+    assertTokenOrder(proxyCommand, 'actions/upload-artifact@v7', build);
+    assertTokenOrder(proxyCommand, 'actions/upload-artifact@v7', seaWorkflow);
+  });
+
   it('keeps the SEA build script and config hermetic and checksum-verified', () => {
     const seaConfig = readFileSync(join(process.cwd(), 'sea-config.json'), 'utf8');
     expect(seaConfig).toContain('"execArgvExtension": "none"');
