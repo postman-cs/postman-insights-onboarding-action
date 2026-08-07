@@ -28,6 +28,8 @@ function linuxQueuedGates(runGates: string): string[] {
 }
 
 const linux = jobText(ciWorkflow, 'gate');
+const distParity = jobText(ciWorkflow, 'dist-parity');
+const ready = jobText(ciWorkflow, 'ready');
 const windows = jobText(ciWorkflow, 'windows');
 
 describe('CI workflow contract', () => {
@@ -36,11 +38,12 @@ describe('CI workflow contract', () => {
     expect(ciWorkflow).toContain("cancel-in-progress: ${{ github.event_name == 'pull_request' }}");
   });
 
-  it('keeps top-level permissions and independent jobs with no needs', () => {
+  it('keeps top-level permissions and independent gate/windows jobs', () => {
     expect(ciWorkflow).toMatch(/^permissions:\n {2}contents: read\n/m);
-    expect(ciWorkflow).not.toMatch(/^\s*needs:/m);
     expect(linux).not.toMatch(/^\s*needs:/m);
     expect(windows).not.toMatch(/^\s*needs:/m);
+    expect(distParity).toMatch(/^\s*needs:\s*gate\s*$/m);
+    expect(ready).toContain('needs: [gate, dist-parity, windows]');
   });
 
   it('retains Linux with one install, one pre-queue bundle, and the full bounded gate set', () => {
@@ -74,24 +77,24 @@ describe('CI workflow contract', () => {
       'lint',
       'typecheck',
       'test',
-      'dist',
+      'dist-shape',
       'actionlint',
       'commitlint',
     ]);
     expect(runGates).toContain('run lint       npm run lint');
     expect(runGates).toContain('run typecheck  npm run typecheck');
     expect(runGates).toContain('run test       npm test');
-    expect(runGates).toContain('run dist       npm run verify:dist:assert');
+    expect(runGates).toContain('run dist-shape npm run verify:dist:shape');
     expect(runGates).toContain('run actionlint "$ACTIONLINT_BIN"');
     expect(runGates).toContain('if [ "${{ github.event_name }}" = "pull_request" ]; then');
     expect(runGates).toContain('run commitlint npx commitlint \\');
     expect(runGates).toContain('--from "${{ github.event.pull_request.base.sha }}"');
     expect(runGates).toContain('--to "${{ github.event.pull_request.head.sha }}"');
 
-    // Queue stays read-only: no mutating build / verify:dist inside the fan-out.
     expect(runGates).not.toContain('npm run build');
+    expect(runGates).not.toContain('verify:dist:assert');
+    expect(runGates).not.toContain('verify:dist:parity');
     expect(runGates).not.toMatch(/npm run verify:dist(?:\s|$|"|')/);
-    expect(runGates).not.toContain('rm -rf dist');
 
     expect(runGates).toContain('gate:$n=pass');
     expect(runGates).toContain('gate:$n=fail');
@@ -123,12 +126,17 @@ describe('CI workflow contract', () => {
     expect(windows).toContain("node-version: '24'");
     expect(windows).not.toMatch(/^\s*cache:\s*npm\s*$/m);
 
-    expect(windows).toContain(
-      'uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0',
-    );
+    // Semantic pin: any 40-char hex SHA, consistent across file, with semver comment
+    {
+      const cachePins = [...ciWorkflow.matchAll(/actions\/cache@([0-9a-f]{40})/g)].map((m) => m[1]!);
+      expect(cachePins.length).toBeGreaterThanOrEqual(1);
+      for (const sha of cachePins) expect(sha).toMatch(/^[0-9a-f]{40}$/);
+      expect(new Set(cachePins).size).toBe(1);
+      expect(windows).toMatch(/uses:\s*actions\/cache@[0-9a-f]{40}\s+#\s*v\d+\.\d+\.\d+/);
+    }
     expect(windows).toContain('id: windows-node-modules');
     expect(windows).toContain('path: node_modules');
-    expect(windows).toContain("key: Windows/node-24/${{ hashFiles('package-lock.json') }}");
+    expect(windows).toContain("key: Windows/node-24/exact-${{ hashFiles('package-lock.json') }}");
     expect(windows).not.toContain('restore-keys');
     expect(windows).not.toContain('restore-keys:');
 
@@ -166,9 +174,38 @@ describe('CI workflow contract', () => {
 
   it('keeps full-history checkout on Linux for commitlint and shallow checkout on Windows', () => {
     expect(linux).toContain('fetch-depth: 0');
-    // Full history is only for the Linux commitlint range; Windows must stay shallow.
     expect(windows).not.toMatch(/^\s*fetch-depth:\s*/m);
     expect(windows).not.toContain('fetch-depth: 0');
     expect(windows).not.toContain('commitlint');
+  });
+
+  it('uploads candidate dist from gate and expected-dist from dist-parity on mismatch', () => {
+    const candidate = namedStep(linux, 'Upload candidate dist');
+    expect(candidate.length).toBeGreaterThan(0);
+    expect(candidate).toContain('uses: actions/upload-artifact@v7');
+    expect(candidate).toContain('name: candidate-dist');
+    expect(candidate).toContain('dist/');
+    expect(candidate).toContain('dist-manifest.json');
+    expect(namedStep(linux, 'Write dist manifest')).toContain('lock_hash');
+    expect(namedStep(linux, 'Ensure clean tracked tree outside dist')).toContain('git status --porcelain');
+    expect(linux).not.toContain('name: expected-dist');
+
+    const upload = namedStep(distParity, 'Upload expected dist on mismatch');
+    expect(upload.length).toBeGreaterThan(0);
+    expect(upload).toContain('if: failure()');
+    expect(upload).toContain('uses: actions/upload-artifact@v7');
+    expect(upload).toContain('name: expected-dist');
+    expect(upload).toContain('path: dist/');
+    expect(distParity).toContain('npm run verify:dist:parity');
+    expect(distParity).not.toContain('verify:dist:shape');
+    expect(distParity).not.toContain('verify:dist:assert');
+  });
+
+  it('aggregates gate, dist-parity, and windows in a required ready job', () => {
+    expect(ready).toContain('if: always()');
+    expect(ready).toContain('needs.gate.result');
+    expect(ready).toContain('needs.dist-parity.result');
+    expect(ready).toContain('needs.windows.result');
+    expect(ready).toContain('exit 1');
   });
 });
