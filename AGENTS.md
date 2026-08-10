@@ -22,7 +22,10 @@ tests/
 ## Commands
 
 ```bash
-npm ci && npm test && npm run typecheck && npm run build
+npm ci
+npm test
+npm run typecheck
+npm run build
 npm run verify:dist:assert  # read-only: shebang/exec/census/builtins + git diff
 npm run verify:dist         # rebuild + git diff + assert
 ```
