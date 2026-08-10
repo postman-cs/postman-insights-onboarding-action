@@ -99,6 +99,9 @@ describe('CI workflow contract', () => {
     expect(runGates).toContain('gate:$n=pass');
     expect(runGates).toContain('gate:$n=fail');
     expect(runGates).toContain('::group::$n');
+    expect(runGates).toContain('>"$RUNNER_TEMP/$n.log"');
+    expect(runGates).toContain('cat "$RUNNER_TEMP/$n.log"');
+    expect(runGates).not.toContain('>"$n.log"');
   });
 
   it('installs pinned actionlint 1.7.11 into $RUNNER_TEMP without Go', () => {
