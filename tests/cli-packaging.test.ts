@@ -23,7 +23,7 @@ const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tempDirs: string[] = [];
 
-const EXPECTED_PACKAGE_NAME = '@postman-cse/onboarding-insights';
+const EXPECTED_PACKAGE_NAME = '@postman/onboarding-insights';
 const EXPECTED_BIN_NAME = 'postman-insights-onboard';
 const EXPECTED_PACK_CENSUS = [
   'action.yml',
@@ -372,7 +372,7 @@ async function runPosixInstallPackaging(): Promise<void> {
   const binPath = path.join(
     prefixDir,
     'node_modules',
-    '@postman-cse',
+    '@postman',
     'onboarding-insights',
     'dist',
     'cli.cjs'
