@@ -10,12 +10,16 @@ type WorkflowStep = {
   name?: string;
   uses?: string;
   run?: string;
+  id?: string;
+  if?: string;
+  'continue-on-error'?: boolean;
   with?: Record<string, unknown>;
 };
 
 type WorkflowJob = {
   if?: string;
   permissions?: Record<string, string>;
+  outputs?: Record<string, string>;
   steps?: WorkflowStep[];
 };
 
@@ -117,7 +121,9 @@ describe('release workflow publishing contract', () => {
     expect(publish).toContain('Authenticate transferred release bytes');
     expect(publish).toContain('actions/setup-node@v7');
     expect(publish).toContain('npm view');
-    expect(publish.match(/\| node -e "let data=/g) ?? []).toHaveLength(4);
+    // The artifact manifest is parsed once per npm attempt, hard registry
+    // verification, and soft-failure warning (name + version each time).
+    expect(publish.match(/\| node -e "let data=/g) ?? []).toHaveLength(8);
     expect(publish).not.toContain('| node -p "let data=');
     expect(publish).toContain("['publish', './release/release.tgz', '--provenance', '--access', 'public']");
     expect(publish).toContain('node <<\'NODE\'');
@@ -197,11 +203,15 @@ describe('release workflow publishing contract', () => {
     expect(releaseWorkflow).not.toContain('go install github.com/rhysd/actionlint');
   });
 
-  it('branches npm lookup on explicit E404 and publishes npm before GitHub with real ordering', () => {
+  it('keeps local checks hard, publishes GitHub first, and soft-fails only the npm attempt', () => {
     const publish = section('  publish:', '  advance-major-alias:');
     const npmPublish = "['publish', './release/release.tgz', '--provenance', '--access', 'public']";
     const npmPublishShell = 'npm publish ./release/release.tgz --provenance --access public';
     const ghRelease = 'softprops/action-gh-release';
+    const publishJob = requireJob('publish');
+    const npmStep = publishJob.steps?.find((step) => step.id === 'npm-publish');
+    const registryStep = publishJob.steps?.find((step) => step.name === 'Verify npm registry identity');
+    const warningStep = publishJob.steps?.find((step) => step.name === 'Report npm publish skipped');
     expect(publish).toContain("npm view \"$PKG_NAME@$PKG_VERSION\" dist.integrity");
     expect(publish).toContain('isExplicitNpmE404');
     expect(publish).toContain('verifySha512Sri');
@@ -209,8 +219,22 @@ describe('release workflow publishing contract', () => {
     expect(publish).toContain(npmPublish);
     expect(publish).not.toContain(npmPublishShell);
     expect(releaseWorkflow).toContain(ghRelease);
-    assertTokenOrder('Publish or verify npm package identity', 'Publish GitHub release', publish);
-    assertTokenOrder(npmPublish, ghRelease, releaseWorkflow);
+    expect(publishJob.outputs?.published).toBe('${{ steps.npm-publish.outputs.published }}');
+    expect(npmStep?.['continue-on-error']).toBe(true);
+    expect(stepRun(npmStep)).toContain('set -euo pipefail');
+    expect(stepRun(npmStep)).toContain("sed -i '/_authToken/d'");
+    expect(stepRun(npmStep)).toContain('echo "published=false" >> "$GITHUB_OUTPUT"');
+    expect(stepRun(npmStep)).toContain('echo "published=true" >> "$GITHUB_OUTPUT"');
+    expect(registryStep?.if).toBe("steps.npm-publish.outputs.published == 'true'");
+    expect(registryStep?.['continue-on-error']).toBeUndefined();
+    expect(warningStep?.if).toBe("steps.npm-publish.outputs.published != 'true'");
+    expect(stepRun(warningStep)).toContain('GitHub Release remains authoritative');
+    expect(stepRun(warningStep)).toContain('backfill-npm.yml');
+    assertTokenOrder('Verify staged release artifacts', 'Verify SEA binary checksum', publish);
+    assertTokenOrder('Verify SEA binary checksum', 'Publish GitHub release', publish);
+    assertTokenOrder('Publish GitHub release', 'Publish or verify npm package identity', publish);
+    assertTokenOrder('Publish or verify npm package identity', 'Verify npm registry identity', publish);
+    assertTokenOrder('Verify npm registry identity', 'Report npm publish skipped', publish);
     expect(releaseWorkflow).toContain('group: release-${{ github.repository }}');
     expect(releaseWorkflow).toContain('cancel-in-progress: false');
   });
@@ -291,6 +315,20 @@ describe('release workflow publishing contract', () => {
     expect(publish).toContain('sea/postman-insights-onboard-*-linux-x64');
     expect(publish).toContain('sea/postman-insights-onboard-*-linux-x64.sha256');
     assertTokenOrder('Verify SEA binary checksum', 'Publish GitHub release', publish);
+  });
+
+  it('defines an OIDC-capable immutable-tag backfill workflow', () => {
+    const backfill = readFileSync(join(process.cwd(), '.github/workflows/backfill-npm.yml'), 'utf8');
+    expect(backfill).toContain('workflow_dispatch:');
+    expect(backfill).toContain('tags:');
+    expect(backfill).toContain("node-version: '24'");
+    expect(backfill).toContain("registry-url: 'https://registry.npmjs.org'");
+    expect(backfill).toContain('contents: read');
+    expect(backfill).toContain('id-token: write');
+    expect(backfill).toContain("PACKAGE_NAME='@postman/onboarding-insights'");
+    expect(backfill).toContain("gh release download \"$TAG\"");
+    expect(backfill).toContain('--provenance --access public --tag backfill');
+    expect(backfill).toContain('npm dist-tag add "$PACKAGE_NAME@$HIGHEST" latest');
   });
 
   it('smoke-tests SEA proxy routing before publish in both SEA lanes', () => {
