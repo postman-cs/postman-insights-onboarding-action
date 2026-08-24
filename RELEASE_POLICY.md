@@ -48,7 +48,7 @@ The same gates run locally before any push:
 
 ## npm package
 
-The CLI publishes as `@postman-cse/onboarding-insights` with versions that match the GitHub release tag. The rolling `v1` alias updates the action channel and skips npm publishing.
+The CLI publishes as `@postman/onboarding-insights` with versions that match the GitHub release tag. The rolling `v1` alias updates the action channel and skips npm publishing.
 
 ## Compatibility
 
