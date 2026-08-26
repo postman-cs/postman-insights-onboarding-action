@@ -252,6 +252,10 @@ describe('release workflow publishing contract', () => {
     expect(alias).toContain('Advance rolling major alias without regression');
     expect(alias).toContain('node scripts/advance-release-alias.mjs');
     expect(alias).toContain("if: needs.classify-release.outputs.release_kind == 'immutable'");
+    expect(alias).toContain('actions/create-github-app-token@');
+    expect(alias).toContain('permission-contents: write');
+    expect(alias).toContain('permission-workflows: write');
+    expect(alias).toContain('token: ${{ steps.alias-token.outputs.token }}');
     expect(alias).not.toContain('git fetch --tags --force');
     expect(alias).not.toContain('git merge-base --is-ancestor');
     expect(alias).not.toContain('git fetch --tags');

@@ -31,11 +31,17 @@ jobs:
     permissions:
       contents: write
       actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
+          persist-credentials: false
+
+      - name: Configure Git authentication
+        run: gh auth setup-git
 
       - name: Reconcile prior release
         id: reconcile
@@ -44,6 +50,8 @@ jobs:
           ROLLING_ALIASES: major
         run: |
           set -euo pipefail
+          echo 'recovery_tag=' >> "$GITHUB_OUTPUT"
+          echo 'recovery_target=' >> "$GITHUB_OUTPUT"
           LATEST=""
           while IFS= read -r CANDIDATE; do
             if [[ "$CANDIDATE" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -77,7 +85,8 @@ jobs:
                 esac
                 if ! ALIAS_COMMIT="$(git rev-parse --verify "${ALIAS}^{commit}" 2>/dev/null)" ||
                   [ "$ALIAS_COMMIT" != "$TARGET" ]; then
-                  TAG="$LATEST"
+                  echo "recovery_tag=$LATEST" >> "$GITHUB_OUTPUT"
+                  echo "recovery_target=$TARGET" >> "$GITHUB_OUTPUT"
                   break
                 fi
               done
@@ -96,6 +105,28 @@ jobs:
             exit 0
           fi
           gh workflow run release.yml --ref "$TAG"
+
+      - name: Mint release recovery App token
+        if: steps.reconcile.outputs.recovery_tag != ''
+        id: recovery-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.SUITE_PIN_BOT_APP_ID }}
+          private-key: ${{ secrets.SUITE_PIN_BOT_PRIVATE_KEY }}
+          owner: postman-cs
+          repositories: postman-insights-onboarding-action
+          permission-contents: write
+          permission-workflows: write
+
+      - name: Recover published rolling alias
+        if: steps.reconcile.outputs.recovery_tag != ''
+        env:
+          GH_TOKEN: ${{ steps.recovery-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          GITHUB_REF_NAME="${{ steps.reconcile.outputs.recovery_tag }}" \
+          GITHUB_SHA="${{ steps.reconcile.outputs.recovery_target }}" \
+            node scripts/advance-release-alias.mjs
 
       - uses: actions/setup-node@v7
         if: steps.reconcile.outputs.blocked != 'true'
