@@ -21,8 +21,8 @@ const telemetrySpies = vi.hoisted(() => ({
   setAccountType: vi.fn()
 }));
 
-vi.mock('@postman-cse/automation-core', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@postman-cse/automation-core')>();
+vi.mock('@postman-cs/automation-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@postman-cs/automation-core')>();
   return {
     ...actual,
     createTelemetryContext: vi.fn(() => ({

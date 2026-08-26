@@ -18,7 +18,7 @@ import {
   type PostmanRegion,
   type PostmanStack
 } from './lib/postman/base-urls.js';
-import { sleep } from '@postman-cse/automation-core';
+import { sleep } from '@postman-cs/automation-core';
 import { createSecretMasker, toOneLine } from './lib/secrets.js';
 import { AccessTokenProvider } from './lib/postman/token-provider.js';
 import { getInput } from './lib/input.js';
@@ -30,7 +30,7 @@ import {
   serializeBranchDecision,
   type BranchStrategy
 } from './lib/repo-branch-decision.js';
-import { actionSink, createLogger, createTelemetryContext, type Logger } from '@postman-cse/automation-core';
+import { actionSink, createLogger, createTelemetryContext, type Logger } from '@postman-cs/automation-core';
 import { resolveActionVersion } from './action-version.js';
 
 export { getInput } from './lib/input.js';
