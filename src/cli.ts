@@ -120,7 +120,7 @@ function resolvePackageVersion(): string {
         name?: string;
         version?: string;
       };
-      if (packageJson.name === '@postman/onboarding-insights' && packageJson.version) {
+      if (packageJson.name === '@postman-cs/onboarding-insights' && packageJson.version) {
         return String(packageJson.version).trim();
       }
     } catch {

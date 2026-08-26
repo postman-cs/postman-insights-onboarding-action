@@ -325,7 +325,7 @@ describe('release workflow publishing contract', () => {
     expect(backfill).toContain("registry-url: 'https://registry.npmjs.org'");
     expect(backfill).toContain('contents: read');
     expect(backfill).toContain('id-token: write');
-    expect(backfill).toContain("PACKAGE_NAME='@postman/onboarding-insights'");
+    expect(backfill).toContain("PACKAGE_NAME='@postman-cs/onboarding-insights'");
     expect(backfill).toContain("gh release download \"$TAG\"");
     expect(backfill).toContain('--provenance --access public --tag backfill');
     expect(backfill).toContain('npm dist-tag add "$PACKAGE_NAME@$HIGHEST" latest');

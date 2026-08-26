@@ -39,7 +39,7 @@ function fixture(overrides: Record<string, unknown> = {}, options: { extraFile?:
       repository: 'postman-cs/postman-insights-onboarding-action',
       commit_sha: 'abc123',
       tag: 'v2.1.4',
-      package_name: '@postman/onboarding-insights',
+      package_name: '@postman-cs/onboarding-insights',
       package_version: '2.1.4',
       artifacts: [{ path: 'release.tgz', sha256: SHA }],
       ...overrides
@@ -54,7 +54,7 @@ function verify(directory: string, overrides: Record<string, string> = {}) {
     repository: 'postman-cs/postman-insights-onboarding-action',
     commitSha: 'abc123',
     tag: 'v2.1.4',
-    packageName: '@postman/onboarding-insights',
+    packageName: '@postman-cs/onboarding-insights',
     packageVersion: '2.1.4',
     ...overrides
   });

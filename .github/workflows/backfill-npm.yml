@@ -28,7 +28,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${NODE_AUTH_TOKEN:-}" ]; then sed -i '/_authToken/d' "${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"; fi
-          PACKAGE_NAME='@postman/onboarding-insights'
+          PACKAGE_NAME='@postman-cs/onboarding-insights'
           for TAG in $TAGS; do
             TAG_DIR="$(mktemp -d)"
             gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'release.tgz' --dir "$TAG_DIR"

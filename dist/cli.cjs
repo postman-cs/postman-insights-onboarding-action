@@ -32301,7 +32301,7 @@ function resolvePackageVersion() {
   for (const candidate of candidates) {
     try {
       const packageJson = JSON.parse((0, import_node_fs3.readFileSync)(candidate, "utf8"));
-      if (packageJson.name === "@postman/onboarding-insights" && packageJson.version) {
+      if (packageJson.name === "@postman-cs/onboarding-insights" && packageJson.version) {
         return String(packageJson.version).trim();
       }
     } catch {

@@ -10,7 +10,7 @@ Insights requires two secrets from the same workspace-admin human user:
 Service-account credentials are rejected. The CLI never mints or refreshes an access token from a PMAK.
 
 ```bash
-npm install -g @postman/onboarding-insights
+npm install -g @postman-cs/onboarding-insights
 postman-insights-onboard \
   --project-name af-cards-activation \
   --workspace-id ws_123 \
@@ -35,6 +35,6 @@ CLI flags override inherited `INPUT_FOO-BAR` and `INPUT_FOO_BAR` forms. `POSTMAN
 onboarding:
   image: node:24
   script:
-    - npm install -g @postman/onboarding-insights
+    - npm install -g @postman-cs/onboarding-insights
     - postman-insights-onboard --project-name af-cards-activation --workspace-id "$WORKSPACE_ID" --environment-id "$ENVIRONMENT_ID" --postman-api-key "$POSTMAN_INSIGHTS_USER_PMAK" --postman-access-token "$POSTMAN_INSIGHTS_USER_ACCESS_TOKEN" --postman-region us --cluster-name "$CLUSTER_NAME" --repo-url "$CI_PROJECT_URL"
 ```
