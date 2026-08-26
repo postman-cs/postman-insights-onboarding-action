@@ -229,7 +229,7 @@ describe('release workflow publishing contract', () => {
     expect(registryStep?.['continue-on-error']).toBeUndefined();
     expect(warningStep?.if).toBe("steps.npm-publish.outputs.published != 'true'");
     expect(stepRun(warningStep)).toContain('GitHub Release remains authoritative');
-    expect(stepRun(warningStep)).toContain('backfill-npm.yml');
+    expect(stepRun(warningStep)).toContain('rerun this release after trusted publishing is restored');
     assertTokenOrder('Verify staged release artifacts', 'Verify SEA binary checksum', publish);
     assertTokenOrder('Verify SEA binary checksum', 'Publish GitHub release', publish);
     assertTokenOrder('Publish GitHub release', 'Publish or verify npm package identity', publish);
@@ -315,20 +315,6 @@ describe('release workflow publishing contract', () => {
     expect(publish).toContain('sea/postman-insights-onboard-*-linux-x64');
     expect(publish).toContain('sea/postman-insights-onboard-*-linux-x64.sha256');
     assertTokenOrder('Verify SEA binary checksum', 'Publish GitHub release', publish);
-  });
-
-  it('defines an OIDC-capable immutable-tag backfill workflow', () => {
-    const backfill = readFileSync(join(process.cwd(), '.github/workflows/backfill-npm.yml'), 'utf8');
-    expect(backfill).toContain('workflow_dispatch:');
-    expect(backfill).toContain('tags:');
-    expect(backfill).toContain("node-version: '24'");
-    expect(backfill).toContain("registry-url: 'https://registry.npmjs.org'");
-    expect(backfill).toContain('contents: read');
-    expect(backfill).toContain('id-token: write');
-    expect(backfill).toContain("PACKAGE_NAME='@postman-cs/onboarding-insights'");
-    expect(backfill).toContain("gh release download \"$TAG\"");
-    expect(backfill).toContain('--provenance --access public --tag backfill');
-    expect(backfill).toContain('npm dist-tag add "$PACKAGE_NAME@$HIGHEST" latest');
   });
 
   it('smoke-tests SEA proxy routing before publish in both SEA lanes', () => {
