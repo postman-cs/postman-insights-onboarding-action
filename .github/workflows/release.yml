@@ -198,11 +198,9 @@ jobs:
       - name: Publish or verify npm package identity
         id: npm-publish
         continue-on-error: true
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then sed -i '/_authToken/d' "${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"; fi
+          sed -i '/_authToken/d' "${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
           echo "published=false" >> "$GITHUB_OUTPUT"
           PKG_NAME=$(tar -xOf release/release.tgz package/package.json | node -e "let data='';process.stdin.on('data', chunk => data += chunk).on('end', () => console.log(JSON.parse(data).name))")
           PKG_VERSION=$(tar -xOf release/release.tgz package/package.json | node -e "let data='';process.stdin.on('data', chunk => data += chunk).on('end', () => console.log(JSON.parse(data).version))")
@@ -254,7 +252,7 @@ jobs:
         run: |
           PKG_NAME=$(tar -xOf release/release.tgz package/package.json | node -e "let data='';process.stdin.on('data', chunk => data += chunk).on('end', () => console.log(JSON.parse(data).name))")
           PKG_VERSION=$(tar -xOf release/release.tgz package/package.json | node -e "let data='';process.stdin.on('data', chunk => data += chunk).on('end', () => console.log(JSON.parse(data).version))")
-          MESSAGE="npm publish for $PKG_NAME@$PKG_VERSION did not complete (missing/invalid NPM_TOKEN or registry error); GitHub Release remains authoritative; recover via backfill-npm.yml once publish access exists"
+          MESSAGE="npm publish for $PKG_NAME@$PKG_VERSION did not complete (OIDC trusted publisher or registry error); GitHub Release remains authoritative; recover via backfill-npm.yml if needed"
           echo "::warning::$MESSAGE"
           echo "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
 
