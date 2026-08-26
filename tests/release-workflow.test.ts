@@ -227,6 +227,10 @@ describe('release workflow publishing contract', () => {
     expect(stepRun(npmStep)).toContain('echo "published=true" >> "$GITHUB_OUTPUT"');
     expect(registryStep?.if).toBe("steps.npm-publish.outputs.published == 'true'");
     expect(registryStep?.['continue-on-error']).toBeUndefined();
+    expect(stepRun(registryStep)).toContain('for attempt in $(seq 1 40)');
+    expect(stepRun(registryStep)).toContain('sleep 15');
+    expect(stepRun(registryStep)).toContain('isExplicitNpmE404');
+    expect(stepRun(registryStep)).toContain('non-E404 error');
     expect(warningStep?.if).toBe("steps.npm-publish.outputs.published != 'true'");
     expect(stepRun(warningStep)).toContain('GitHub Release remains authoritative');
     expect(stepRun(warningStep)).toContain('rerun this release after trusted publishing is restored');

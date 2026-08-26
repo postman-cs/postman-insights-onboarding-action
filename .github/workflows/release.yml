@@ -238,9 +238,33 @@ jobs:
       - name: Verify npm registry identity
         if: steps.npm-publish.outputs.published == 'true'
         run: |
+          set -euo pipefail
           PKG_NAME=$(tar -xOf release/release.tgz package/package.json | node -e "let data='';process.stdin.on('data', chunk => data += chunk).on('end', () => console.log(JSON.parse(data).name))")
           PKG_VERSION=$(tar -xOf release/release.tgz package/package.json | node -e "let data='';process.stdin.on('data', chunk => data += chunk).on('end', () => console.log(JSON.parse(data).version))")
-          npm view "$PKG_NAME@$PKG_VERSION" dist.integrity >/tmp/npm-integrity
+          NPM_VIEW_STATUS=1
+          for attempt in $(seq 1 40); do
+            set +e
+            npm view "$PKG_NAME@$PKG_VERSION" dist.integrity >/tmp/npm-integrity 2>/tmp/npm-view.err
+            NPM_VIEW_STATUS=$?
+            set -e
+            [ "$NPM_VIEW_STATUS" -eq 0 ] && break
+            if ! VERIFIER=/tmp/verify-release-artifacts.mjs node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { pathToFileURL } from 'node:url';
+          const m = await import(pathToFileURL(process.env.VERIFIER).href);
+          process.exit(m.isExplicitNpmE404(fs.readFileSync('/tmp/npm-view.err', 'utf8')) ? 0 : 1);
+          NODE
+            then
+              echo '::error::npm view failed with a non-E404 error; refusing to verify the published package'
+              cat /tmp/npm-view.err >&2
+              exit 1
+            fi
+            if [ "$attempt" -lt 40 ]; then
+              echo "::notice::registry read-back attempt $attempt/40 has not resolved yet"
+              sleep 15
+            fi
+          done
+          [ "$NPM_VIEW_STATUS" -eq 0 ] || { echo '::error::npm package is not visible after a successful publish'; exit 1; }
           node --input-type=module <<'NODE'
           import fs from 'node:fs';
           import { pathToFileURL } from 'node:url';
