@@ -5,7 +5,7 @@ import {
   isAmbiguousMutationFailure,
   retry,
   SAFE_READ_RETRY
-} from '@postman-cse/automation-core';
+} from '@postman-cs/automation-core';
 import { createSecretMasker } from './secrets.js';
 import { POSTMAN_ENDPOINT_PROFILES } from './postman/base-urls.js';
 import { AccessTokenProvider } from './postman/token-provider.js';

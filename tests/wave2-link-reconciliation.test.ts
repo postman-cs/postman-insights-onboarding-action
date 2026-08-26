@@ -16,7 +16,7 @@ import {
   isAmbiguousMutationFailure,
   isTransientHttpStatus,
   shouldRetryReadError
-} from '@postman-cse/automation-core';
+} from '@postman-cs/automation-core';
 
 function makeInputs(overrides: Partial<ActionInputs> = {}): ActionInputs {
   return {

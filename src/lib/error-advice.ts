@@ -1,4 +1,4 @@
-import type { HttpError } from '@postman-cse/automation-core';
+import type { HttpError } from '@postman-cs/automation-core';
 import { toOneLine, type SecretMasker } from './secrets.js';
 
 function safeAdvice(mask: SecretMasker, message: string): string {
