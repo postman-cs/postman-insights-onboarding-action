@@ -177,4 +177,23 @@ describe('auto-release workflow', () => {
     expect(autoReleaseWorkflow).toContain("github.event.workflow_run.conclusion == 'success'");
     expect(autoReleaseWorkflow).toContain('git rev-parse --verify "${ALIAS}^{commit}"');
   });
+
+  it('repairs a published stale alias with the workflow-capable App token before cutting', () => {
+    const recovery = autoReleaseWorkflow.indexOf('name: Recover published rolling alias');
+    const plan = autoReleaseWorkflow.indexOf('name: Plan release');
+    expect(recovery).toBeGreaterThan(-1);
+    expect(recovery).toBeLessThan(plan);
+    expect(autoReleaseWorkflow).toContain('persist-credentials: false');
+    expect(autoReleaseWorkflow).toContain('gh auth setup-git');
+    expect(autoReleaseWorkflow).toContain('actions/create-github-app-token@');
+    expect(autoReleaseWorkflow).toContain('permission-contents: write');
+    expect(autoReleaseWorkflow).toContain('permission-workflows: write');
+    expect(autoReleaseWorkflow).toContain(
+      'GITHUB_REF_NAME="${{ steps.reconcile.outputs.recovery_tag }}"',
+    );
+    expect(autoReleaseWorkflow).toContain(
+      'GITHUB_SHA="${{ steps.reconcile.outputs.recovery_target }}"',
+    );
+    expect(autoReleaseWorkflow).toContain('node scripts/advance-release-alias.mjs');
+  });
 });
