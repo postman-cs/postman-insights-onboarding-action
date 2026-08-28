@@ -201,6 +201,10 @@ describe('release workflow publishing contract', () => {
 
     expect(releaseWorkflow).not.toContain('actions/setup-go');
     expect(releaseWorkflow).not.toContain('go install github.com/rhysd/actionlint');
+    expect(releaseWorkflow).not.toContain('rhysd/actionlint/main/');
+    expect(releaseWorkflow).toContain(
+      'rhysd/actionlint/393031adb9afb225ee52ae2ccd7a5af5525e03e8/'
+    );
   });
 
   it('keeps local checks hard, publishes GitHub first, and soft-fails only the npm attempt', () => {
