@@ -104,7 +104,8 @@ export function adviseFromBifrostBody(
   if (!advice) {
     return undefined;
   }
+  const safeBody = safeAdvice(ctx.mask, String(body || '')).slice(0, 800);
   return new Error(safeAdvice(ctx.mask, advice), {
-    cause: new Error(safeAdvice(ctx.mask, `HTTP ${status}: ${String(body || '').slice(0, 800)}`))
+    cause: new Error(`HTTP ${status}: ${safeBody}`)
   });
 }

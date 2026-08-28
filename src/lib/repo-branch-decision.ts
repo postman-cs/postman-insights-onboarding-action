@@ -384,16 +384,38 @@ export function parseBranchDecision(raw: string | undefined): BranchDecision | u
 }
 
 /**
- * Resolve the effective decision: an inherited serialized decision wins
- * (single decide step per run); otherwise resolve locally.
+ * Resolve locally and use an inherited serialized decision as a consistency
+ * assertion, never as independent authority to upgrade the current tier.
  */
 export function resolveEffectiveBranchDecision(
   options: ResolveDecisionOptions,
   env: NodeJS.ProcessEnv = process.env
 ): BranchDecision {
   const inherited = parseBranchDecision(env[BRANCH_DECISION_ENV]);
-  if (inherited) return inherited;
-  return resolveBranchDecision(options);
+  const local = resolveBranchDecision(options);
+  if (!inherited) return local;
+
+  const authorizationView = (decision: BranchDecision) => ({
+    tier: decision.tier,
+    strategy: decision.strategy,
+    canonicalBranch: decision.canonicalBranch,
+    channel: decision.channel,
+    identity: {
+      provider: decision.identity.provider,
+      headBranch: decision.identity.headBranch,
+      defaultBranch: decision.identity.defaultBranch,
+      refKind: decision.identity.refKind,
+      isPrContext: decision.identity.isPrContext,
+      isForkPr: decision.identity.isForkPr,
+    },
+  });
+  if (JSON.stringify(authorizationView(inherited)) !== JSON.stringify(authorizationView(local))) {
+    throw new ContractError(
+      'CONTRACT_BRANCH_DECISION_MISMATCH',
+      'POSTMAN_BRANCH_DECISION disagrees with the branch decision resolved from current provider context'
+    );
+  }
+  return local;
 }
 
 /** Max human slug length in preview suffixes (before the lossy hash). */

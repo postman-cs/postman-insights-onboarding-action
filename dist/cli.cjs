@@ -27235,7 +27235,8 @@ __export(cli_exports, {
   normalizeCliFlag: () => normalizeCliFlag,
   parseCliArgs: () => parseCliArgs,
   runCli: () => runCli,
-  toDotenv: () => toDotenv
+  toDotenv: () => toDotenv,
+  writeAtomicFile: () => writeAtomicFile
 });
 module.exports = __toCommonJS(cli_exports);
 var import_node_crypto2 = require("node:crypto");
@@ -29524,7 +29525,7 @@ function toOneLine(value) {
   let pendingSpace = false;
   for (let index = 0; index < source.length; index += 1) {
     const code = source.charCodeAt(index);
-    if (code <= 31 || code === 127 || code === 32) {
+    if (code <= 31 || code === 32 || code === 127 || code === 133 || code === 8232 || code === 8233) {
       pendingSpace = parts.length > 0;
       continue;
     }
@@ -29997,8 +29998,9 @@ function adviseFromBifrostBody(status, body, ctx) {
   if (!advice) {
     return void 0;
   }
+  const safeBody = safeAdvice(ctx.mask, String(body || "")).slice(0, 800);
   return new Error(safeAdvice(ctx.mask, advice), {
-    cause: new Error(safeAdvice(ctx.mask, `HTTP ${status}: ${String(body || "").slice(0, 800)}`))
+    cause: new Error(`HTTP ${status}: ${safeBody}`)
   });
 }
 
@@ -30694,6 +30696,9 @@ function isExpiredAuthError(status, body) {
 function normalizeRepoUrl2(url) {
   return url.trim().replace(/\/+$/, "").toLowerCase();
 }
+function encodePathSegment(value) {
+  return encodeURIComponent(value);
+}
 async function mutateOnceThenReconcile(options) {
   const existing = await options.findExisting();
   if (existing !== null) {
@@ -31130,11 +31135,12 @@ ${advised.message}` : advised.message : text;
   }
   async findWorkspaceAcknowledged(workspaceId) {
     const operation = `workspace onboarding acknowledgment status for workspace ${workspaceId}`;
+    const workspacePath = encodePathSegment(workspaceId);
     const result = await retry(
       async () => {
         const response = await this.akitaProxyRequest(
           "GET",
-          `/v2/workspaces/${workspaceId}/onboarding/acknowledge`,
+          `/v2/workspaces/${workspacePath}/onboarding/acknowledge`,
           {},
           operation
         );
@@ -31143,7 +31149,7 @@ ${advised.message}` : advised.message : text;
             response.status,
             response.errorText,
             operation,
-            `GET /v2/workspaces/${workspaceId}/onboarding/acknowledge`
+            `GET /v2/workspaces/${workspacePath}/onboarding/acknowledge`
           );
         }
         return response;
@@ -31154,12 +31160,13 @@ ${advised.message}` : advised.message : text;
   }
   async acknowledgeWorkspace(workspaceId) {
     const operation = `workspace onboarding acknowledgment for workspace ${workspaceId}`;
+    const workspacePath = encodePathSegment(workspaceId);
     await mutateOnceThenReconcile({
       findExisting: () => this.findWorkspaceAcknowledged(workspaceId),
       mutate: async () => {
         const result = await this.akitaProxyRequest(
           "POST",
-          `/v2/workspaces/${workspaceId}/onboarding/acknowledge`,
+          `/v2/workspaces/${workspacePath}/onboarding/acknowledge`,
           {},
           operation,
           false
@@ -31169,7 +31176,7 @@ ${advised.message}` : advised.message : text;
             result.status,
             result.errorText,
             operation,
-            `POST /v2/workspaces/${workspaceId}/onboarding/acknowledge`
+            `POST /v2/workspaces/${workspacePath}/onboarding/acknowledge`
           );
         }
         return true;
@@ -31177,8 +31184,9 @@ ${advised.message}` : advised.message : text;
     });
   }
   async findApplication(workspaceId, systemEnv, expectedServiceId) {
+    const workspacePath = encodePathSegment(workspaceId);
     const response = await this.fetchFn(
-      `${this.observabilityBaseUrl}/v2/agent/api-catalog/workspaces/${workspaceId}/applications`,
+      `${this.observabilityBaseUrl}/v2/agent/api-catalog/workspaces/${workspacePath}/applications`,
       {
         method: "GET",
         headers: {
@@ -31225,6 +31233,7 @@ ${advised.message}` : advised.message : text;
   // over the API key here, so this route is not migrated to access-token-primary
   // (the suite-wide migration explicitly leaves probe-failed routes on PMAK).
   async createApplication(workspaceId, systemEnv, expectedServiceId) {
+    const workspacePath = encodePathSegment(workspaceId);
     return mutateOnceThenReconcile({
       findExisting: () => retry(
         () => this.findApplication(workspaceId, systemEnv, expectedServiceId),
@@ -31232,7 +31241,7 @@ ${advised.message}` : advised.message : text;
       ),
       mutate: async () => {
         const response = await this.fetchFn(
-          `${this.observabilityBaseUrl}/v2/agent/api-catalog/workspaces/${workspaceId}/applications`,
+          `${this.observabilityBaseUrl}/v2/agent/api-catalog/workspaces/${workspacePath}/applications`,
           {
             method: "POST",
             headers: {
@@ -31265,18 +31274,19 @@ ${advised.message}` : advised.message : text;
   }
   async getTeamVerificationToken(workspaceId) {
     const operation = `team verification token retrieval for workspace ${workspaceId}`;
+    const workspacePath = encodePathSegment(workspaceId);
     const result = await retry(
       async () => {
         const page = await this.akitaProxyRequest(
           "GET",
-          `/v2/workspaces/${workspaceId}/team-verification-token`,
+          `/v2/workspaces/${workspacePath}/team-verification-token`,
           {},
           operation
         );
         if (!page.ok && (page.status === 408 || page.status === 429 || page.status >= 500)) {
           throw new HttpError({
             method: "GET",
-            url: `bifrost:akita:GET /v2/workspaces/${workspaceId}/team-verification-token`,
+            url: `bifrost:akita:GET /v2/workspaces/${workspacePath}/team-verification-token`,
             status: page.status,
             statusText: "Error",
             responseBody: page.errorText,
@@ -31680,8 +31690,29 @@ function parseBranchDecision(raw) {
 }
 function resolveEffectiveBranchDecision(options, env = process.env) {
   const inherited = parseBranchDecision(env[BRANCH_DECISION_ENV]);
-  if (inherited) return inherited;
-  return resolveBranchDecision(options);
+  const local = resolveBranchDecision(options);
+  if (!inherited) return local;
+  const authorizationView = (decision) => ({
+    tier: decision.tier,
+    strategy: decision.strategy,
+    canonicalBranch: decision.canonicalBranch,
+    channel: decision.channel,
+    identity: {
+      provider: decision.identity.provider,
+      headBranch: decision.identity.headBranch,
+      defaultBranch: decision.identity.defaultBranch,
+      refKind: decision.identity.refKind,
+      isPrContext: decision.identity.isPrContext,
+      isForkPr: decision.identity.isForkPr
+    }
+  });
+  if (JSON.stringify(authorizationView(inherited)) !== JSON.stringify(authorizationView(local))) {
+    throw new ContractError(
+      "CONTRACT_BRANCH_DECISION_MISMATCH",
+      "POSTMAN_BRANCH_DECISION disagrees with the branch decision resolved from current provider context"
+    );
+  }
+  return local;
 }
 
 // src/action-version.ts
@@ -32428,7 +32459,41 @@ async function validateOutputPath(filePath) {
   const existingParent = await findExistingAncestor(import_node_path2.default.dirname(resolved));
   assertWithinWorkspace(workspaceRoot, existingParent, filePath);
 }
-async function writeAtomicFile(filePath, content) {
+async function captureAncestorGuard(workspaceRoot, parent) {
+  const relative2 = import_node_path2.default.relative(workspaceRoot, parent);
+  assertWithinWorkspace(workspaceRoot, parent, parent);
+  const paths = [workspaceRoot];
+  let current = workspaceRoot;
+  for (const segment of relative2.split(import_node_path2.default.sep).filter(Boolean)) {
+    current = import_node_path2.default.join(current, segment);
+    paths.push(current);
+  }
+  const guard = [];
+  for (const absolutePath of paths) {
+    const fileStat = await (0, import_promises.lstat)(absolutePath);
+    if (fileStat.isSymbolicLink() || !fileStat.isDirectory()) {
+      throw new Error(`Output ancestor must remain a real directory: ${absolutePath}`);
+    }
+    const identity = fileStat.ino === 0 ? await (0, import_promises.realpath)(absolutePath) : `${fileStat.dev}:${fileStat.ino}`;
+    guard.push({ absolutePath, identity });
+  }
+  return guard;
+}
+async function assertAncestorGuard(guard) {
+  for (const expected of guard) {
+    let fileStat;
+    try {
+      fileStat = await (0, import_promises.lstat)(expected.absolutePath);
+    } catch (error2) {
+      throw new Error(`Output ancestor changed during atomic write: ${expected.absolutePath}`, { cause: error2 });
+    }
+    const identity = fileStat.ino === 0 ? await (0, import_promises.realpath)(expected.absolutePath) : `${fileStat.dev}:${fileStat.ino}`;
+    if (fileStat.isSymbolicLink() || !fileStat.isDirectory() || identity !== expected.identity) {
+      throw new Error(`Output ancestor changed during atomic write: ${expected.absolutePath}`);
+    }
+  }
+}
+async function writeAtomicFile(filePath, content, beforePublish) {
   const workspaceRoot = await (0, import_promises.realpath)(process.cwd());
   const resolved = import_node_path2.default.resolve(workspaceRoot, filePath);
   assertWithinWorkspace(workspaceRoot, resolved, filePath);
@@ -32436,15 +32501,23 @@ async function writeAtomicFile(filePath, content) {
   const resolvedParent = await (0, import_promises.realpath)(import_node_path2.default.dirname(resolved));
   assertWithinWorkspace(workspaceRoot, resolvedParent, filePath);
   const safeTarget = import_node_path2.default.join(resolvedParent, import_node_path2.default.basename(resolved));
+  const ancestorGuard = await captureAncestorGuard(workspaceRoot, resolvedParent);
   const tempPath = import_node_path2.default.join(
     resolvedParent,
     `.${import_node_path2.default.basename(resolved)}.${process.pid}.${(0, import_node_crypto2.randomUUID)()}.tmp`
   );
   try {
+    await assertAncestorGuard(ancestorGuard);
     await (0, import_promises.writeFile)(tempPath, content, { encoding: "utf8", flag: "wx", mode: 384 });
+    await beforePublish?.();
+    await assertAncestorGuard(ancestorGuard);
     await (0, import_promises.rename)(tempPath, safeTarget);
   } finally {
-    await (0, import_promises.rm)(tempPath, { force: true });
+    try {
+      await assertAncestorGuard(ancestorGuard);
+      await (0, import_promises.rm)(tempPath, { force: true });
+    } catch {
+    }
   }
 }
 async function writeOptionalFile(filePath, content) {
@@ -32606,7 +32679,8 @@ if (isEntrypoint(currentModulePath, entrypoint)) {
   normalizeCliFlag,
   parseCliArgs,
   runCli,
-  toDotenv
+  toDotenv,
+  writeAtomicFile
 });
 /*! Bundled license information:
 

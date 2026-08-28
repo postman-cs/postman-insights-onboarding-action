@@ -6,10 +6,10 @@ Git tags and GitHub releases are the public release identifiers for this action.
 
 ## Tag policy
 
-- Immutable releases use `v1.x.y` tags.
-- The rolling `v1` alias moves to the latest compatible `v1.x.y` release.
+- Immutable releases use `v2.x.y` tags.
+- The rolling `v2` alias moves to the latest compatible `v2.x.y` release.
 - Existing release tags are never force-pushed or rewritten.
-- `v0` tags stay frozen at the last `v0` release.
+- `v0` and `v1` tags stay frozen at their last releases.
 - Every immutable release tag has a GitHub release with generated notes.
 
 ## Release checks
@@ -48,7 +48,7 @@ The same gates run locally before any push:
 
 ## npm package
 
-The CLI publishes as `@postman-cs/onboarding-insights` with versions that match the GitHub release tag. The rolling `v1` alias updates the action channel and skips npm publishing.
+The CLI publishes as `@postman-cs/onboarding-insights` with versions that match the GitHub release tag. The rolling `v2` alias updates the action channel and skips npm publishing.
 
 ## Compatibility
 
@@ -56,4 +56,4 @@ This action expects the workspace, environment, deployed service, and Insights a
 
 ## Security fixes
 
-Security fixes ship on the latest `v1.x.y` tag and move onto the rolling `v1` alias. Older immutable tags stay published for reproducibility. See [Security Policy](SECURITY.md).
+Security fixes ship on the latest `v2.x.y` tag and move onto the rolling `v2` alias. Older immutable tags stay published for reproducibility. See [Security Policy](SECURITY.md).

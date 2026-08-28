@@ -159,7 +159,8 @@ describe('no PMAK asset op or Newman in production src/', () => {
     const pmakHeaders = [...indexSource.matchAll(/['"]x-api-key['"]\s*:/g), ...bifrostSource.matchAll(/['"]x-api-key['"]\s*:/g)];
 
     expect(indexSource).toContain('`${trimTrailingSlash(apiBase)}/me`');
-    expect(bifrostSource).toContain('/v2/agent/api-catalog/workspaces/${workspaceId}/applications');
+    expect(bifrostSource).toContain('return encodeURIComponent(value)');
+    expect(bifrostSource).toContain('/v2/agent/api-catalog/workspaces/${workspacePath}/applications');
     expect(pmakHeaders).toHaveLength(3);
     expect(readFileSync(join(SRC_ROOT, 'lib', 'postman', 'token-provider.ts'), 'utf8')).not.toContain('service-account-tokens');
   });

@@ -359,6 +359,8 @@ describe('release workflow publishing contract', () => {
     expect(seaConfig).toContain('"execArgvExtension": "none"');
     const seaBuild = readFileSync(join(process.cwd(), 'scripts/build-sea.sh'), 'utf8');
     expect(seaBuild).toContain('shasum -a 256 -c');
+    expect(seaBuild).toContain('NODE_TARBALL_SHA256="55aa7153f9d88f28d765fcdad5ae6945b5c0f98a36881703817e4c450fa76742"');
+    expect(seaBuild).not.toContain('SHASUMS256.txt');
     expect(seaBuild).toContain('--define:__SEA_VERSION__=');
     expect(seaBuild).toContain('postman-insights-onboard-${VERSION}-linux-x64');
   });
