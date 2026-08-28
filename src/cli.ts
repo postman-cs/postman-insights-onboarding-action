@@ -17,10 +17,10 @@ import {
   type Reporter
 } from './index.js';
 import { serializeBranchDecision } from './lib/repo-branch-decision.js';
-import { sleep } from '@postman-cse/automation-core';
+import { sleep } from '@postman-cs/automation-core';
 import { getMemoizedSessionIdentity } from './lib/credential-identity.js';
 import { normalizedInputEnvName, runnerInputEnvName } from './lib/input.js';
-import { createTelemetryContext } from '@postman-cse/automation-core';
+import { createTelemetryContext } from '@postman-cs/automation-core';
 import { resolveActionVersion } from './action-version.js';
 import { toOneLine } from './lib/secrets.js';
 

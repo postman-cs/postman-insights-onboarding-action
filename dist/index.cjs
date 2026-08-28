@@ -30012,7 +30012,7 @@ function adviseFromBifrostBody(status, body, ctx) {
   });
 }
 
-// node_modules/@postman-cse/automation-core/dist/ci-context.js
+// node_modules/@postman-cs/automation-core/dist/ci-context.js
 function norm(value) {
   const trimmed = (value ?? "").trim();
   return trimmed.length > 0 ? trimmed : void 0;
@@ -30163,7 +30163,7 @@ function detectCiProviderContext(env = process.env) {
   return { ciProvider: "unknown", runnerKind: "unknown" };
 }
 
-// node_modules/@postman-cse/automation-core/dist/repo-context.js
+// node_modules/@postman-cs/automation-core/dist/repo-context.js
 function normalize(value) {
   const trimmed = (value ?? "").trim();
   return trimmed.length > 0 ? trimmed : void 0;
@@ -30252,7 +30252,7 @@ function detectRepoContext(input, env = process.env) {
   };
 }
 
-// node_modules/@postman-cse/automation-core/dist/telemetry.js
+// node_modules/@postman-cs/automation-core/dist/telemetry.js
 var import_node_crypto = require("node:crypto");
 var import_undici2 = __toESM(require_undici(), 1);
 var SCHEMA_VERSION = 3;
@@ -30392,7 +30392,7 @@ function createTelemetryContext(options) {
   };
 }
 
-// node_modules/@postman-cse/automation-core/dist/logger.js
+// node_modules/@postman-cs/automation-core/dist/logger.js
 var LEVEL_ORDER = {
   debug: 10,
   info: 20,
@@ -30572,7 +30572,7 @@ function createLogger(options) {
   return root;
 }
 
-// node_modules/@postman-cse/automation-core/dist/http/http-error.js
+// node_modules/@postman-cs/automation-core/dist/http/http-error.js
 var REDACTED2 = "[REDACTED]";
 var SENSITIVE_HEADER_NAMES = /* @__PURE__ */ new Set([
   "authorization",
@@ -30731,7 +30731,7 @@ var HttpError = class _HttpError extends Error {
   }
 };
 
-// node_modules/@postman-cse/automation-core/dist/http/retry.js
+// node_modules/@postman-cs/automation-core/dist/http/retry.js
 function sleep(delayMs) {
   return new Promise((resolve2) => {
     setTimeout(resolve2, delayMs);
