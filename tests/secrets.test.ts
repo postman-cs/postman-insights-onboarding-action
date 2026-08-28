@@ -26,7 +26,7 @@ import {
 
 describe('toOneLine', () => {
   it('replaces CR/LF/control characters, collapses spaces, and trims', () => {
-    expect(toOneLine('  a\nb\r\nc\u0000d  ')).toBe('a b c d');
+    expect(toOneLine('  a\nb\r\nc\u0000d\u0085e\u2028f\u2029g  ')).toBe('a b c d e f g');
     expect(toOneLine('keep   spaced')).toBe('keep spaced');
     expect(toOneLine(undefined)).toBe('');
     expect(toOneLine(null)).toBe('');

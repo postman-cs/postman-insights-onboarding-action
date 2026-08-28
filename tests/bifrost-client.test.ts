@@ -334,6 +334,54 @@ describe('BifrostCatalogClient', () => {
     expect(JSON.parse(opts.body)).toEqual({ system_env: 'sys-env-456' });
   });
 
+  it('encodes opaque workspace IDs in observability paths', async () => {
+    const fetchFn = mockFetch([
+      { ok: true, status: 200, body: { applications: [] } },
+      { ok: true, status: 200, body: { application_id: 'app-encoded', service_id: 'svc-encoded' } },
+    ]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: 'PMAK-test',
+      fetchFn,
+    });
+
+    await client.createApplication('ws/../admin?scope=all#fragment', 'sys-env');
+
+    for (const [url] of (fetchFn as ReturnType<typeof vi.fn>).mock.calls) {
+      expect(String(url)).toBe(
+        'https://api.observability.postman.com/v2/agent/api-catalog/workspaces/ws%2F..%2Fadmin%3Fscope%3Dall%23fragment/applications'
+      );
+    }
+  });
+
+  it('encodes opaque workspace IDs in Akita proxy paths', async () => {
+    const fetchFn = mockFetch([
+      { ok: true, status: 200, body: { onboarding_acknowledged: false } },
+      { ok: true, status: 200, body: {} },
+      { ok: true, status: 200, body: { team_verification_token: null } },
+    ]);
+    const client = new BifrostCatalogClient({
+      accessToken: 'tok-abc',
+      teamId: '14103640',
+      apiKey: 'PMAK-test',
+      fetchFn,
+    });
+    const workspaceId = 'ws/../../admin?scope=all#fragment';
+
+    await client.acknowledgeWorkspace(workspaceId);
+    await client.getTeamVerificationToken(workspaceId);
+
+    const paths = (fetchFn as ReturnType<typeof vi.fn>).mock.calls.map((call) =>
+      JSON.parse(call[1].body).path
+    );
+    expect(paths).toEqual([
+      '/v2/workspaces/ws%2F..%2F..%2Fadmin%3Fscope%3Dall%23fragment/onboarding/acknowledge',
+      '/v2/workspaces/ws%2F..%2F..%2Fadmin%3Fscope%3Dall%23fragment/onboarding/acknowledge',
+      '/v2/workspaces/ws%2F..%2F..%2Fadmin%3Fscope%3Dall%23fragment/team-verification-token',
+    ]);
+  });
+
   it('throws on failed application binding', async () => {
     const fetchFn = mockFetch([
       { ok: true, status: 200, body: { applications: [] } },

@@ -1,12 +1,12 @@
 import { existsSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
-import { mkdir, readFile, readdir } from 'node:fs/promises';
+import { access, mkdir, readFile, readdir, rename as fsRename } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ConsoleReporter, normalizeCliFlag, parseCliArgs, runCli, toDotenv } from '../src/cli.js';
+import { ConsoleReporter, normalizeCliFlag, parseCliArgs, runCli, toDotenv, writeAtomicFile } from '../src/cli.js';
 import { getInput } from '../src/lib/input.js';
 import { __resetIdentityMemo } from '../src/lib/credential-identity.js';
 
@@ -459,6 +459,25 @@ describe('runCli result-json opt-in', () => {
     ).rejects.toThrow();
 
     expect((await readdir('.vitest-tmp')).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it.skipIf(process.platform === 'win32')('aborts when an output ancestor is replaced before publication', async () => {
+    const outside = mkdtempSync(path.join(tmpdir(), 'postman-insights-output-race-'));
+    const parent = '.vitest-tmp/race-parent';
+    const parked = '.vitest-tmp/race-parent-before-swap';
+    await mkdir(parent, { recursive: true });
+
+    try {
+      await expect(
+        writeAtomicFile(`${parent}/result.json`, '{"ok":true}\n', async () => {
+          await fsRename(parent, parked);
+          symlinkSync(outside, parent, 'dir');
+        })
+      ).rejects.toThrow(/ancestor.*changed|symlink/i);
+      await expect(access(path.join(outside, 'result.json'))).rejects.toBeTruthy();
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 });
 

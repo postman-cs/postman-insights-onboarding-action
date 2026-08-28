@@ -1,8 +1,13 @@
 {
   "entry": "dist/action.cjs",
   "env": {
-    "POSTMAN_BRANCH_DECISION": "{\"tier\":\"gated\",\"strategy\":\"single\",\"identity\":{\"provider\":\"github\",\"refKind\":\"branch\"},\"reason\":\"verify-dist gated boot contract\"}",
-    "INPUT_PROJECT-NAME": "verify-dist-boot"
+    "POSTMAN_BRANCH_DECISION": "{\"tier\":\"gated\",\"strategy\":\"publish-gate\",\"identity\":{\"provider\":\"github\",\"headBranch\":\"feature/verify-dist\",\"rawRef\":\"refs/heads/feature/verify-dist\",\"defaultBranch\":\"main\",\"refKind\":\"branch\",\"isPrContext\":false,\"isForkPr\":false},\"canonicalBranch\":\"main\",\"reason\":\"verify-dist gated boot contract\"}",
+    "INPUT_PROJECT-NAME": "verify-dist-boot",
+    "INPUT_BRANCH-STRATEGY": "publish-gate",
+    "INPUT_CANONICAL-BRANCH": "main",
+    "GITHUB_ACTIONS": "true",
+    "GITHUB_REF": "refs/heads/feature/verify-dist",
+    "GITHUB_REF_NAME": "feature/verify-dist"
   },
   "exitCode": 0,
   "outputIncludes": [

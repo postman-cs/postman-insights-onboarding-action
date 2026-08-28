@@ -6,7 +6,7 @@ set -euo pipefail
 # (npm ci). Bundles the Node runtime into a single executable so the action runs
 # with no npm and no Node install on the consumer.
 #
-# The runtime is a PINNED, checksum-verified official Node tarball rather than the
+# The runtime is a PINNED, repository-hash-verified official Node tarball rather than the
 # runner's node. Node's SEA docs require the blob's Node version to exactly match
 # the binary it is injected into, but setup-node resolves "24" to whatever patch is
 # current that day; pinning the exact version makes the build reproducible and
@@ -18,9 +18,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-# Pinned Node runtime (Active LTS "Krypton"). Bump deliberately; must stay a real
-# published release so the tarball and SHASUMS256.txt resolve.
+# Pinned Node runtime (Active LTS "Krypton"). Version and digest move together
+# under review so a compromised download origin cannot serve a matched bad pair.
 NODE_VERSION="24.18.0"
+NODE_TARBALL_SHA256="55aa7153f9d88f28d765fcdad5ae6945b5c0f98a36881703817e4c450fa76742"
 NODE_DIST="node-v${NODE_VERSION}-linux-x64"
 NODE_TARBALL="${NODE_DIST}.tar.xz"
 NODE_BASE_URL="https://nodejs.org/dist/v${NODE_VERSION}"
@@ -40,10 +41,9 @@ NODE_WORK="$OUT_DIR/node-dist"
 rm -rf "$NODE_WORK"
 mkdir -p "$NODE_WORK"
 curl -fsSL "${NODE_BASE_URL}/${NODE_TARBALL}" -o "$NODE_WORK/${NODE_TARBALL}"
-curl -fsSL "${NODE_BASE_URL}/SHASUMS256.txt" -o "$NODE_WORK/SHASUMS256.txt"
 
-echo "==> verifying tarball against SHASUMS256.txt"
-( cd "$NODE_WORK" && grep " ${NODE_TARBALL}\$" SHASUMS256.txt | shasum -a 256 -c - )
+echo "==> verifying tarball against repository-pinned SHA-256"
+( cd "$NODE_WORK" && printf '%s  %s\n' "$NODE_TARBALL_SHA256" "$NODE_TARBALL" | shasum -a 256 -c - )
 
 echo "==> extracting pinned node binary"
 tar -xJf "$NODE_WORK/${NODE_TARBALL}" -C "$NODE_WORK" "${NODE_DIST}/bin/node"

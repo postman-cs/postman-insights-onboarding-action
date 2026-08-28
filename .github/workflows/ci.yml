@@ -29,6 +29,8 @@ jobs:
           node-version: '24'
           cache: npm
           registry-url: 'https://registry.npmjs.org'
+      - name: Reject tracked scratch paths
+        run: node scripts/check-tracked-scratch-paths.mjs
       - run: npm ci
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -106,17 +108,37 @@ jobs:
         run: |
           node <<'NODE'
           import { createHash } from 'node:crypto';
-          import { readFileSync, writeFileSync } from 'node:fs';
+          import { readFileSync, statSync, writeFileSync } from 'node:fs';
 
           const lock = readFileSync('package-lock.json');
+          const DIST_FILES = [
+            { path: 'dist/action.cjs', mode: '100644' },
+            { path: 'dist/cli.cjs', mode: '100755' },
+            { path: 'dist/index.cjs', mode: '100644' },
+          ];
           writeFileSync(
             'dist-manifest.json',
             `${JSON.stringify(
               {
+                schema_version: 1,
                 repository: process.env.GITHUB_REPOSITORY,
                 pull_request: Number(process.env.GITHUB_EVENT_PULL_REQUEST_NUMBER || 0),
                 head_sha: process.env.GITHUB_EVENT_NAME === "pull_request" ? JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, "utf8")).pull_request.head.sha : process.env.GITHUB_SHA,
                 lock_hash: createHash('sha256').update(lock).digest('hex'),
+                artifacts: DIST_FILES.map((entry) => {
+                  const bytes = readFileSync(entry.path);
+                  const fileMode = statSync(entry.path).mode & 0o777;
+                  const expectedMode = Number.parseInt(entry.mode.slice(3), 8);
+                  if (fileMode !== expectedMode) {
+                    throw new Error(`${entry.path} mode ${fileMode.toString(8)} != ${expectedMode.toString(8)}`);
+                  }
+                  return {
+                    path: entry.path,
+                    sha256: createHash('sha256').update(bytes).digest('hex'),
+                    size: bytes.length,
+                    mode: entry.mode,
+                  };
+                }),
               },
               null,
               2,

@@ -185,6 +185,23 @@ describe('error advice', () => {
     expect(fromBody?.message).not.toContain('fake-token-abc123');
   });
 
+  it('masks a secret before truncating the retained cause body', () => {
+    const secret = 'CROSS_BOUNDARY_SECRET_MATERIAL';
+    const marker = 'You are not authorized to perform this action';
+    const body = `${marker}${'x'.repeat(792 - marker.length)}${secret}`;
+    const advised = adviseFromBifrostBody(
+      403,
+      body,
+      createContext({ mask: createSecretMasker([secret]) })
+    );
+
+    expect(advised).toBeDefined();
+    expect(advised?.cause).toBeInstanceOf(Error);
+    const causeMessage = (advised?.cause as Error).message;
+    expect(causeMessage).not.toContain('CROSS_BO');
+    expect(causeMessage).not.toContain(secret);
+  });
+
   it('collapses multiline operation/team context to one masked line and keeps remediation', () => {
     const secret = 'advice-secret-token-xyz';
     const mask = createSecretMasker([secret]);

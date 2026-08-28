@@ -190,6 +190,8 @@ describe('CI workflow contract', () => {
     expect(candidate).toContain('dist/');
     expect(candidate).toContain('dist-manifest.json');
     expect(namedStep(linux, 'Write dist manifest')).toContain('lock_hash');
+    expect(namedStep(linux, 'Write dist manifest')).toContain('artifacts: DIST_FILES.map');
+    expect(namedStep(linux, 'Write dist manifest')).toContain("createHash('sha256').update(bytes).digest('hex')");
     expect(namedStep(linux, 'Ensure clean tracked tree outside dist')).toContain('git status --porcelain');
     expect(linux).not.toContain('name: expected-dist');
 

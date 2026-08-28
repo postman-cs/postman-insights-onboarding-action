@@ -91,6 +91,10 @@ function normalizeRepoUrl(url: string): string {
   return url.trim().replace(/\/+$/, '').toLowerCase();
 }
 
+function encodePathSegment(value: string): string {
+  return encodeURIComponent(value);
+}
+
 async function mutateOnceThenReconcile<T>(options: {
   findExisting: () => Promise<T | null>;
   mutate: () => Promise<T>;
@@ -628,11 +632,12 @@ export class BifrostCatalogClient {
 
   private async findWorkspaceAcknowledged(workspaceId: string): Promise<true | null> {
     const operation = `workspace onboarding acknowledgment status for workspace ${workspaceId}`;
+    const workspacePath = encodePathSegment(workspaceId);
     const result = await retry(
       async () => {
         const response = await this.akitaProxyRequest<{ onboarding_acknowledged?: boolean }>(
           'GET',
-          `/v2/workspaces/${workspaceId}/onboarding/acknowledge`,
+          `/v2/workspaces/${workspacePath}/onboarding/acknowledge`,
           {},
           operation
         );
@@ -641,7 +646,7 @@ export class BifrostCatalogClient {
             response.status,
             response.errorText,
             operation,
-            `GET /v2/workspaces/${workspaceId}/onboarding/acknowledge`
+            `GET /v2/workspaces/${workspacePath}/onboarding/acknowledge`
           );
         }
         return response;
@@ -653,12 +658,13 @@ export class BifrostCatalogClient {
 
   async acknowledgeWorkspace(workspaceId: string): Promise<void> {
     const operation = `workspace onboarding acknowledgment for workspace ${workspaceId}`;
+    const workspacePath = encodePathSegment(workspaceId);
     await mutateOnceThenReconcile({
       findExisting: () => this.findWorkspaceAcknowledged(workspaceId),
       mutate: async () => {
         const result = await this.akitaProxyRequest<unknown>(
           'POST',
-          `/v2/workspaces/${workspaceId}/onboarding/acknowledge`,
+          `/v2/workspaces/${workspacePath}/onboarding/acknowledge`,
           {},
           operation,
           false
@@ -668,7 +674,7 @@ export class BifrostCatalogClient {
             result.status,
             result.errorText,
             operation,
-            `POST /v2/workspaces/${workspaceId}/onboarding/acknowledge`
+            `POST /v2/workspaces/${workspacePath}/onboarding/acknowledge`
           );
         }
         return true as const;
@@ -681,8 +687,9 @@ export class BifrostCatalogClient {
     systemEnv: string,
     expectedServiceId?: string
   ): Promise<{ application_id: string; service_id: string } | null> {
+    const workspacePath = encodePathSegment(workspaceId);
     const response = await this.fetchFn(
-      `${this.observabilityBaseUrl}/v2/agent/api-catalog/workspaces/${workspaceId}/applications`,
+      `${this.observabilityBaseUrl}/v2/agent/api-catalog/workspaces/${workspacePath}/applications`,
       {
         method: 'GET',
         headers: {
@@ -741,6 +748,7 @@ export class BifrostCatalogClient {
     systemEnv: string,
     expectedServiceId?: string,
   ): Promise<{ application_id: string; service_id: string }> {
+    const workspacePath = encodePathSegment(workspaceId);
     return mutateOnceThenReconcile({
       findExisting: () => retry(
         () => this.findApplication(workspaceId, systemEnv, expectedServiceId),
@@ -748,7 +756,7 @@ export class BifrostCatalogClient {
       ),
       mutate: async () => {
         const response = await this.fetchFn(
-          `${this.observabilityBaseUrl}/v2/agent/api-catalog/workspaces/${workspaceId}/applications`,
+          `${this.observabilityBaseUrl}/v2/agent/api-catalog/workspaces/${workspacePath}/applications`,
           {
             method: 'POST',
             headers: {
@@ -782,18 +790,19 @@ export class BifrostCatalogClient {
 
   async getTeamVerificationToken(workspaceId: string): Promise<string | null> {
     const operation = `team verification token retrieval for workspace ${workspaceId}`;
+    const workspacePath = encodePathSegment(workspaceId);
     const result = await retry(
       async () => {
         const page = await this.akitaProxyRequest<{ team_verification_token?: string }>(
           'GET',
-          `/v2/workspaces/${workspaceId}/team-verification-token`,
+          `/v2/workspaces/${workspacePath}/team-verification-token`,
           {},
           operation
         );
         if (!page.ok && (page.status === 408 || page.status === 429 || page.status >= 500)) {
           throw new HttpError({
             method: 'GET',
-            url: `bifrost:akita:GET /v2/workspaces/${workspaceId}/team-verification-token`,
+            url: `bifrost:akita:GET /v2/workspaces/${workspacePath}/team-verification-token`,
             status: page.status,
             statusText: 'Error',
             responseBody: page.errorText,

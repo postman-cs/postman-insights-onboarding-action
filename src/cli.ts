@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { realpathSync, readFileSync } from 'node:fs';
-import { mkdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -264,7 +264,53 @@ async function validateOutputPath(filePath: string | undefined): Promise<void> {
   assertWithinWorkspace(workspaceRoot, existingParent, filePath);
 }
 
-async function writeAtomicFile(filePath: string, content: string): Promise<void> {
+type AncestorGuard = Array<{ absolutePath: string; identity: string }>;
+
+async function captureAncestorGuard(workspaceRoot: string, parent: string): Promise<AncestorGuard> {
+  const relative = path.relative(workspaceRoot, parent);
+  assertWithinWorkspace(workspaceRoot, parent, parent);
+  const paths = [workspaceRoot];
+  let current = workspaceRoot;
+  for (const segment of relative.split(path.sep).filter(Boolean)) {
+    current = path.join(current, segment);
+    paths.push(current);
+  }
+  const guard: AncestorGuard = [];
+  for (const absolutePath of paths) {
+    const fileStat = await lstat(absolutePath);
+    if (fileStat.isSymbolicLink() || !fileStat.isDirectory()) {
+      throw new Error(`Output ancestor must remain a real directory: ${absolutePath}`);
+    }
+    const identity = fileStat.ino === 0
+      ? await realpath(absolutePath)
+      : `${fileStat.dev}:${fileStat.ino}`;
+    guard.push({ absolutePath, identity });
+  }
+  return guard;
+}
+
+async function assertAncestorGuard(guard: AncestorGuard): Promise<void> {
+  for (const expected of guard) {
+    let fileStat;
+    try {
+      fileStat = await lstat(expected.absolutePath);
+    } catch (error) {
+      throw new Error(`Output ancestor changed during atomic write: ${expected.absolutePath}`, { cause: error });
+    }
+    const identity = fileStat.ino === 0
+      ? await realpath(expected.absolutePath)
+      : `${fileStat.dev}:${fileStat.ino}`;
+    if (fileStat.isSymbolicLink() || !fileStat.isDirectory() || identity !== expected.identity) {
+      throw new Error(`Output ancestor changed during atomic write: ${expected.absolutePath}`);
+    }
+  }
+}
+
+export async function writeAtomicFile(
+  filePath: string,
+  content: string,
+  beforePublish?: () => Promise<void>
+): Promise<void> {
   const workspaceRoot = await realpath(process.cwd());
   const resolved = path.resolve(workspaceRoot, filePath);
   assertWithinWorkspace(workspaceRoot, resolved, filePath);
@@ -273,15 +319,24 @@ async function writeAtomicFile(filePath: string, content: string): Promise<void>
   assertWithinWorkspace(workspaceRoot, resolvedParent, filePath);
 
   const safeTarget = path.join(resolvedParent, path.basename(resolved));
+  const ancestorGuard = await captureAncestorGuard(workspaceRoot, resolvedParent);
   const tempPath = path.join(
     resolvedParent,
     `.${path.basename(resolved)}.${process.pid}.${randomUUID()}.tmp`
   );
   try {
+    await assertAncestorGuard(ancestorGuard);
     await writeFile(tempPath, content, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+    await beforePublish?.();
+    await assertAncestorGuard(ancestorGuard);
     await rename(tempPath, safeTarget);
   } finally {
-    await rm(tempPath, { force: true });
+    try {
+      await assertAncestorGuard(ancestorGuard);
+      await rm(tempPath, { force: true });
+    } catch {
+      // Never clean through a path whose ancestor identity changed.
+    }
   }
 }
 
