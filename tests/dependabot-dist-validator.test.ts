@@ -73,4 +73,16 @@ describe('candidate dist validation', () => {
     await writeFile(actionPath, mutated);
     await expect(validateCandidateDist(options)).rejects.toThrow(/digest mismatch.*dist\/action\.cjs/i);
   });
+
+  it.skipIf(process.platform === 'win32')('rejects unexpected downloaded POSIX modes', async () => {
+    const input = await fixture();
+    await chmod(path.join(input.candidateRoot, 'dist/action.cjs'), 0o600);
+
+    await expect(validateCandidateDist({
+      ...input,
+      expectedRepository: 'postman-cs/postman-insights-onboarding-action',
+      expectedHeadSha: 'a'.repeat(40),
+      expectedPullRequest: 123,
+    })).rejects.toThrow(/unexpected downloaded mode 600.*dist\/action\.cjs/i);
+  });
 });

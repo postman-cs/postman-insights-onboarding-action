@@ -109,7 +109,10 @@ export async function validateCandidateDist(
     if (fileStat.size !== entry.size) throw new Error(`size mismatch for ${relative}`);
     if (sha256(bytes) !== entry.sha256) throw new Error(`digest mismatch for ${relative}`);
     const mode = fileStat.mode & 0o777;
-    if (mode !== 0o644 && !(relative === 'dist/cli.cjs' && mode === 0o755)) {
+    const modeAllowed = process.platform === 'win32'
+      ? mode === 0o666
+      : mode === 0o644 || (relative === 'dist/cli.cjs' && mode === 0o755);
+    if (!modeAllowed) {
       throw new Error(`unexpected downloaded mode ${mode.toString(8)} for ${relative}`);
     }
   }
