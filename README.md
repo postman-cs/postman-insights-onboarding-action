@@ -229,7 +229,7 @@ Supply `postman-team-id` only for org-mode tokens that require an explicit team 
 | `collection-id` | Collection ID returned by the prepare-collection step |  |  |
 | `application-id` | Insights application binding ID from the observability API |  |  |
 | `verification-token` | Insights team verification token (tvt_*) for DaemonSet telemetry |  |  |
-| `status` | Onboarding result: success, not-found, or error |  |  |
+| `status` | Onboarding result: success, not-found, or error. skipped when the branch-aware gate skips the run; pending only until the run completes |  |  |
 | `sync-status` | Branch-aware sync status: synced, skipped-branch-gate, or empty under branch-strategy legacy. |  |  |
 | `branch-decision` | Serialized BranchDecision JSON for downstream actions (also exported as POSTMAN_BRANCH_DECISION). |  |  |
 <!-- outputs-table:end -->

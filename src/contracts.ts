@@ -136,7 +136,7 @@ export const insightsActionContract: ActionContract = {
       description: 'Insights team verification token (tvt_*) for DaemonSet telemetry.',
     },
     'status': {
-      description: 'Onboarding result: success, not-found, or error.',
+      description: 'Onboarding result: success, not-found, or error. skipped when the branch-aware gate skips the run; pending only until the run completes.',
     },
     'sync-status': {
       description: 'Branch-aware sync status.',

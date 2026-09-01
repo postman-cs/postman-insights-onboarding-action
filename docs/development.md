@@ -3,7 +3,7 @@
 ## Local development
 
 ```bash
-npm install
+npm ci
 npm test
 npm run typecheck
 npm run build
@@ -31,7 +31,7 @@ The smoke workflow verifies the human-user `/me` shape, checks `iapub.postman.co
 
 ## Release strategy
 
-- Immutable release tags use `v1.x.y`.
+- Immutable release tags use `vN.x.y` for the current major; the rolling `vN` alias follows the newest one (see `RELEASE_POLICY.md`).
 - Consumers can pin immutable tags such as `v1.0.0` for reproducibility.
 - Moving tag `v1` tracks the latest release for convenience.
 - See [Release Policy](../RELEASE_POLICY.md) for tag, npm, and validation rules.

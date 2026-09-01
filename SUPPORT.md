@@ -1,27 +1,21 @@
 # Support
 
-## Before opening an issue
+## Getting help
 
-Confirm these basics first:
+Open a GitHub issue for usage questions, reproducible failures, or documentation gaps in `postman-insights-onboarding-action`.
 
-- The Insights agent is already running in the target cluster and has discovered live traffic for the service.
-- The workspace ID and environment ID already exist.
-- `postman-region` matches the Postman region that owns the workspace.
-- `postman-access-token` comes from [postman-resolve-service-token-action](https://github.com/postman-cs/postman-resolve-service-token-action), or you are intentionally using the documented legacy fallback.
-- `credential-preflight` is set to `warn` or `enforce`.
+Before opening an issue, check:
 
-## Where to ask
+- The workflow pins the rolling major alias or an immutable tag shown in `README.md`; frozen older majors receive no fixes.
+- Credentials are supplied the way `README.md` documents (service-account Postman API key, access token from `postman-cs/postman-resolve-service-token-action`, region set for EU tenants).
+- The run reproduces on the latest release.
 
-- Use GitHub issues for action bugs, documentation gaps, and reproducible contract drift.
-- Use Postman support for account access, org membership, plan, or product availability questions.
-- Use [SECURITY.md](SECURITY.md) for vulnerability reports or accidental secret exposure.
+Include in the issue:
 
-## What to include
+- The release tag in use.
+- The workflow snippet with secrets removed.
+- The failing step logs with tokens redacted.
 
-- The action tag, for example `v1.0.2`.
-- The workflow step with secrets redacted.
-- The `status` output and the relevant warning or error lines.
-- Whether the token came from the service-token action or the legacy CLI fallback.
-- The Postman region, workspace ID shape, and environment ID shape, with sensitive values redacted.
+## Security reports
 
-Do not paste API keys, access tokens, team verification tokens, or full unredacted workflow logs.
+Do not open public issues for vulnerabilities or leaked credentials. Follow [Security Policy](SECURITY.md).
