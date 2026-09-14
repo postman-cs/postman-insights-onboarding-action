@@ -476,7 +476,7 @@ describe('credential identity', () => {
     }
   });
 
-  it('crossCheckIdentities does NOT FAIL when both sides report the same parent org id even if workspace-team-id names a different sub-team (documented limitation; reactive layer covers it)', () => {
+  it('crossCheckIdentities does NOT FAIL when both sides report the same parent org id even if postman-team-id names a different sub-team (documented limitation; reactive layer covers it)', () => {
     const result = crossCheckIdentities({
       pmak: pmakIdentity({ teamId: '13347347' }),
       session: sessionIdentity({ teamId: '13347347' }),

@@ -16,11 +16,11 @@ export interface ErrorAdviceContext {
   mask: SecretMasker;
 }
 
-/** Canonical org-mode workspace guidance, single-sourced here so the texts cannot diverge. */
+/** Canonical org-mode linking guidance, single-sourced here so the texts cannot diverge. */
 export const WORKSPACE_PERSONAL_ONLY_ADVICE =
-  'Workspace creation failed: This may be an Org-mode account that requires a workspace-team-id input. ' +
-  'The Postman API does not allow creating team workspaces at the organization level. ' +
-  'Use the workspace-team-id input to specify which sub-team should own this workspace.';
+  'Linking failed: the response reports only personal workspaces can be used outside a team. ' +
+  'This may be an org-mode account that requires the postman-team-id input (POSTMAN_TEAM_ID) ' +
+  'so the link resolves under the right sub-team.';
 
 function expiryAdvice(code: 'UNAUTHENTICATED' | 'authenticationError'): string {
   return (
@@ -38,12 +38,12 @@ function forbiddenAdvice(ctx: ErrorAdviceContext): string {
     : '';
   const scopedTeamId = ctx.workspaceTeamId || ctx.explicitTeamId;
   const teamClause = scopedTeamId
-    ? `, or workspace-team-id ${scopedTeamId} names a sub-team it cannot act in`
-    : ', or the workspace-team-id / POSTMAN_TEAM_ID in use names a sub-team it cannot act in';
+    ? `, or postman-team-id ${scopedTeamId} names a sub-team it cannot act in`
+    : ', or the postman-team-id / POSTMAN_TEAM_ID in use names a sub-team it cannot act in';
   return (
     `postman: Bifrost refused ${ctx.operation || 'this operation'} with 403${sessionDetail}. ` +
     `The token's identity lacks permission for this endpoint${teamClause}. ` +
-    "Verify the token's role and that workspace-team-id / POSTMAN_TEAM_ID matches a sub-team from GET https://api.getpostman.com/teams."
+    "Verify the human user's access to the workspace and confirm any postman-team-id / POSTMAN_TEAM_ID override with the workspace administrator. Do not infer the gateway team header from PMAK /me or /teams."
   );
 }
 
@@ -61,7 +61,7 @@ function buildAdvice(status: number, body: string, ctx: ErrorAdviceContext): str
     return (
       `postman: ${ctx.operation || 'this operation'} reports projectAlreadyConnected with no workspace id in the error body. ` +
       'The repository is already linked to a workspace this credential cannot see, usually one created by a different credential pair or sub-team. ' +
-      'Delete the stale link or its workspace, then re-run with one credential pair from a single parent org.'
+      'Ask a workspace administrator to identify the existing link and confirm access before changing it, then re-run with credentials for the intended workspace.'
     );
   }
   if (body.includes('invalidParamError') && body.includes('already exists')) {

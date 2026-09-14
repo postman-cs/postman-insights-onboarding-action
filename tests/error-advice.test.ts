@@ -62,7 +62,7 @@ describe('error advice', () => {
     expect(advised?.message).toContain('cannot be minted from a PMAK');
   });
 
-  it('403 "You are not authorized to perform this action" with workspace-team-id context -> "...GET https://api.getpostman.com/teams lists valid sub-team ids..."', () => {
+  it('403 advice names the team override and asks the workspace administrator to confirm access', () => {
     const advised = adviseFromHttpError(
       bifrostHttpError(403, '{"error":{"message":"You are not authorized to perform this action"}}'),
       createContext({ workspaceTeamId: '132109' })
@@ -70,8 +70,9 @@ describe('error advice', () => {
 
     expect(advised).toBeDefined();
     expect(advised?.message).toContain('403');
-    expect(advised?.message).toContain('workspace-team-id 132109');
-    expect(advised?.message).toContain('GET https://api.getpostman.com/teams');
+    expect(advised?.message).toContain('postman-team-id 132109');
+    expect(advised?.message).toContain('workspace administrator');
+    expect(advised?.message).toContain('Do not infer the gateway team header from PMAK /me or /teams');
   });
 
   it('403 valid-token-wrong-team (preflight memo says parent orgs differ) -> cross-team message naming both teams and the session roles/consumerType when known', () => {
@@ -89,8 +90,8 @@ describe('error advice', () => {
     expect(advised?.message).toBe(
       'postman: Bifrost refused governance assignment with 403 while the access token is valid ' +
         '(it resolved to team 13347347, roles [collection-editor], consumerType service_account at preflight). ' +
-        "The token's identity lacks permission for this endpoint, or workspace-team-id 132109 names a sub-team it cannot act in. " +
-        "Verify the token's role and that workspace-team-id / POSTMAN_TEAM_ID matches a sub-team from GET https://api.getpostman.com/teams."
+        "The token's identity lacks permission for this endpoint, or postman-team-id 132109 names a sub-team it cannot act in. " +
+        "Verify the human user's access to the workspace and confirm any postman-team-id / POSTMAN_TEAM_ID override with the workspace administrator. Do not infer the gateway team header from PMAK /me or /teams."
     );
   });
 
@@ -107,7 +108,7 @@ describe('error advice', () => {
     expect(advised?.message).toContain('one credential pair from a single parent org');
   });
 
-  it('projectAlreadyConnected body with no workspace id -> its own honest "linked but not visible to this credential; delete and re-run with one credential pair" message (no misleading success)', () => {
+  it('asks an administrator to identify an inaccessible existing link before changing it', () => {
     const advised = adviseFromBifrostBody(
       400,
       '{"error":{"name":"projectAlreadyConnected"}}',
@@ -118,12 +119,13 @@ describe('error advice', () => {
     expect(advised?.message).toContain('projectAlreadyConnected');
     expect(advised?.message).toContain('no workspace id');
     expect(advised?.message).toContain('cannot see');
-    expect(advised?.message).toContain('Delete the stale link');
-    expect(advised?.message).toContain('one credential pair from a single parent org');
+    expect(advised?.message).toContain('identify the existing link and confirm access before changing it');
+    expect(advised?.message).toContain('credentials for the intended workspace');
+    expect(advised?.message).not.toContain('Delete');
     expect(advised?.message.toLowerCase()).not.toContain('success');
   });
 
-  it('400 "Only personal workspaces" -> workspace-team-id advice', () => {
+  it('400 "Only personal workspaces" -> postman-team-id advice', () => {
     const advised = adviseFromBifrostBody(
       400,
       '{"error":{"name":"invalidParamError","message":"Only personal workspaces (internal) can be created outside team"}}',
@@ -132,7 +134,7 @@ describe('error advice', () => {
 
     expect(advised).toBeDefined();
     expect(advised?.message).toBe(WORKSPACE_PERSONAL_ONLY_ADVICE);
-    expect(advised?.message).toContain('workspace-team-id');
+    expect(advised?.message).toContain('postman-team-id');
   });
 
   it('"Team feature is not available for your organization" -> team plan advice', () => {
@@ -221,7 +223,7 @@ describe('error advice', () => {
     expect(advised!.message).not.toContain(secret);
     expect(advised!.message).toContain(REDACTED);
     expect(advised!.message).toContain('403');
-    expect(advised!.message).toContain('GET https://api.getpostman.com/teams');
+    expect(advised!.message).toContain('workspace administrator');
     expect(advised!.message).toContain('git onboarding');
   });
 });

@@ -29951,15 +29951,15 @@ async function runCredentialPreflight(args) {
 function safeAdvice(mask, message) {
   return toOneLine(mask(message));
 }
-var WORKSPACE_PERSONAL_ONLY_ADVICE = "Workspace creation failed: This may be an Org-mode account that requires a workspace-team-id input. The Postman API does not allow creating team workspaces at the organization level. Use the workspace-team-id input to specify which sub-team should own this workspace.";
+var WORKSPACE_PERSONAL_ONLY_ADVICE = "Linking failed: the response reports only personal workspaces can be used outside a team. This may be an org-mode account that requires the postman-team-id input (POSTMAN_TEAM_ID) so the link resolves under the right sub-team.";
 function expiryAdvice(code) {
   return `postman: Bifrost rejected the access token (${code}). Provide a fresh human-user session access token; it cannot be minted from a PMAK. Confirm postman-access-token belongs to the same parent org as postman-api-key and re-run.`;
 }
 function forbiddenAdvice(ctx) {
   const sessionDetail = ctx.sessionTeamId ? ` while the access token is valid (it resolved to team ${ctx.sessionTeamId}${ctx.sessionRoles && ctx.sessionRoles.length > 0 ? `, roles [${ctx.sessionRoles.join(", ")}]` : ""}${ctx.sessionConsumerType ? `, consumerType ${ctx.sessionConsumerType}` : ""} at preflight)` : "";
   const scopedTeamId = ctx.workspaceTeamId || ctx.explicitTeamId;
-  const teamClause = scopedTeamId ? `, or workspace-team-id ${scopedTeamId} names a sub-team it cannot act in` : ", or the workspace-team-id / POSTMAN_TEAM_ID in use names a sub-team it cannot act in";
-  return `postman: Bifrost refused ${ctx.operation || "this operation"} with 403${sessionDetail}. The token's identity lacks permission for this endpoint${teamClause}. Verify the token's role and that workspace-team-id / POSTMAN_TEAM_ID matches a sub-team from GET https://api.getpostman.com/teams.`;
+  const teamClause = scopedTeamId ? `, or postman-team-id ${scopedTeamId} names a sub-team it cannot act in` : ", or the postman-team-id / POSTMAN_TEAM_ID in use names a sub-team it cannot act in";
+  return `postman: Bifrost refused ${ctx.operation || "this operation"} with 403${sessionDetail}. The token's identity lacks permission for this endpoint${teamClause}. Verify the human user's access to the workspace and confirm any postman-team-id / POSTMAN_TEAM_ID override with the workspace administrator. Do not infer the gateway team header from PMAK /me or /teams.`;
 }
 function buildAdvice(status, body, ctx) {
   if (body.includes("UNAUTHENTICATED")) {
@@ -29972,7 +29972,7 @@ function buildAdvice(status, body, ctx) {
     return WORKSPACE_PERSONAL_ONLY_ADVICE;
   }
   if (body.includes("projectAlreadyConnected")) {
-    return `postman: ${ctx.operation || "this operation"} reports projectAlreadyConnected with no workspace id in the error body. The repository is already linked to a workspace this credential cannot see, usually one created by a different credential pair or sub-team. Delete the stale link or its workspace, then re-run with one credential pair from a single parent org.`;
+    return `postman: ${ctx.operation || "this operation"} reports projectAlreadyConnected with no workspace id in the error body. The repository is already linked to a workspace this credential cannot see, usually one created by a different credential pair or sub-team. Ask a workspace administrator to identify the existing link and confirm access before changing it, then re-run with credentials for the intended workspace.`;
   }
   if (body.includes("invalidParamError") && body.includes("already exists")) {
     return `postman: ${ctx.operation || "this operation"} hit a duplicate resource error (invalidParamError: already exists). A matching resource already exists, possibly under another credential pair or sub-team where this credential cannot see it. Identify which workspace holds the existing resource and re-run with one credential pair from a single parent org.`;

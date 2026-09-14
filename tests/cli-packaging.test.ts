@@ -206,6 +206,56 @@ function resolveBinEntry(
   };
 }
 
+type PackedEntry = {
+  filename: string;
+  name: string;
+  files: Array<{ path: string }>;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function readPackedEntry(value: unknown): PackedEntry {
+  if (!isRecord(value)) {
+    throw new Error('npm pack --json must emit a package object with filename, name, and files');
+  }
+  const { filename, name, files } = value;
+  if (typeof filename !== 'string' || filename.length === 0) {
+    throw new Error('npm pack --json entry is missing a filename string');
+  }
+  if (typeof name !== 'string' || name.length === 0) {
+    throw new Error('npm pack --json entry is missing a name string');
+  }
+  if (!Array.isArray(files)) {
+    throw new Error('npm pack --json entry is missing a files array');
+  }
+  return {
+    filename,
+    name,
+    files: files.map((file) => {
+      if (!isRecord(file) || typeof file.path !== 'string') {
+        throw new Error('npm pack --json entry has a files item without a path string');
+      }
+      return { path: file.path };
+    })
+  };
+}
+
+function parsePackStdout(stdout: string): PackedEntry {
+  // npm 11 and older print an array with one entry per packed package; npm 12
+  // prints a single name-keyed object. Accept both shapes, require one entry.
+  const parsed: unknown = JSON.parse(stdout);
+  if (!Array.isArray(parsed) && !isRecord(parsed)) {
+    throw new Error('npm pack --json must emit an array or an object of packed packages');
+  }
+  const entries = Array.isArray(parsed) ? parsed : Object.values(parsed);
+  if (entries.length !== 1) {
+    throw new Error(`npm pack --json must describe exactly one package, saw ${entries.length}`);
+  }
+  return readPackedEntry(entries[0]);
+}
+
 async function npmPackJson(packDir: string): Promise<{ filename: string; name: string; files: Array<{ path: string }> }> {
   const npm = resolveNpmInvocation();
   const packResult = await execFileAsync(
@@ -222,11 +272,7 @@ async function npmPackJson(packDir: string): Promise<{ filename: string; name: s
       maxBuffer: 20 * 1024 * 1024
     }
   );
-  const [packed] = JSON.parse(packResult.stdout) as Array<{
-    filename: string;
-    name: string;
-    files: Array<{ path: string }>;
-  }>;
+  const packed = parsePackStdout(packResult.stdout);
   expect(packed.name).toBe(EXPECTED_PACKAGE_NAME);
   return packed;
 }
