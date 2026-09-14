@@ -6,8 +6,8 @@ Links Postman Insights discovered services to API Catalog workspaces + git repos
 
 ```
 src/
-  index.ts                     # Action entry: reads inputs, links, sets outputs
-  main.ts                      # Core: resolve services -> link workspace + repo
+  index.ts                     # Core: reads inputs, links, sets outputs
+  main.ts                      # Thin Action entry: runs runAction, fails the step on error
   cli.ts                       # CLI adapter
   contracts.ts                 # I/O types
   lib/
@@ -34,7 +34,7 @@ npm run verify:dist         # rebuild + git diff + assert
 
 - **Service linking**: Resolves Insights-discovered services, associates each w/ API Catalog workspace + originating git repo via Bifrost.
 - **Team scope**: From session identity (`credential-identity.ts`). `POSTMAN_TEAM_ID` = explicit org-mode override for `x-entity-team-id`; otherwise Bifrost infers team context.
-- **Governance credential**: Uses access token for Bifrost calls (can expire). `BifrostCatalogClient` takes `AccessTokenProvider`, re-mints token once on 401/UNAUTHENTICATED for `api-catalog` path. `akita` (Insights) path = platform wall for service-account identities: 401 "Postman User not found" on every route (api-catalog returns 200 w/ same token). `createApplication` 401s on both `x-access-token` + `x-api-key` for SA — completing Insights acknowledgment needs token w/ Postman *user* identity. Proof: `scripts/probe-insights-akita.ts`.
+- **Governance credential**: Sends the caller-supplied human-user access token on Bifrost calls (it can expire). `AccessTokenProvider` holds that token only and never refreshes it: `canRefresh()` returns false and `refresh()` throws, so the action never mints a token from a PMAK — rerun with a fresh human-user token. `akita` (Insights) path = platform wall for service-account identities: 401 "Postman User not found" on every route (api-catalog returns 200 w/ same token). `createApplication` 401s on both `x-access-token` + `x-api-key` for SA — completing Insights acknowledgment needs token w/ Postman *user* identity. Proof: `scripts/probe-insights-akita.ts`.
 
 ## Gotchas
 

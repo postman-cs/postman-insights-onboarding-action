@@ -94,7 +94,7 @@ describe('action contract', () => {
     expect(String((actionManifest.inputs['postman-region'] as { description?: string }).description)).toContain('us or eu');
   });
 
-  it('marks project-name, workspace-id, environment-id as required (postman-access-token is mintable from postman-api-key)', () => {
+  it('marks project-name, workspace-id, environment-id as required (postman-access-token is never minted from postman-api-key)', () => {
     const requiredInputs = Object.entries(insightsActionContract.inputs)
       .filter(([, v]) => v.required)
       .map(([k]) => k);

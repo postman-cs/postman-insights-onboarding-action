@@ -58,15 +58,15 @@ jobs:
 
       # ... deploy your service to Kubernetes ...
 
-       - uses: postman-cs/postman-insights-onboarding-action@v2
+      - uses: postman-cs/postman-insights-onboarding-action@v2
         with:
           project-name: core-payments
           workspace-id: ${{ vars.POSTMAN_WORKSPACE_ID }}
           environment-id: ${{ vars.POSTMAN_ENVIRONMENT_ID }}
           cluster-name: my-cluster
           postman-region: us
-           postman-api-key: ${{ secrets.POSTMAN_INSIGHTS_USER_PMAK }}
-           postman-access-token: ${{ secrets.POSTMAN_INSIGHTS_USER_ACCESS_TOKEN }}
+          postman-api-key: ${{ secrets.POSTMAN_INSIGHTS_USER_PMAK }}
+          postman-access-token: ${{ secrets.POSTMAN_INSIGHTS_USER_ACCESS_TOKEN }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           poll-timeout-seconds: 180
 ```
@@ -118,8 +118,8 @@ jobs:
           environment-id: ${{ fromJSON(steps.sync.outputs.environment-uids-json).prod }}
           cluster-name: my-cluster
           postman-region: us
-           postman-api-key: ${{ secrets.POSTMAN_INSIGHTS_USER_PMAK }}
-           postman-access-token: ${{ secrets.POSTMAN_INSIGHTS_USER_ACCESS_TOKEN }}
+          postman-api-key: ${{ secrets.POSTMAN_INSIGHTS_USER_PMAK }}
+          postman-access-token: ${{ secrets.POSTMAN_INSIGHTS_USER_ACCESS_TOKEN }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
@@ -134,8 +134,8 @@ The Insights agent takes time to discover services after pods start. The action 
           workspace-id: ${{ vars.POSTMAN_WORKSPACE_ID }}
           environment-id: ${{ vars.POSTMAN_ENVIRONMENT_ID }}
           postman-region: us
-           postman-api-key: ${{ secrets.POSTMAN_INSIGHTS_USER_PMAK }}
-           postman-access-token: ${{ secrets.POSTMAN_INSIGHTS_USER_ACCESS_TOKEN }}
+          postman-api-key: ${{ secrets.POSTMAN_INSIGHTS_USER_PMAK }}
+          postman-access-token: ${{ secrets.POSTMAN_INSIGHTS_USER_ACCESS_TOKEN }}
           poll-timeout-seconds: 300
           poll-interval-seconds: 15
 ```
@@ -152,8 +152,8 @@ Before any onboarding write, the action verifies that `postman-api-key` and `pos
           project-name: core-payments
           workspace-id: ${{ vars.POSTMAN_WORKSPACE_ID }}
           environment-id: ${{ vars.POSTMAN_ENVIRONMENT_ID }}
-           postman-access-token: ${{ secrets.POSTMAN_INSIGHTS_USER_ACCESS_TOKEN }}
-           postman-api-key: ${{ secrets.POSTMAN_INSIGHTS_USER_PMAK }}
+          postman-access-token: ${{ secrets.POSTMAN_INSIGHTS_USER_ACCESS_TOKEN }}
+          postman-api-key: ${{ secrets.POSTMAN_INSIGHTS_USER_PMAK }}
           credential-preflight: enforce
 ```
 
@@ -169,8 +169,8 @@ postman-insights-onboard \
   --project-name core-payments \
   --workspace-id ws_123 \
   --environment-id env_123 \
-   --postman-access-token "$POSTMAN_INSIGHTS_USER_ACCESS_TOKEN" \
-   --postman-api-key "$POSTMAN_INSIGHTS_USER_PMAK" \
+  --postman-access-token "$POSTMAN_INSIGHTS_USER_ACCESS_TOKEN" \
+  --postman-api-key "$POSTMAN_INSIGHTS_USER_PMAK" \
   --postman-region us \
   --cluster-name my-cluster
 ```
