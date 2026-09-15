@@ -17,8 +17,8 @@ export interface ActionContract {
 }
 
 export const insightsActionContract: ActionContract = {
-  name: 'Postman Onboarding: Insights Linking',
-  description: 'Link Postman Insights discovered services to workspaces and git repos. Part of the Postman API Onboarding suite.',
+  name: 'Postman Enterprise Automation: Insights Linking',
+  description: 'Link Postman Insights discovered services to workspaces and git repos. Part of the Postman Enterprise Automation Suite.',
   inputs: {
     'project-name': {
       description: 'Service name or spec ID to match against discovered service names.',
