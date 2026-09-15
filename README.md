@@ -1,10 +1,10 @@
-# Postman Onboarding: Insights Linking
+# Postman Enterprise Automation: Insights Linking
 
 [![CI](https://github.com/postman-cs/postman-insights-onboarding-action/actions/workflows/ci.yml/badge.svg)](https://github.com/postman-cs/postman-insights-onboarding-action/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/postman-cs/postman-insights-onboarding-action?sort=semver)](https://github.com/postman-cs/postman-insights-onboarding-action/releases) [![npm](https://img.shields.io/npm/v/%40postman-cs%2Fonboarding-insights)](https://www.npmjs.com/package/@postman-cs/onboarding-insights) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Links [Postman Insights](https://learning.postman.com/docs/insights/overview/) discovered services to [API Catalog](https://learning.postman.com/docs/api-catalog/overview/) workspaces and git repositories after deployment, so every service the Insights agent finds lands in your catalog with a collection, a repo link, and live telemetry.
 
-Part of the [Postman API Onboarding suite](https://github.com/postman-cs/postman-api-onboarding-action); the composite action's README has the full [action-picker table](https://github.com/postman-cs/postman-api-onboarding-action#which-action-should-i-use).
+Part of the [Postman Enterprise Automation Suite](https://github.com/postman-cs/postman-api-onboarding-action); the composite action's README has the full [action-picker table](https://github.com/postman-cs/postman-api-onboarding-action#which-action-should-i-use).
 
 - [Prerequisites](#prerequisites)
 - [Usage](#usage)

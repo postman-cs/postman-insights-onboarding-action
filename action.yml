@@ -1,5 +1,5 @@
-name: 'Postman Onboarding: Insights Linking'
-description: Link Postman Insights discovered services to workspaces and git repos. Part of the Postman API Onboarding suite.
+name: 'Postman Enterprise Automation: Insights Linking'
+description: Link Postman Insights discovered services to workspaces and git repos. Part of the Postman Enterprise Automation Suite.
 author: Postman
 branding:
   icon: link
