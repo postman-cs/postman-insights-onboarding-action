@@ -16,6 +16,7 @@ const actionManifest = parse(
   readFileSync(resolve(repoRoot, 'action.yml'), 'utf8')
 ) as {
   name: string;
+  description: string;
   inputs: Record<string, { required?: boolean; default?: string }>;
   outputs: Record<string, unknown>;
   runs: { using: string; main: string };
@@ -43,6 +44,12 @@ const contractSmokeWorkflow = readFileSync(
 describe('action contract', () => {
   it('action.yml name matches contract name', () => {
     expect(actionManifest.name).toBe(insightsActionContract.name);
+  });
+
+  it('keeps the action.yml description within the Marketplace 125-character limit', () => {
+    // Marketplace silently keeps the old listing text when the description
+    // exceeds 125 characters, so pin the parsed manifest value length.
+    expect(actionManifest.description.length).toBeLessThanOrEqual(125);
   });
 
   it('uses kebab-case input and output names', () => {
