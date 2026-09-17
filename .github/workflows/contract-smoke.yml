@@ -11,6 +11,7 @@ jobs:
   preflight:
     name: Smoke credential preflight
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     outputs:
       run_smoke: ${{ steps.credentials.outputs.run_smoke }}
     steps:
@@ -59,6 +60,7 @@ jobs:
   api-contract-smoke:
     name: Insights API Contract
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: preflight
     if: ${{ needs.preflight.outputs.run_smoke == 'true' }}
     steps:
