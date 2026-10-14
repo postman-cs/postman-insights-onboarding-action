@@ -97,7 +97,7 @@ jobs:
 
       # ... deploy service to Kubernetes ...
 
-      - uses: postman-cs/postman-repo-sync-action@v2
+      - uses: postman-cs/postman-repo-sync-action@v3
         id: sync
         with:
           project-name: core-payments
